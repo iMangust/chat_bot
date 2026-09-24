@@ -14,7 +14,9 @@ StatusPanel > Horizontal {
 #brand { width: auto; margin-right: 2; }
 #state { width: auto; margin-right: 2; }
 #uptime { width: auto; margin-right: 2; }
-.clock { position: absolute; right: 1; color: $text-muted; }
+/* часы прижаты вправо пустым stretch-виджетом перед ними (в Textual нет right) */
+#clock-spacer { width: 1fr; }
+.clock { width: auto; color: $text-muted; }
 
 ControlsBar {
     height: 3;
