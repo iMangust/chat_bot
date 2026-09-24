@@ -8,6 +8,8 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+__version__ = "1.1.0"
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
