@@ -122,7 +122,11 @@ async def test_hidden_achievement_requires_force(session):
     assert await ach_svc.unlock_by_code(u.tg_id, "night_owl") is None
 
 
-async def test_pet_decay_offline(session):
+async def test_pet_decay_offline(session, monkeypatch):
+    # отключаем сезонную модификацию (осенний множитель голода +15%),
+    # чтобы проверить базовые скорости деградации
+    from app.config import get_settings
+    monkeypatch.setattr(get_settings(), "weather_enabled", False, raising=False)
     u = await _mk_user(session)
     pet = Pet(user_id=u.tg_id, name="Тест", hunger=80, happiness=80,
               energy=80, hygiene=80, health=100,
@@ -136,6 +140,25 @@ async def test_pet_decay_offline(session):
     assert 69 <= pet.happiness <= 71
     assert 64 <= pet.hygiene <= 66
     assert pet.health == 100  # уход ещё хороший
+
+
+async def test_pet_decay_season_multiplier_applied(session, monkeypatch):
+    """Осенью счастье падает на 15% быстрее базовой скорости (сезонная механика)."""
+    from app.config import Settings, get_settings
+    monkeypatch.setattr(get_settings(), "weather_enabled", True, raising=False)
+    assert get_settings().weather_enabled  # убедимся, что override применился
+    u = await _mk_user(session)
+    autumn = datetime(2026, 10, 15, tzinfo=timezone.utc)
+    pet = Pet(user_id=u.tg_id, name="Сезонный", hunger=80, happiness=80,
+              energy=80, hygiene=80, health=100,
+              last_update=autumn - timedelta(hours=5))
+    session.add(pet)
+    await session.flush()
+    svc = TamagotchiService(session)
+    await svc.apply_decay(pet, now=autumn)
+    # без сезона: 80-2*5=70; с осенним множителем happy x1.15: 80-11.5=68.5
+    assert pet.happiness < 70
+    assert abs(pet.happiness - 68.5) <= 0.5
 
 
 async def test_pet_becomes_sick_when_neglected(session):

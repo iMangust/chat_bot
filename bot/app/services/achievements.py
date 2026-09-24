@@ -199,6 +199,18 @@ class AchievementService:
                 user.level, user.xp, _ = apply_xp(user.level, user.xp, xp)
                 user.coins += coins
                 await self.session.flush()
+        # уведомление в очередь (учитывает персональные настройки; флуд-защита —
+        # batching в одном сообщении ниже). kind="achievement" — см. notifications.queue_notification
+        try:
+            from app.services.notifications import queue_notification
+            lines = [f"{a.icon} <b>{a.title}</b> — {a.description}" for a in achievements]
+            total_xp = sum(a.reward_xp for a in achievements)
+            total_c = sum(a.reward_coins for a in achievements)
+            text = ("🎉 <b>Новое достижение!</b>\n" + "\n".join(lines) +
+                    f"\n\nНаграда: +{total_xp} XP · +{total_c} 🪙")
+            await queue_notification(self.session, user_id, "achievement", text)
+        except Exception as e:  # уведомления не должны ронять основной флоу
+            logger.debug("achievement notify skipped: {}", e)
         for a in achievements:
             logger.info("🏆 user {} unlocked achievement {} (+{}xp +{}c)",
                         user_id, a.code, a.reward_xp, a.reward_coins)

@@ -197,19 +197,36 @@ class ActivityService:
         user.last_active_date = now
 
     async def _counters(self, user: User, now: datetime) -> dict[str, int]:
+        from app.db.models import Pet
         day_start = _day(now)
         week_start = day_start - timedelta(days=6)
         total = await self.activity.messages_count(user.tg_id)
         week = await self.activity.messages_count(user.tg_id, since=week_start)
-        return {
+        counters = {
             "messages_total": total,
             "messages_week": week,
+            "messages_day": await self.activity.messages_count(user.tg_id, since=day_start),
             "streak_days": user.streak_days,
             "level": user.level,
             "coins_earned": user.coins,
             "reactions_given": user.reactions_given,
             "reactions_received": user.reactions_received,
+            # пользовательские счётчики (invites и т.п.)
+            "invites": await self.users.get_stat(user.tg_id, "invites"),
+            "games_won": await self.users.get_stat(user.tg_id, "games_won"),
+            "top1_day": await self.users.get_stat(user.tg_id, "top1_day"),
         }
+        # питомец: уровень + агрегаты действий из pet_actions_log (для ачивок тамагочи)
+        pet = (await self.session.execute(
+            select(Pet).where(Pet.user_id == user.tg_id)
+        )).scalar_one_or_none()
+        if pet is not None:
+            from app.db.repositories import PetRepository
+            pets = PetRepository(self.session)
+            counters["pet_level"] = pet.level
+            counters["pet_feeds"] = await pets.count_actions(pet.id, "feed")
+            counters["pet_walks"] = await pets.count_actions(pet.id, "walk_done")
+        return counters
 
     async def personal_stats(self, tg_id: int) -> dict:
         """Данные для /stats и карточки профиля."""

@@ -1,8 +1,10 @@
 """Экраны статистики, достижений и топов."""
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
 from aiogram import F, Router
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.repositories import ActivityRepository, UserRepository
@@ -12,6 +14,25 @@ from app.services.achievements import AchievementService
 from app.utils.formatting import progress_bar, xp_needed_for_level
 
 router = Router(name="stats")
+
+
+def _medal(i: int) -> str:
+    return ["🥇", "🥈", "🥉"][i - 1] if i <= 3 else f"{i}."
+
+
+async def _top_lines(session: AsyncSession, period_label: str, since: datetime | None) -> list[str]:
+    """Строки топа болтунов за период (since=None — за всё время)."""
+    users = UserRepository(session)
+    lines: list[str] = []
+    if since is None:
+        talkers = [(u, u.messages_count) for u in await users.top_by("messages_count", 10)]
+    else:
+        talkers = await users.top_period_messages(since, 10)
+    if not talkers:
+        lines.append("   пока пусто — будь первым! 💬")
+    for i, (u, cnt) in enumerate(talkers, start=1):
+        lines.append(f"{_medal(i)} {u.first_name} — {cnt} сообщ. (ур. {u.level})")
+    return lines
 
 
 @router.callback_query(F.data == "menu:stats")
