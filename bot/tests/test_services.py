@@ -19,7 +19,7 @@ from app.services.activity import ActivityService
 from app.services.tamagotchi import TamagotchiService, compute_stage, pet_xp_needed
 from app.utils.redis import _mem_store
 
-pytestmark = pytest.mark.asyncio
+
 
 
 @pytest.fixture(autouse=True)
