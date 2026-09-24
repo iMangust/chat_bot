@@ -1,0 +1,167 @@
+# 🐾 TamaBot — развлекательный Telegram-бот (тамагочи + достижения + топы)
+
+Стек: **Python 3.12 · aiogram 3.x (long polling) · MySQL 8 · SQLAlchemy 2.0 async · APScheduler · loguru**.
+Redis опционален (на Windows — Memurai); без него работает in-memory fallback для кулдаунов/FSM.
+
+---
+
+## 1. Установка на Windows Server
+
+### 1.1 Python
+1. Скачать и установить **Python 3.12.x** (галочка *Add python.exe to PATH*).
+2. Проверка: `python --version`.
+
+### 1.2 MySQL
+1. Установить **MySQL Community Server 8.x** (https://dev.mysql.com/downloads/installer/),
+   сервис автозапуска, порт 3306.
+2. В `mysql -u root -p` выполнить:
+   ```sql
+   CREATE DATABASE tamabot CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+   CREATE USER 'tamabot'@'localhost' IDENTIFIED BY 'СИЛЬНЫЙ_ПАРОЛЬ';
+   GRANT ALL PRIVILEGES ON tamabot.* TO 'tamabot'@'localhost';
+   FLUSH PRIVILEGES;
+   ```
+
+### 1.3 Redis (опционально, но рекомендуется)
+- **Memurai Developer** (бесплатно, https://memurai.dev) — ставится как сервис Windows.
+- Без Redis бот запустится, но кулдауны/FSM будут сбрасываться при рестарте.
+
+### 1.4 Зависимости проекта
+```powershell
+cd C:\tamabot\bot
+py -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+```
+> Если установка `aiomysql`/`cryptography` падает — запускать бота нужно на **Python 3.11/3.12 x64**
+> (пакеты имеют готовые wheels для Windows). Драйвер `asyncmy` не требуется.
+
+### 1.5 Конфигурация
+```powershell
+copy .env.example .env
+notepad .env
+```
+Заполнить: `BOT_TOKEN`, `DATABASE_URL` (пароль!), `TRACKED_CHAT_IDS`, `ADMIN_IDS`, `IS_DEV=false`.
+
+Все остальные настройки имеют разумные значения по умолчанию (см. `app/config.py`):
+
+| Переменная | По умолчанию | Зачем |
+|---|---|---|
+| `MIN_MESSAGE_LENGTH` / `ACTIVITY_COOLDOWN_SEC` | 5 / 10 | антифрод активности |
+| `REACTIONS_CAP_PER_DAY` | 20 | максимум засчитанных реакций A→B в сутки |
+| `XP_PER_MESSAGE` / `XP_LEVEL_BASE` | 2 / 50 | экономика XP (`xp_needed = 50·L^1.5`) |
+| `POLLING_TIMEOUT` / `POLLING_LIMIT` | 30 / 50 | long polling |
+| `DAILY_REPORT_HOUR_UTC` | 17 (≈20 МСК) | время ежедневного отчёта |
+| `EVENING_REMINDER_HOUR_UTC` | 16 (≈19 МСК) | предупреждение «стрик сгорит» |
+| `PET_WARNING_MIN_HOURS` | 6 | не чаще раза в N ч «питомец скучает» |
+| `INVITE_REWARD_COINS` | 50 | награда за приглашённого друга |
+| `WEATHER_ENABLED` | true | сезонная деградация статов (зима/лето) |
+| `TZ_OFFSET_HOURS` | 3 | смещение для «ночной совы» и праздников |
+
+Таблицы создаются автоматически при первом старте (`Base.metadata.create_all`),
+справочники ачивок (18 шт.) и магазина (8 товаров) сеидятся идемпотентно в `on_startup`.
+
+---
+
+## 2. Запуск
+
+### Ручной запуск (для проверки)
+```powershell
+venv\Scripts\activate
+python -m app.main
+```
+Ожидаем в консоли: `✅ bot started` и `starting long polling…`.
+
+### Автостарт как сервис Windows (NSSM — рекомендовано)
+1. Скачать NSSM: https://nssm.cc/download, распаковать `nssm.exe` (win64) в `C:\tamabot\`.
+2. Установить сервис от администратора:
+   ```powershell
+   cd C:\tamabot\bot
+   C:\tamabot\nssm.exe install TamaBot "C:\tamabot\bot\venv\Scripts\python.exe" "-m app.main"
+   C:\tamabot\nssm.exe set TamaBot AppDirectory "C:\tamabot\bot"
+   C:\tamabot\nssm.exe set TamaBot AppStdout "C:\tamabot\bot\logs\service.out.log"
+   C:\tamabot\nssm.exe set TamaBot AppStderr "C:\tamabot\bot\logs\service.err.log"
+   C:\tamabot\nssm.exe set TamaBot AppExit Default Restart
+   C:\tamabot\nssm.exe set TamaBot AppRestartDelay 10000
+   C:\tamabot\nssm.exe start TamaBot
+   ```
+3. Управление: `net start TamaBot` / `net stop TamaBot`, статус: `sc query TamaBot`.
+   Graceful shutdown обрабатывается ботом (Ctrl-C эквивалент — остановка сервиса).
+
+### Альтернатива без NSSM — Планировщик задач
+`taskschd.msc` → создать задачу «При запуске», пользователь SYSTEM, действие:
+`C:\tamabot\bot\venv\Scripts\python.exe -m app.main`, рабочая папка `C:\tamabot\bot`.
+
+---
+
+## 3. Настройка Telegram (чек-лист)
+
+- [ ] @BotFather: токен в `.env`; `/setdescription`, `/setuserpic`.
+- [ ] Бот — **админ** группы обсуждения с правами: *видеть сообщения*, *реакции* (нужен
+      включённый в группе выбор реакций), *приглашать пользователей*.
+- [ ] Группа привязана к каналу (Обсуждение → выбрать группу).
+- [ ] В настройках группы включить **«Выбор реакции»** (иначе `message_reaction` не приходит).
+- [ ] Проверить `TRACKED_CHAT_IDS`: ID супергруппы начинается с `-100…` (см. логи бота при первом сообщении).
+- [ ] Права бота в канале — только чтение (он там не пишет).
+
+---
+
+## 4. Тесты
+
+```powershell
+cd C:\tamabot\bot
+venv\Scripts\activate
+python -m pytest tests -q        # ожидаем: 17 passed
+```
+Тесты идут на SQLite-in-memory, Redis/MySQL не нужны.
+
+---
+
+## 5. Логи и диагностика
+
+- Файловые логи: `bot\logs\bot_YYYY-MM-DD.log` (ротация ежедневно, хранение 14 дней, уровень DEBUG).
+- Консоль/сервисные: `logs\service.out.log` / `service.err.log` (если настроен NSSM).
+- Частые проблемы:
+  | Симптом | Причина / решение |
+  |---|---|
+  | `RuntimeError: BOT_TOKEN не задан` | нет `.env` или токен пуст |
+  | `Can't connect to MySQL server` | MySQL не запущен / неверный `DATABASE_URL` |
+  | Бот молчит в группе | не админ / `TRACKED_CHAT_IDS` не совпадает / сообщение короче `MIN_MESSAGE_LENGTH` или в кулдауне |
+  | Реакции не считаются | в группе выключен «Выбор реакции» |
+  | Предупреждение про Redis | Redis недоступен — ok, работает fallback; для прод-стабильности поставьте Memurai |
+
+---
+
+## 6. Что уже реализовано (готово к запуску)
+
+✅ Регистрация/онбординг, приветствие новичков в ЛС (fallback — упоминание в группе)
+✅ Трекинг активности с антифродом (кулдаун 10 с, мин. длина 5 симв., кап реакций, игнор команд/дублей/флуда)
+✅ XP/уровни (`xp_needed = 50·L^1.5`), стрики дней
+✅ 18 достижений (активность/стрики/реакции/питомец/социальные/секретные) с прогрессом и пуш-уведомлением
+✅ Тамагочи: 5 видов с разными характеристиками/предпочтениями/ценами, стадии эволюции,
+   оффлайн-деградация (ленивая, по `last_update`), кормление/игра/сон/мытьё/лечение/тренировки/прогулки,
+   настроение и спрайты
+✅ Магазин и инвентарь (8 товаров, покупка/использование), монетная экономика
+✅ Статистика, экран достижений с пагинацией
+✅ Лидерборды с вкладками День/Неделя/Всё (💬 болтуны, 💖 реакции, 🔥 серии, 🐾 питомцы, 🏅 уровни)
+   + еженедельный снапшот и призы топ-3 (🪙 500/250/100, пон-к 00:30 UTC, идемпотентно)
+✅ Мини-игры с питомцем: угадайка (🧠 сужает подсказку), КНБ, реакция (🏃 даёт доп. время);
+   победы → счётчик ачивки «Игумен»
+✅ Магазин товаров для смены вида питомца (cat/dog/fox/owl/dragon)
+✅ Дружба питомцев (до 5, взаимная, +1 счастье/сутки за друга) с рекомендациями «познакомиться»
+✅ Карточка профиля PNG (Pillow, авто-кэш по версии статов) — кнопка «🖼 Карточка», /card
+✅ Погода/сезоны: сезонная модификация деградации + праздничные события в рендере питомца
+✅ Очередь уведомлений (NotificationQueue): «питомец скучает», «стрик сгорит», ежедневный отчёт
+✅ ⚙️ Экран настроек уведомлений (4 тумблера) — всё учитывается планировщиком
+✅ Рефералы: deep-link `t.me/bot?start=invite_<id>` → +50 🪙 и ачивка «Знакомый»
+✅ Rate-limit действий (throttle-middleware), graceful shutdown, APScheduler-задачи
+   (decay 30 мин, очередь уведомлений 1 мин, стрики 00:15, отчёт/вечерний хинт/топ недели)
+✅ Тесты бизнес-логики: 25 passed
+
+Команды бота: `/start /top /stats /achievements /shop /award /card /settings /help`
+
+## 7. Отложено на v1.1+ (не блокирует запуск)
+
+⏳ Alembic-миграции (пока `create_all`; при первой смене схемы добавить `alembic init`)
+⏳ Webhook-режим (для Windows Server не нужен — polling стабилен)
+⏳ Ежемесячные лиги и косметические предметы (окрас/аксессуары — поле `settings_extra` уже есть)

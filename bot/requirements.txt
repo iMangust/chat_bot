@@ -1,0 +1,16 @@
+# --- Core (проверенные версии, на которых запускались тесты) ---
+aiogram>=3.13,<4.0          # long polling, callbacks, FSM
+SQLAlchemy>=2.0.30,<2.1     # async ORM 2.0
+aiomysql>=0.2.0             # MySQL-драйвер (prod)
+aiosqlite>=0.20             # SQLite для тестов/dev
+redis>=5.0                  # кулдауны/FSM (есть in-memory fallback без Redis)
+APScheduler>=3.10,<4.0      # фоновые задачи (деградация, уведомления)
+loguru>=0.7                 # логирование
+pydantic>=2.7               # модели
+pydantic-settings>=2.3      # конфигурация из .env
+python-dotenv>=1.0          # загрузка .env
+Pillow>=10.3                # карточки профиля (этап 5)
+
+# --- Dev / тесты ---
+pytest>=8.0
+pytest-asyncio>=0.23

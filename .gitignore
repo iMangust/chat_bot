@@ -1,0 +1,7 @@
+# Python compiled files
+__pycache__/
+*.pyc
+
+# Logs and temporary database files
+*.log
+*.db
