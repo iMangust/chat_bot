@@ -8,7 +8,14 @@ from aiogram.types import BufferedInputFile, CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.repositories import ActivityRepository, UserRepository
-from app.keyboards.inline import achievements_list, back_to_main, main_menu
+from aiogram.filters import Command
+from sqlalchemy import select
+
+from app.db.models import ChatMessageLog
+from app.keyboards.inline import (achievements_list, back_to_main, main_menu,
+                                  top_tabs)
+from app.services.leaderboard import (top_levels, top_messages, top_pets,
+                                      top_reactions, top_streaks)
 from app.services.activity import ActivityService
 from app.services.achievements import AchievementService
 from app.utils.formatting import progress_bar, xp_needed_for_level
@@ -91,24 +98,85 @@ async def ach_page(cb: CallbackQuery, session: AsyncSession) -> None:
     await ach_screen(cb, session, page=int(cb.data.split(":")[2]))
 
 
-@router.callback_query(F.data == "menu:top")
-async def top_screen(cb: CallbackQuery, session: AsyncSession) -> None:
-    users = UserRepository(session)
-    repo = ActivityRepository(session)
-    talkers = await users.top_by("messages_count", 10)
-    streaks = await users.top_by("streak_days", 5)
+PERIODS = {"day": "📅 День", "week": "🗓 Неделя", "all": "♾ Всё время"}
 
-    medals = ["🥇", "🥈", "🥉"]
-    lines = ["🏅 <b>Топы болтунов (за всё время)</b>\n"]
-    for i, u in enumerate(talkers, start=1):
-        m = medals[i - 1] if i <= 3 else f"{i}."
-        lines.append(f"{m} {u.first_name} — {u.messages_count} сообщ. (ур. {u.level})")
-    lines.append("\n🔥 <b>Серии дней</b>")
-    for i, u in enumerate(streaks, start=1):
-        m = medals[i - 1] if i <= 3 else f"{i}."
-        lines.append(f"{m} {u.first_name} — {u.streak_days} дн.")
-    await cb.message.edit_text("\n".join(lines), reply_markup=back_to_main())
+
+def _since_for(period: str, now) -> datetime | None:
+    if period == "day":
+        return now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if period == "week":
+        return now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=6)
+    return None
+
+
+async def _top_screen_text(session: AsyncSession, period: str) -> tuple[str, int | None]:
+    """Возвращает (текст топа, место текущего юзера в 💬-топе или None)."""
+    now = datetime.now(timezone.utc)
+    since = _since_for(period, now)
+    lines = [f"🏅 <b>Топы чата · {PERIODS[period]}</b>\n"]
+
+    talkers = await top_messages(session, since, 10)
+    my_rank = None
+    lines.append("💬 <b>Болтуны</b>")
+    if not talkers:
+        lines.append("   пока пусто — будь первым! 💬")
+    for i, (u, c) in enumerate(talkers, start=1):
+        m = _medal(i)
+        me = " 👈 <i>это ты</i>" if u.tg_id == _TOP_CTX.get("me") else ""
+        if u.tg_id == _TOP_CTX.get("me"):
+            my_rank = i
+        lines.append(f"{m} {u.first_name} — {c} сообщ. (ур. {u.level}){me}")
+
+    reactors = await top_reactions(session, since, 5)
+    if reactors:
+        lines.append("\n💖 <b>По полученным реакциям</b>")
+        for i, (u, c) in enumerate(reactors, start=1):
+            lines.append(f"{_medal(i)} {u.first_name} — {c}")
+
+    streaks = await top_streaks(session, 5)
+    if streaks:
+        lines.append("\n🔥 <b>Серии дней</b>")
+        for i, u in enumerate(streaks, start=1):
+            lines.append(f"{_medal(i)} {u.first_name} — {u.streak_days} дн.")
+
+    pets = await top_pets(session, 5)
+    if pets:
+        lines.append("\n🐾 <b>Питомцы</b>")
+        for i, (p, owner) in enumerate(pets, start=1):
+            lines.append(f"{_medal(i)} {p.name} (ур. {p.level}) · {owner}")
+
+    levels = await top_levels(session, 5)
+    if levels:
+        lines.append("\n🏅 <b>Уровни игроков</b>")
+        for i, u in enumerate(levels, start=1):
+            lines.append(f"{_medal(i)} {u.first_name} — ур. {u.level}")
+
+    lines.append("\n<i>/award — итоги прошлой недели с призами 🎁</i>")
+    return "\n".join(lines), my_rank
+
+
+# контекст «кто смотрит топ» (для подсветки своей строки)
+_TOP_CTX: dict[str, int] = {}
+
+
+@router.callback_query(F.data == "menu:top")
+@router.callback_query(F.data.startswith("top:"))
+async def top_screen(cb: CallbackQuery, session: AsyncSession) -> None:
+    period = cb.data.split(":")[1] if ":" in cb.data and cb.data != "menu:top" else "week"
+    if period not in PERIODS:
+        period = "week"
+    _TOP_CTX["me"] = cb.from_user.id
+    text, _rank = await _top_screen_text(session, period)
+    await cb.message.edit_text(text, reply_markup=top_tabs(period))
     await cb.answer()
+
+
+@router.message(Command("top"))
+async def cmd_top(message: Message, session: AsyncSession) -> None:
+    """Алиас команды — показывает недельный топ прямо в ЛС."""
+    _TOP_CTX["me"] = message.from_user.id
+    text, _ = await _top_screen_text(session, "week")
+    await message.answer(text, reply_markup=top_tabs("week"))
 
 
 @router.callback_query(F.data == "menu:settings")
@@ -123,12 +191,7 @@ async def settings_stub(cb: CallbackQuery) -> None:
     await cb.answer()
 
 
-# ---------- командные алиасы (UX кнопочный, команды дублируют) ----------
-@router.message(F.text == "/stats")
+# ---------- командный алиас статистики ----------
+@router.message(Command("stats"))
 async def cmd_stats(message: Message, session: AsyncSession) -> None:
-    await message.answer("👇 Воспользуйся меню:", reply_markup=main_menu())
-
-
-@router.message(F.text == "/top")
-async def cmd_top(message: Message, session: AsyncSession) -> None:
     await message.answer("👇 Воспользуйся меню:", reply_markup=main_menu())

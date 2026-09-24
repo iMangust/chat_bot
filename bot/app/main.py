@@ -16,7 +16,8 @@ from loguru import logger
 from app.config import get_settings
 from app.db.models import Base
 from app.db.session import DbMiddleware, engine, session_factory
-from app.handlers import shop, stats, start, tamagotchi, tracker, welcome
+from app.handlers import (games, settings, shop, social, start, stats,
+                         tamagotchi, tracker, welcome)
 from app.middlewares.throttle import ThrottleMiddleware
 from app.handlers.shop import seed_items
 from app.services.achievements import seed_achievements
@@ -47,6 +48,9 @@ async def on_startup(bot: Bot) -> None:
         BotCommand(command="stats", description="📊 Моя статистика"),
         BotCommand(command="ach", description="🏆 Достижения"),
         BotCommand(command="top", description="🏅 Топы"),
+        BotCommand(command="card", description="🖼 Карточка профиля"),
+        BotCommand(command="award", description="🎁 Итоги недели"),
+        BotCommand(command="settings", description="⚙️ Настройки"),
     ])
     logger.info("✅ bot started")
 
@@ -80,8 +84,11 @@ async def main() -> None:
         welcome.router,
         tracker.router,
         tamagotchi.router,
+        games.router,
         shop.router,
+        social.router,
         stats.router,
+        settings.router,
     )
 
     scheduler = build_scheduler(bot)
@@ -110,6 +117,8 @@ async def main() -> None:
             logger.info("starting long polling…")
             await dp.start_polling(
                 bot,
+                timeout=settings.polling_timeout,
+                
                 # реакции приходят только если разрешены явно + бот админ с правом реакций
                 allowed_updates=dp.resolve_used_update_types() + ["message_reaction"],
                 handle_signals=False,

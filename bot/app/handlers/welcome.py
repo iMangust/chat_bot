@@ -18,6 +18,7 @@ from loguru import logger
 
 from app.config import get_settings
 from app.db.repositories import UserRepository
+from app.services.achievements import AchievementService
 from app.handlers.start import WELCOME_DM
 from app.keyboards.inline import welcome_start_button
 
@@ -42,6 +43,17 @@ async def on_new_members(message: Message, bot: Bot, session: AsyncSession) -> N
             continue
         # регистрируем «заготовку» — onboarded=False до нажатия «Начать»
         await users.get_or_create(member.id, member.first_name, member.username)
+        # реферал: если новичок пришёл по deep-link `start=invite_<tg_id>`
+        if message.text and message.text.startswith("/start invite_"):
+            try:
+                inviter = int(message.text.split("invite_", 1)[1].split()[0])
+            except (ValueError, IndexError):
+                inviter = None
+            if inviter and inviter != member.id:
+                gained = await users.bump_stat(inviter, "invites", 1)
+                await users.add_xp_coins(inviter, xp=30, coins=get_settings().invite_reward_coins)
+                await AchievementService(session).check(inviter, {"invites": gained})
+                logger.info("referral credited: inviter={} new={}", inviter, member.id)
         try:
             await bot.send_message(
                 member.id,

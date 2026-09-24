@@ -17,6 +17,7 @@ from app.keyboards.inline import (
 from app.services.achievements import AchievementService
 from app.services.tamagotchi import SPECIES_DATA
 from app.utils.formatting import progress_bar, xp_needed_for_level
+from app.config import get_settings
 
 router = Router(name="start")
 
@@ -73,7 +74,12 @@ async def cmd_start(message: Message, state: FSMContext, session: AsyncSession,
             reply_markup=welcome_start_button(),
         )
         return
-    await message.answer("🏠 Главное меню:", reply_markup=main_menu())
+    invite_link = ""
+    me = await message.bot.get_me()
+    if me.username:
+        invite_link = (f"\n\n🤝 Пригласить друга: t.me/{me.username}"
+                       f"?start=invite_{user.tg_id} (+{get_settings().invite_reward_coins} 🪙)")
+    await message.answer("🏠 Главное меню:" + invite_link, reply_markup=main_menu())
 
 
 @router.callback_query(F.data == "onb:start")
