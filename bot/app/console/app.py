@@ -61,9 +61,9 @@ class ConfirmQuit(ModalScreen[bool]):
     ConfirmQuit { align: center middle; }
     #dlg { width: 60; height: auto; padding: 1 2; border: thick $primary;
            background: $surface; }
-    #dlg Buttons { margin-top: 1; horizontal-align: right; }
+    #dlg Horizontal { margin-top: 1; align-horizontal: right; width: 100%; }
+    #dlg Horizontal Button { margin-left: 2; }
     """
-
     def compose(self) -> ComposeResult:
         state = "Бот сейчас запущен — остановить его перед выходом?" \
             if runtime.state == "running" else "Выйти из оболочки?"
@@ -72,7 +72,7 @@ class ConfirmQuit(ModalScreen[bool]):
             yield Static(state, id="q")
             with Horizontal():
                 yield Button("Остановить и выйти", variant="error", id="yes")
-                yield Button("Отмена", variant="secondary", id="no")
+                yield Button("Отмена", variant="default", id="no")
 
     @on(Button.Pressed, "#yes")
     def _yes(self) -> None:
@@ -110,7 +110,7 @@ class EditSetting(ModalScreen[str | None]):
             yield Static("", id="err")
             with Horizontal():
                 yield Button("Сохранить", variant="primary", id="ok")
-                yield Button("Отмена", variant="secondary", id="cancel")
+                yield Button("Отмена", variant="default", id="cancel")
 
     @on(Input.Submitted)
     def _submit(self) -> None:
@@ -143,6 +143,7 @@ class StatusPanel(Static):
             yield Static(f"🐾 [b]TamaConsole v{__version__}[/b]", id="brand")
             yield Static("", id="state", classes="state")
             yield Static("", id="uptime")
+            yield Static("", id="clock-spacer")  # прижимает часы вправо
             yield Static("", id="clock", classes="clock")
 
     def watch_state_text(self, value: str) -> None:
@@ -158,11 +159,16 @@ class StatusPanel(Static):
             pass
 
     def refresh_now(self) -> None:
+        """Обновление панели. Вызывается по таймеру — не должен ронять приложение,
+        поэтому каждый query_one защищён (виджеты могут быть в процессе ремоунта)."""
         label, _color = STATE_LABELS.get(runtime.state, ("❓", "white"))
         err = f" · последняя ошибка: {runtime.last_error[:60]}" if runtime.last_error else ""
         self.state_text = f"{label}{err}"
         self.uptime_text = fmt_uptime(runtime.uptime_sec) if runtime.state == "running" else ""
-        self.query_one("#clock", Static).update(time.strftime("%H:%M:%S"))
+        try:
+            self.query_one("#clock", Static).update(time.strftime("%H:%M:%S"))
+        except Exception:  # noqa: BLE001 — виджет ещё/уже не примонтирован
+            pass
 
 
 class ControlsBar(Static):
@@ -173,7 +179,7 @@ class ControlsBar(Static):
         yield Button("⏹ Остановить", id="btn-stop", variant="error")
         yield Button("🔄 Перезапустить", id="btn-restart", variant="warning")
         yield Button("🧪 Проверить БД", id="btn-dbcheck", variant="primary")
-        yield Button("🚪 Выход", id="btn-quit", variant="secondary")
+        yield Button("🚪 Выход", id="btn-quit", variant="default")
 
 
 class LogsTab(Vertical):
@@ -354,7 +360,8 @@ class DatabaseTab(Vertical):
             async with session_factory() as s:
                 rows = (await s.execute(select(model).limit(200))).scalars().all()
             cols = [c.name for c in model.__table__.columns]
-            dt.clear(columns=[(c, c) for c in cols])
+            dt.clear(columns=True)
+            dt.add_columns(*[(c, c) for c in cols])
             for obj in rows:
                 vals = []
                 for c in cols:
@@ -377,7 +384,7 @@ class SettingsTab(Vertical):
         with Horizontal(id="set-toolbar"):
             yield Button("💾 Применить (сохранить .env)", id="set-save", variant="success")
             yield Button("🔄 Сохранить и перезапустить бота", id="set-restart", variant="warning")
-            yield Button("↻ Отменить несохранённое", id="set-discard", variant="secondary")
+            yield Button("↻ Отменить несохранённое", id="set-discard", variant="default")
         yield Static("", id="set-status")
 
     def on_mount(self) -> None:
@@ -392,8 +399,9 @@ class SettingsTab(Vertical):
     def _reload_table(self) -> None:
         env = settings_io.load_env()
         dt = self.query_one("#set-table", DataTable)
-        dt.clear(columns=[("Настройка", "title"), ("Значение", "value"),
-                          ("Ключ", "key")])
+        dt.clear(columns=True)
+        dt.add_columns(("Настройка", "title"), ("Значение", "value"),
+                       ("Ключ", "key"))
         for key, title, typ, _hint in settings_io.SETTINGS_SPEC:
             raw = env.get(key, "")
             shown = self._display_value(key, typ, raw)
@@ -532,19 +540,25 @@ class TamaConsoleApp(App):
 
     # ------------------------------------------------------------- lifecycle
     def on_mount(self) -> None:
-        self.run_action("autostart")
+        self._start_bot()  # запускает autostart как worker (run_action вернул бы coroutine)
         panel = self.query_one(StatusPanel)
         panel.refresh_now()
         self.set_interval(1.0, lambda: self.query_one(StatusPanel).refresh_now())
         self._update_buttons()
 
-    async def action_autostart(self) -> None:
+    @work(exclusive=True)
+    async def _start_bot(self) -> None:
         """Автозапуск, если включён AUTO_START=true в .env/окружении."""
         env = settings_io.load_env()
         flag = env.get("AUTO_START", "").lower() in ("1", "true", "yes", "да")
         if flag:
             self.log("AUTO_START=true → запускаю бота")
-            self.start_bot()
+            try:
+                await runtime.start()
+            except Exception as exc:  # noqa: BLE001
+                logger.error("автозапуск не удался: {}", exc)
+            finally:
+                self._update_buttons()
 
     async def on_unmount(self) -> None:
         ui_log_handler.set_callback(None)

@@ -3,7 +3,7 @@
 StatusPanel {
     height: 1;
     padding: 0 1;
-    background: $primary-darken-3;
+    background: $primary;
 }
 
 StatusPanel > Horizontal {
@@ -14,7 +14,9 @@ StatusPanel > Horizontal {
 #brand { width: auto; margin-right: 2; }
 #state { width: auto; margin-right: 2; }
 #uptime { width: auto; margin-right: 2; }
-.clock { position: absolute; right: 1; color: $text-muted; }
+/* часы прижаты вправо пустым stretch-виджетом перед ними (в Textual нет right) */
+#clock-spacer { width: 1fr; }
+.clock { width: auto; color: $text-muted; }
 
 ControlsBar {
     height: 3;
@@ -51,7 +53,7 @@ LogsTab, DashboardTab, DatabaseTab, SettingsTab, SearchTab {
     height: auto;
     margin-bottom: 1;
     padding: 0 1;
-    border: tall $surface-lighten-1;
+    border: tall $surface;
 }
 
 #db-toolbar, #set-toolbar {

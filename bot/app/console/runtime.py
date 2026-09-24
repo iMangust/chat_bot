@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from collections import deque
 from pathlib import Path
@@ -84,8 +85,10 @@ class BotRuntime:
         if self.state != "stopped":
             raise RuntimeError(f"бот уже в состоянии {self.state!r}")
         settings = get_settings()
-        if not settings.bot_token:
-            raise RuntimeError("BOT_TOKEN не задан — проверьте .env")
+        # при запуске из bat-файла токен можно передать переменной окружения
+        token = os.environ.get("TAMABOT_TOKEN_OVERRIDE") or settings.bot_token
+        if not token or token == "test":
+            raise RuntimeError("BOT_TOKEN не задан — проверьте .env или запустите через run.bat")
 
         self.state = "starting"
         self.last_error = None
@@ -94,7 +97,7 @@ class BotRuntime:
             init_redis()
 
             self.bot = Bot(
-                token=settings.bot_token,
+                token=token,
                 default=DefaultBotProperties(parse_mode=ParseMode.HTML),
             )
             try:
