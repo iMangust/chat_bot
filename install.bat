@@ -6,20 +6,31 @@ rem  Требуется установленный Python 3.11+ (в PATH как "py").
 rem ============================================================
 chcp 866 >nul
 title TamaBot - установка
+if not exist "%~dp0bot\requirements.txt" (
+    echo  [ОШИБКА] Не найдена папка bot с исходниками проекта.
+    echo  Положите install.bat в корень проекта, рядом с папкой bot\.
+    echo  Текущая папка: %CD%
+    pause
+    exit /b 1
+)
 cd /d "%~dp0bot"
 
 echo  [*] Проверка Python...
-py -3 --version >nul 2>&1
-if errorlevel 1 (
+set PYCMD=
+where py >nul 2>&1 && set PYCMD=py -3
+if not defined PYCMD where python >nul 2>&1 && set PYCMD=python
+if not defined PYCMD (
     echo  [ОШИБКА] Python не найден. Установите Python 3.11+ с python.org
     echo           (обязательно включите "Add to PATH" при установке).
     pause
     exit /b 1
 )
+%PYCMD% --version
 
 if not exist venv (
     echo  [*] Создание виртуального окружения venv...
-    py -3 -m venv venv || (echo  [ОШИБКА] venv не создан & pause & exit /b 1)
+    %PYCMD% -m venv venv
+    if errorlevel 1 (echo  [ОШИБКА] venv не создан & pause & exit /b 1)
 )
 
 echo  [*] Установка зависимостей (первый запуск - 2-5 минут)...
