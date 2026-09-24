@@ -176,12 +176,15 @@ python -m pytest tests -q        # ожидаем: 31 passed (включая п�
 ✅ Рефералы: deep-link `t.me/bot?start=invite_<id>` → +50 🪙 и ачивка «Знакомый»
 ✅ Rate-limit действий (throttle-middleware), graceful shutdown, APScheduler-задачи
    (decay 30 мин, очередь уведомлений 1 мин, стрики 00:15, отчёт/вечерний хинт/топ недели)
-✅ Тесты бизнес-логики: 25 passed
+✅ TamaConsole (Textual 8): вкладки Логи / Дашборд / БД / Настройки / Пользователи,
+   кнопки Пуск/Стоп/Рестарт, live-хвост логов, редактор .env из UI (`console.bat`)
+✅ BAT-оболочки install/run/console в кодировке cp866+CRLF (тестируются в CI-тестах)
+✅ Тесты бизнес-логики + форматные проверки: 31 passed
 
 Команды бота: `/start /top /stats /achievements /shop /award /card /settings /help`
 
-## 7. Отложено на v1.1+ (не блокирует запуск)
+## 7. Отложено на v1.3+ (не блокирует запуск)
 
-⏳ Alembic-миграции (пока `create_all`; при первой смене схемы добавить `alembic init`)
+⏳ Alembic-миграции (пока `create_all` + идемпотентные сиды; при первой смене схемы — `alembic init`)
 ⏳ Webhook-режим (для Windows Server не нужен — polling стабилен)
 ⏳ Ежемесячные лиги и косметические предметы (окрас/аксессуары — поле `settings_extra` уже есть)

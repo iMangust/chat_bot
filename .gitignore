@@ -4,4 +4,10 @@ __pycache__/
 
 # Logs and temporary database files
 *.log
-*.db__pycache__/
+*.db
+
+# Local env & caches
+.env
+.venv/
+venv/
+.pytest_cache/
