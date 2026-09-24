@@ -8,7 +8,7 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-__version__ = "1.1.0"
+__version__ = "1.2.2"
 
 
 class Settings(BaseSettings):
