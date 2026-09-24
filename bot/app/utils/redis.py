@@ -83,3 +83,18 @@ async def release_lock(name: str) -> None:
     r = await _try_redis()
     if r is not None:
         await r.delete(f"lock:{name}")
+
+
+# ---------------------------------------------------------------------------
+# Простое in-memory/Redis кэширование строк (версии карточек и т.п.)
+# ---------------------------------------------------------------------------
+async def mem_cached_set(key: str, value: str, ttl_sec: int = 3600) -> str | None:
+    """Ставит значение, возвращает ПРЕДЫДУЩЕЕ (или None). Без Redis — mem-store."""
+    r = await _try_redis()
+    if r is not None:
+        prev = await r.getset(f"cache:{key}", value, ex=ttl_sec)
+        return prev
+    k = f"cache:{key}"
+    prev = _mem_store.get(k)
+    _mem_store[k] = value
+    return prev if isinstance(prev, str) else None

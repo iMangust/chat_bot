@@ -8,7 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.models import (
-    ChatMessageLog, Pet, PetActionLog, ReactionLog, User, UserAchievement,
+    ChatMessageLog, NotificationSetting, Pet, PetActionLog, ReactionLog,
+    User, UserAchievement, UserStat,
 )
 
 
@@ -64,6 +65,71 @@ class UserRepository:
             .distinct()
         )
         return list((await self.session.execute(stmt)).scalars())
+
+    # ---- пользовательские счётчики (invites и т.п.) ----
+    async def bump_stat(self, tg_id: int, key: str, delta: int = 1) -> int:
+        """Атомарно увеличивает счётчик UserStat; возвращает новое значение."""
+        row = (await self.session.execute(
+            select(UserStat).where(UserStat.user_id == tg_id, UserStat.key == key)
+        )).scalar_one_or_none()
+        if row is None:
+            row = UserStat(user_id=tg_id, key=key, value=max(0, delta))
+            self.session.add(row)
+        else:
+            row.value = max(0, row.value + delta)
+        await self.session.flush()
+        return row.value
+
+    async def get_stat(self, tg_id: int, key: str) -> int:
+        row = (await self.session.execute(
+            select(UserStat).where(UserStat.user_id == tg_id, UserStat.key == key)
+        )).scalar_one_or_none()
+        return row.value if row else 0
+
+    # ---- персональные настройки уведомлений ----
+    async def notif_settings(self, tg_id: int) -> NotificationSetting:
+        ns = await self.session.get(NotificationSetting, tg_id)
+        if ns is None:
+            ns = NotificationSetting(user_id=tg_id)
+            self.session.add(ns)
+            await self.session.flush()
+        return ns
+
+    async def top_period_messages(self, since: datetime, limit: int = 10) -> list[tuple[User, int]]:
+        """Топ за период по засчитанным сообщениям: [(User, cnt)]."""
+        cnt = func.count().label("cnt")
+        sub = (
+            select(ChatMessageLog.user_id.label("uid"), cnt)
+            .where(ChatMessageLog.created_at >= since, ChatMessageLog.is_counted.is_(True))
+            .group_by(ChatMessageLog.user_id)
+            .order_by(cnt.desc())
+            .limit(limit)
+            .subquery()
+        )
+        stmt = (
+            select(User, sub.c.cnt)
+            .join(sub, sub.c.uid == User.tg_id)
+            .order_by(sub.c.cnt.desc())
+        )
+        return [(r[0], r[1]) for r in (await self.session.execute(stmt)).all()]
+
+    async def top_period_reactions(self, since: datetime, limit: int = 10) -> list[tuple[User, int]]:
+        """Топ за период по ПОЛУЧЕННЫМ реакциям (засчитанным)."""
+        cnt = func.count().label("cnt")
+        sub = (
+            select(ReactionLog.to_user.label("uid"), cnt)
+            .where(ReactionLog.created_at >= since, ReactionLog.is_counted.is_(True))
+            .group_by(ReactionLog.to_user)
+            .order_by(cnt.desc())
+            .limit(limit)
+            .subquery()
+        )
+        stmt = (
+            select(User, sub.c.cnt)
+            .join(sub, sub.c.uid == User.tg_id)
+            .order_by(sub.c.cnt.desc())
+        )
+        return [(r[0], r[1]) for r in (await self.session.execute(stmt)).all()]
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +228,47 @@ class PetRepository:
         self.session.add(PetActionLog(pet_id=pet_id, action=action,
                                       value=value, meta=meta or {}))
         await self.session.flush()
+
+    # ---- друзья и соревнование питомцев (Этап 6) ----
+    async def friends(self, pet_id: int) -> list["PetFriend"]:
+        from app.db.models import PetFriend
+        stmt = select(PetFriend).where(PetFriend.pet_id == pet_id)
+        return list((await self.session.execute(stmt)).scalars())
+
+    async def add_friend(self, pet_id: int, friend_pet_id: int) -> bool:
+        """Добавляет дружбу в обе стороны; False — если уже дружат."""
+        from app.db.models import PetFriend
+        dup = (await self.session.execute(
+            select(PetFriend).where(PetFriend.pet_id == pet_id,
+                                    PetFriend.friend_pet_id == friend_pet_id)
+        )).scalar_one_or_none()
+        if dup is not None:
+            return False
+        self.session.add(PetFriend(pet_id=pet_id, friend_pet_id=friend_pet_id))
+        self.session.add(PetFriend(pet_id=friend_pet_id, friend_pet_id=pet_id))
+        await self.session.flush()
+        return True
+
+    async def top_pets(self, limit: int = 10) -> list[Pet]:
+        """Соревнование питомцев: по уровню, затем по XP."""
+        stmt = select(Pet).order_by(Pet.level.desc(), Pet.xp.desc()).limit(limit)
+        return list((await self.session.execute(stmt)).scalars())
+
+
+# ---------------------------------------------------------------------------
+# Notification settings
+# ---------------------------------------------------------------------------
+class NotificationRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def get_or_create(self, user_id: int) -> NotificationSetting:
+        ns = await self.session.get(NotificationSetting, user_id)
+        if ns is None:
+            ns = NotificationSetting(user_id=user_id)
+            self.session.add(ns)
+            await self.session.flush()
+        return ns
 
 
 # ---------------------------------------------------------------------------

@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Pet, PetStage
-from app.utils.formatting import clamp, stat_bar
+from app.utils.formatting import clamp, season_for, stat_bar, weather_info
 
 
 def _aware(dt: datetime) -> datetime:
@@ -24,6 +24,20 @@ def _aware(dt: datetime) -> datetime:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
+
+
+# сезонные множители скорости деградации (Этап 6: погода/сезоны)
+SEASON_DECAY_MULT = {
+    "winter": {"energy": 1.3, "hunger": 1.2},
+    "spring": {"happy": 0.8},
+    "summer": {"hygiene": 1.2, "hunger": 1.1},
+    "autumn": {"happy": 1.15},
+}
+
+
+def season_decay_mult(season: str, stat_key: str) -> float:
+    """Множитель деградации стата для сезона (1.0 = без модификации)."""
+    return SEASON_DECAY_MULT.get(season, {}).get(stat_key, 1.0)
 
 # скорость деградации статов за 1 час
 DECAY_PER_HOUR = {
@@ -181,10 +195,16 @@ class TamagotchiService:
         changed = True
         sp = _species(pet)
         d = sp["decay"]
-        decay_hunger = DECAY_PER_HOUR["hunger"] * d.get("hunger", 1.0)
-        decay_happy = DECAY_PER_HOUR["happiness"] * d.get("happiness", 1.0)
-        decay_energy_day = DECAY_PER_HOUR["energy_day"] * d.get("energy", 1.0)
-        decay_hygiene = DECAY_PER_HOUR["hygiene"] * d.get("hygiene", 1.0)
+        # сезонная модификация (Этап 6): зимой энергия падает быстрее и т.д.
+        try:
+            from app.config import get_settings
+            season = season_for(now) if get_settings().weather_enabled else ""
+        except Exception:
+            season = ""
+        decay_hunger = DECAY_PER_HOUR["hunger"] * d.get("hunger", 1.0) * season_decay_mult(season, "hunger")
+        decay_happy = DECAY_PER_HOUR["happiness"] * d.get("happiness", 1.0) * season_decay_mult(season, "happy")
+        decay_energy_day = DECAY_PER_HOUR["energy_day"] * d.get("energy", 1.0) * season_decay_mult(season, "energy")
+        decay_hygiene = DECAY_PER_HOUR["hygiene"] * d.get("hygiene", 1.0) * season_decay_mult(season, "hygiene")
 
         if pet.is_sleeping:
             if pet.sleep_until and now >= _aware(pet.sleep_until):
@@ -273,10 +293,10 @@ class TamagotchiService:
             return "😴 Питомец спит — не мешай!"
         if pet.energy < 15:
             return "😩 Питомец слишком устал для игр. Пусть поспит!"
-        ok, wait = self._check_cooldown(pet, "play", 120, now)
+        ok, wait = self._check_cooldown(pet, "game", 120, now)
         if not ok:
             return f"⏳ Питомец запыхался! Подожди {wait} сек."
-        self._set_cooldown(pet, "play", now)
+        self._set_cooldown(pet, "game", now)
 
         sp = _species(pet)
         mult = sp["bonus"]["play_happy"]
@@ -292,6 +312,25 @@ class TamagotchiService:
         pet.happiness = clamp(pet.happiness + 5 * mult + pref)
         await self.add_pet_xp(pet, xp)
         return f"🙂 Не повезло, но питомцу всё равно весело. +{xp} XP"
+
+    # ------------------------------------------------------------------
+    # Мини-игры (Этап 3.5): честная игра с характеристиками питомца
+    # ------------------------------------------------------------------
+    @staticmethod
+    def rps_beats(hand: str) -> str:
+        """Ход, который побеждает указанный."""
+        return {"rock": "paper", "paper": "scissors", "scissors": "rock"}[hand]
+
+    def guess_range(self, pet: Pet) -> tuple[int, int]:
+        """Диапазон «угадай число»: интеллект расширяет подсказки (сужает диапазон)."""
+        half = max(3, 10 - pet.intellect // 2)   # L-интеллект 1 → ±10, 15+ → ±3
+        secret = random.randint(1, 20)
+        lo, hi = max(1, secret - half), min(20, secret + half)
+        return secret, (lo, hi)
+
+    def reaction_ms_budget(self, pet: Pet) -> int:
+        """Бюджет реакции в мс: ловкость даёт доп. время (база 1500 + 60*agility)."""
+        return 1500 + pet.agility * 60
 
     async def sleep(self, pet: Pet, hours: int = 8) -> str:
         now = datetime.now(timezone.utc)
@@ -366,7 +405,11 @@ class TamagotchiService:
         return f"🚶 Питомец ушёл гулять на {hours} ч. Вернётся с новостями!"
 
     def finish_walk_event(self, pet: Pet) -> tuple[str, int, int]:
-        """Случайное событие прогулки. Возвращает (текст, delta_coins, delta_xp)."""
+        """Случайное событие прогулки. Возвращает (текст, delta_coins, delta_xp).
+
+        Дружба питомцев (Этап 6): «познакомился» с шансом ~10% — бот позже
+        подберёт случайного питомца-друга (флаг в settings_extra['pending_friend']).
+        """
         roll = random.random()
         sp = _species(pet)
         coin_mult = sp["bonus"]["coin_mult"]
@@ -375,6 +418,11 @@ class TamagotchiService:
         if roll < 0.35:
             c = int(random.randint(5, 15) * coin_mult)
             return f"🪙 Нашёл монетки на прогулке! +{c} монет", c, int(10 * xp_mult)
+        if roll < 0.45:
+            pet.settings_extra = {**(pet.settings_extra or {}), "pending_friend": True}
+            pet.happiness = clamp(pet.happiness + 10 + pref_bonus)
+            return ("🐾 Познакомился с другим питомцем! Счастье +" + str(10 + pref_bonus)
+                    + "\n   (возможно, станет другом — загляни в 🐾 Друзья)"), 0, int(12 * xp_mult)
         if roll < 0.55:
             pet.happiness = clamp(pet.happiness + 10 + pref_bonus)
             return "🐾 Познакомился с другим питомцем! Счастье +" + str(10 + pref_bonus), 0, int(12 * xp_mult)
@@ -428,6 +476,13 @@ class TamagotchiService:
             f"💭 Настроение: {MOOD_TEXT[mood]}",
             f"📈 Характеристики: 💪{pet.strength} 🏃{pet.agility} 🧠{pet.intellect}",
         ]
+        try:
+            w = weather_info()
+            lines.append(f"🌦️ Погода: {w['icon']} {w['name']} — {w['note']}")
+            if "holiday_icon" in w:
+                lines.append(f"{w['holiday_icon']} {w['holiday_note']}")
+        except Exception:
+            pass
         if pet.walk_until:
             lines.append("🚶 Сейчас на прогулке…")
         return "\n".join(lines)

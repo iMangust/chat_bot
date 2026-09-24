@@ -91,6 +91,13 @@ ACHIEVEMENTS: list[AchievementDef] = [
     AchievementDef("first_steps", "Первый шаг", "Пройти онбординг", "🐣",
                    AchievementCategory.secret, ConditionType.messages_total, 1, 25, 10,
                    is_hidden=True),
+    AchievementDef("walk_friend", "Новые знакомства", "Завести друга-питомца на прогулке", "💞",
+                   AchievementCategory.secret, ConditionType.pet_walks, 1, 80, 25,
+                   is_hidden=True, rarity=AchievementRarity.rare),
+    # 🎮 Мини-игры (Этап 3.5)
+    AchievementDef("games_won_10", "Игумен", "Выиграть 10 мини-игр", "🎮",
+                   AchievementCategory.activity, ConditionType.games_won, 10, 120, 30,
+                   rarity=AchievementRarity.rare),
 ]
 
 _BY_CODE = {a.code: a for a in ACHIEVEMENTS}

@@ -131,6 +131,7 @@ class ConditionType(str, enum.Enum):
     top1_day = "top1_day"
     level = "level"          # глобальный уровень пользователя
     coins_earned = "coins_earned"
+    games_won = "games_won"  # победы в мини-играх (Этап 3.5)
 
 
 class Achievement(Base):
@@ -302,3 +303,27 @@ class LeaderboardSnapshot(Base):
     category: Mapped[str] = mapped_column(String(32))   # messages/reactions/level/pet
     data: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class UserStat(Base):
+    """Пользовательские счётчики для ачивок (invites и т.п.)."""
+    __tablename__ = "user_stats"
+    __table_args__ = (UniqueConstraint("user_id", "key", name="uq_user_stat"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.tg_id", ondelete="CASCADE"))
+    key: Mapped[str] = mapped_column(String(32))
+    value: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class NotificationSetting(Base):
+    """Персональные настройки уведомлений (Этап 6, экран ⚙️ Настройки)."""
+    __tablename__ = "notification_settings"
+
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.tg_id", ondelete="CASCADE"),
+                                         primary_key=True, autoincrement=False)
+    pet_reminders: Mapped[bool] = mapped_column(Boolean, default=True)   # «питомец скучает»
+    streak_reminders: Mapped[bool] = mapped_column(Boolean, default=True)  # стрик под угрозой / сгорел
+    achievement_notifications: Mapped[bool] = mapped_column(Boolean, default=True)
+    daily_report: Mapped[bool] = mapped_column(Boolean, default=True)    # ежедневный отчёт 20:00 UTC

@@ -47,6 +47,16 @@ class Settings(BaseSettings):
     # Администраторы бота (tg_id), через запятую в env: ADMIN_IDS=1,2
     admin_ids: list[int] = []
 
+    # --- Уведомления / вовлечение (Этап 6) ---
+    tz_offset_hours: int = 3             # смещение МСК для «ночной совы» и праздников
+    daily_report_hour_utc: int = 17      # ежедневный отчёт (17 UTC ≈ 20 МСК)
+    morning_reminder_hour_utc: int = 7   # утреннее напоминание (7 UTC ≈ 10 МСК)
+    evening_reminder_hour_utc: int = 16  # вечерний дайджест/«строк под угрозой» (16 UTC ≈ 19 МСК)
+    pet_warning_min_hours: int = 6       # не чаще одного «питомец скучает» в N часов
+    streak_warn_threshold_sec: int = 6 * 3600  # предупреждать о стрике за 6 ч до полуночи
+    invite_reward_coins: int = 50        # награда пригласившему за друга
+    weather_enabled: bool = True         # сезонная модификация деградации
+
 
 @lru_cache
 def get_settings() -> Settings:
