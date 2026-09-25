@@ -1,4 +1,4 @@
-# 🐾 TamaBot v1.2.5 — развлекательный Telegram-бот (тамагочи + достижения + топы)
+# 🐾 TamaBot v1.2.9 — развлекательный Telegram-бот (тамагочи + достижения + топы)
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
 [![aiogram](https://img.shields.io/badge/aiogram-3.x-green.svg)](https://docs.aiogram.dev/)
@@ -148,7 +148,7 @@ MIT. Полная инструкция по эксплуатации, чек-л�
 
 ### console.bat: ModuleNotFoundError: No module named 'textual'
 
-����⮢�� �����窠 �⠢���� ����� � ��⠫�묨 ����ᨬ���ﬨ �१ install.bat (requirements.txt). �᫨ �訡�� ������:
-1. ������� install.bat ����୮ - �� ����⠭���� textual � venv ���.
-2. ������ ��ਠ�� ������: bot\venv\Scripts\python.exe -m pip install textual
-3. �����: ��⥬�� pip (Python 3.13 �� AppData) �� ���室�� - �����窥 �㦥� ������ venv ���, ���⮬� console.bat ⥯��� ᠬ �஢���� ����稥 ����� � ���᪠�뢠�� �襭��.
+Текстовая оболочка ставится вместе с остальными зависимостями через install.bat (requirements.txt). Если ошибка появилась:
+1. Запустите install.bat заново — он доустановит textual в venv бота (проверка и предложение установки добавлены в v1.2.9).
+2. Быстрый вариант вручную: `bot\venv\Scripts\python.exe -m pip install textual`
+3. Важно: системный pip (например, Python 3.13 из AppData) не подходит — оболочке нужен именно venv бота, поэтому console.bat сам запускает модуль из `bot\venv` и корректно сообщает об ошибке.

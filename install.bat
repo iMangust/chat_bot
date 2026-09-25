@@ -58,6 +58,24 @@ pause
 exit /b 1
 :pipok
 
+rem --- Проверка: ключевые пакеты реально в venv (а не "в систему")
+venv\Scripts\python.exe -c "import textual" >nul 2>nul
+if not errorlevel 1 goto :depsok
+echo  [ВНИМАНИЕ] Не найден пакет textual внутри venv.
+echo             Он нужен для оболочки console.bat (устанавливается из requirements.txt).
+echo             Если вы видите это сообщение - обновите исходники (git pull) и
+echo             запустите install.bat заново. Пробовать поставить textual сейчас? (y/n)
+choice /c yn /n >nul
+if errorlevel 2 goto :depsok
+venv\Scripts\python.exe -m pip install "textual>=0.63"
+if not errorlevel 1 goto :depsok2
+echo  [ОШИБКА] Не удалось установить textual. console.bat работать не будет,
+echo           но run.bat (обычный запуск бота) - заработает.
+goto :depsok
+:depsok2
+echo  [OK] textual установлен в venv.
+:depsok
+
 if exist .env goto :envok
 copy .env.example .env >nul
 echo  [*] Создан .env из примера - ЗАПОЛНИТЕ его перед запуском:
