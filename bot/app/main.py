@@ -41,18 +41,53 @@ def _make_fsm_storage(redis_url: str):
     которую Memurai для Windows и старый Redis не понимают — падение
     с ошибкой \"unknown command 'HELLO'\". Фиксим двумя уровнями:
       1) protocol=2 (RESP2) — стандартный протокол для любого Redis >= 2.6;
-      2) graceful fallback на MemoryStorage, если Redis вообще недоступен.
+      2) graceful fallback на MemoryStorage, если Redis недоступен
+         ИЛИ несовместим (проверка PING выполняется сразу, т.к.
+         redis-py соединяется лениво и ошибки всплыли бы только при
+         первом сообщении пользователя).
+
+    ВАЖНО: RedisStorage принимает именно экземпляр Redis, а не
+    ConnectionPool (pool передаётся конструктору Redis).
     """
     from aiogram.fsm.storage.memory import MemoryStorage
     try:
-        from redis.asyncio import ConnectionPool
-        pool = ConnectionPool.from_url(redis_url, protocol=2)
-        storage = RedisStorage(redis=pool)
+        from redis.asyncio import ConnectionPool, Redis
+        pool = ConnectionPool.from_url(
+            redis_url,
+            protocol=2,
+            decode_responses=True,
+            socket_timeout=5,
+            socket_connect_timeout=5,
+        )
+        storage = RedisStorage(redis=Redis(connection_pool=pool))
         logger.info("FSM: RedisStorage (protocol=2/RESP2 — совместимо со старым Redis/Memurai)")
         return storage
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"Redis недоступен для FSM ({exc!r}) — использую MemoryStorage "
                        f"(стейты сбрасываются при рестарте; для dev допустимо)")
+        return MemoryStorage()
+
+
+async def probe_fsm_storage(storage):
+    """Активная проверка хранилища FSM (PING).
+
+    Возвращает исходное хранилище, если оно рабочее; иначе —
+    MemoryStorage с понятным предупреждением в логе. Вызывается
+    ДО старта long polling, чтобы не ловить ошибки на апдейтах.
+    """
+    from aiogram.fsm.storage.base import StorageKey
+    from aiogram.fsm.storage.memory import MemoryStorage
+
+    if isinstance(storage, MemoryStorage):
+        return storage
+    try:
+        await storage.redis.ping()
+        await storage.get_state(key=StorageKey(bot_id=0, chat_id=0, user_id=0))
+        return storage
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            f"FSM-хранилище (Redis) проверено и отключено ({type(exc).__name__}: {exc}) — "
+            f"перехожу на MemoryStorage (кулдауны стейтов сбрасываются при рестарте)")
         return MemoryStorage()
 
 
@@ -90,6 +125,7 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     storage = _make_fsm_storage(settings.redis_url)
+    storage = await probe_fsm_storage(storage)  # PING до поллинга: несовместимый Redis -> MemoryStorage
 
     dp = Dispatcher(storage=storage)
     # мидлвары: сессия БД — глобально, throttle — только на callbacks

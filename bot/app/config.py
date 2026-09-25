@@ -8,7 +8,7 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-__version__ = "1.3.2"
+__version__ = "1.3.3"
 
 
 class Settings(BaseSettings):
@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     streak_warn_threshold_sec: int = 6 * 3600  # предупреждать о стрике за 6 ч до полуночи
     invite_reward_coins: int = 50        # награда пригласившему за друга
     weather_enabled: bool = True         # сезонная модификация деградации
+    redis_socket_timeout: int = 5      # таймауты Redis (socket/connect), сек
 
 
 @lru_cache

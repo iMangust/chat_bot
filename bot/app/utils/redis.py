@@ -2,12 +2,18 @@
 
 Если Redis недоступен — graceful fallback на in-memory словарь
 (для разработки; в проде Redis обязателен).
+
+ВАЖНО про TTL: redis-py>=5 принимает только int или datetime.timedelta
+(строки вызывают DataError "ex must be datetime.timedelta or int").
+Все вызывающие места нормализуют ttl через _norm_ttl().
 """
 from __future__ import annotations
 
+import datetime as dt
 import time
 from typing import Any
 
+from loguru import logger
 from redis.asyncio import Redis
 
 from app.config import get_settings
@@ -18,6 +24,21 @@ redis_client: Redis | None = None
 
 # Fallback для dev без Redis
 _mem_store: dict[str, float] = {}
+
+
+def _norm_ttl(ttl_sec: Any) -> int:
+    """Нормализует TTL к целому числу секунд (int).
+
+    Совместимо с redis-py 5+/8+, где ex должен быть int/timedelta.
+    Дробные значения (например, THROTTLE_SEC = 1.5) округляются вверх,
+    минимум — 1 секунда.
+    """
+    import math
+    try:
+        value = math.ceil(float(ttl_sec))
+    except (TypeError, ValueError):
+        value = 1
+    return max(value, 1)
 
 
 def init_redis() -> Redis:
@@ -32,8 +53,8 @@ def init_redis() -> Redis:
         _settings.redis_url,
         decode_responses=True,
         protocol=2,
-        socket_timeout=5,
-        socket_connect_timeout=5,
+        socket_timeout=getattr(_settings, "redis_socket_timeout", 5),
+        socket_connect_timeout=getattr(_settings, "redis_socket_timeout", 5),
     )
     return redis_client
 
@@ -45,29 +66,44 @@ async def close_redis() -> None:
         redis_client = None
 
 
+_warned_errors: set[str] = set()
+
+
 async def _try_redis() -> Any:
-    """Возвращает рабочий redis-клиент или None (при недоступности)."""
+    """Возвращает рабочий redis-клиент или None (при недоступности).
+
+    Ошибки команд (например, ResponseError от старого сервера) логируются
+    один раз на тип ошибки, чтобы не спамить в лог при каждом апдейте.
+    """
     global redis_client
     if redis_client is None:
         return None
     try:
         await redis_client.ping()
         return redis_client
-    except Exception:
+    except Exception as exc:  # noqa: BLE001 — fallback по замыслу
+        key = type(exc).__name__
+        if key not in _warned_errors:
+            _warned_errors.add(key)
+            logger.warning(
+                f"Redis недоступен ({key}: {exc}) — переключаюсь на in-memory "
+                f"кулдауны/кэш (сбрасываются при рестарте)"
+            )
         return None
 
 
-async def set_cooldown(key: str, ttl_sec: int) -> bool:
+async def set_cooldown(key: str, ttl_sec: Any) -> bool:
     """Ставит кулдаун. Возвращает True, если кулдаун новый (можно засчитывать)."""
     r = await _try_redis()
     if r is not None:
-        # SET NX EX — атомарно: False, если ключ уже есть
-        return bool(await r.set(f"cd:{key}", "1", nx=True, ex=ttl_sec))
+        # SET NX EX — атомарно: False, если ключ уже есть.
+        # ex обязан быть int (redis-py>=5), поэтому _norm_ttl.
+        return bool(await r.set(f"cd:{key}", "1", nx=True, ex=_norm_ttl(ttl_sec)))
     now = time.monotonic()
     exp = _mem_store.get(f"cd:{key}")
     if exp is not None and exp > now:
         return False
-    _mem_store[f"cd:{key}"] = now + ttl_sec
+    _mem_store[f"cd:{key}"] = now + float(_norm_ttl(ttl_sec))
     return True
 
 
@@ -87,7 +123,7 @@ async def acquire_lock(name: str, ttl_sec: int = 60) -> bool:
     """Простой Redis-lock для задач планировщика (масштабирование на N воркеров)."""
     r = await _try_redis()
     if r is not None:
-        return bool(await r.set(f"lock:{name}", "1", nx=True, ex=ttl_sec))
+        return bool(await r.set(f"lock:{name}", "1", nx=True, ex=_norm_ttl(ttl_sec)))
     return True  # без Redis один инстанс — локи не нужны
 
 
@@ -104,7 +140,7 @@ async def mem_cached_set(key: str, value: str, ttl_sec: int = 3600) -> str | Non
     """Ставит значение, возвращает ПРЕДЫДУЩЕЕ (или None). Без Redis — mem-store."""
     r = await _try_redis()
     if r is not None:
-        prev = await r.getset(f"cache:{key}", value, ex=ttl_sec)
+        prev = await r.getset(f"cache:{key}", value, ex=_norm_ttl(ttl_sec))
         return prev
     k = f"cache:{key}"
     prev = _mem_store.get(k)
