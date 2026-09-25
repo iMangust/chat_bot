@@ -1,9 +1,6 @@
-# Compiled files
 __pycache__/
 *.pyc
-
-# Environment and IDE
+logs/
 .env
-.env.local
-.vscode/
-.idea/
+*.sqlite
+venv/
