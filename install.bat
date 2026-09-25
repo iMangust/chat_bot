@@ -1,23 +1,25 @@
 @echo off
 rem ============================================================
-rem  TamaBot - первичная установка: Python-venv + зависимости.
-rem  Запустить один раз после копирования проекта на сервер.
-rem  Требуется установленный Python 3.11+ (в PATH как "py").
+rem  TamaBot - яхЁтшўэр  єёЄрэютър: Python-venv + чртшёшьюёЄш.
+rem  ╟ряєёЄшЄ№ юфшэ Ёрч яюёых ъюяшЁютрэш  яЁюхъЄр эр ёхЁтхЁ.
+rem  ╥ЁхсєхЄё  єёЄрэютыхээ√щ Python 3.11+ (т PATH ъръ "py").
 rem ============================================================
-chcp 866 >nul
-title TamaBot - установка
+chcp 1251 >nul
+set PYTHONUTF8=
+set PYTHONIOENCODING=cp1251
+title TamaBot - єёЄрэютър
 if exist "%~dp0bot\requirements.txt" goto :srcok
-echo  [ОШИБКА] Не найдена папка bot с исходниками проекта.
-echo  Положите install.bat в корень проекта, рядом с папкой bot\.
-echo  Текущая папка: %CD%
+echo  [╬╪╚┴╩└] ═х эрщфхэр яряър bot ё шёїюфэшърьш яЁюхъЄр.
+echo  ╧юыюцшЄх install.bat т ъюЁхэ№ яЁюхъЄр, Ё фюь ё яряъющ bot\.
+echo  ╥хъє∙р  яряър: %CD%
 pause
 exit /b 1
 :srcok
 cd /d "%~dp0bot"
 
-echo  [*] Проверка Python...
-rem --- Python: ищем в PATH через "where", без вложенных if-блоков
-rem     (вложенные скобки + errorlevel ломают разбор на некоторых сборках cmd)
+echo  [*] ╧ЁютхЁър Python...
+rem --- Python: ш∙хь т PATH ўхЁхч "where", схч тыюцхээ√ї if-сыюъют
+rem     (тыюцхээ√х ёъюсъш + errorlevel ыюьр■Є ЁрчсюЁ эр эхъюЄюЁ√ї ёсюЁърї cmd)
 set PYCMD=
 where py.exe >nul 2>nul
 if not errorlevel 1 set PYCMD=py
@@ -26,66 +28,66 @@ where python.exe >nul 2>nul
 if not errorlevel 1 set PYCMD=python
 :pyfound
 if defined PYCMD goto :pyok
-echo  [ОШИБКА] Python не найден. Установите Python 3.11+ с python.org
-echo           Обязательно включите "Add to PATH" при установке.
+echo  [╬╪╚┴╩└] Python эх эрщфхэ. ╙ёЄрэютшЄх Python 3.11+ ё python.org
+echo           ╬с чрЄхы№эю тъы■ўшЄх "Add to PATH" яЁш єёЄрэютъх.
 pause
 exit /b 1
 :pyok
-echo  [*] Найден интерпретатор: %PYCMD%
+echo  [*] ═рщфхэ шэЄхЁяЁхЄрЄюЁ: %PYCMD%
 "%PYCMD%" --version
 if not errorlevel 1 goto :verok
-echo  [ОШИБКА] Команда проверки версии Python завершилась с ошибкой.
+echo  [╬╪╚┴╩└] ╩юьрэфр яЁютхЁъш тхЁёшш Python чртхЁ°шырё№ ё ю°шсъющ.
 pause
 exit /b 1
 :verok
 
 if exist venv goto :venvok
-echo  [*] Создание виртуального окружения venv...
+echo  [*] ╤ючфрэшх тшЁЄєры№эюую юъЁєцхэш  venv...
 "%PYCMD%" -m venv venv
 if not errorlevel 1 goto :venvcreated
-echo  [ОШИБКА] venv не создан.
+echo  [╬╪╚┴╩└] venv эх ёючфрэ.
 pause
 exit /b 1
 :venvcreated
 :venvok
 
-echo  [*] Установка зависимостей (первый запуск - 2-5 минут)...
+echo  [*] ╙ёЄрэютър чртшёшьюёЄхщ (яхЁт√щ чряєёъ - 2-5 ьшэєЄ)...
 venv\Scripts\python.exe -m pip install --upgrade pip >nul
 venv\Scripts\python.exe -m pip install -r requirements.txt
 if not errorlevel 1 goto :pipok
-echo  [ОШИБКА] pip install завершился с ошибкой - проверьте интернет/антивирус.
+echo  [╬╪╚┴╩└] pip install чртхЁ°шыё  ё ю°шсъющ - яЁютхЁ№Єх шэЄхЁэхЄ/рэЄштшЁєё.
 pause
 exit /b 1
 :pipok
 
-rem --- Проверка: ключевые пакеты реально в venv (а не "в систему")
+rem --- ╧ЁютхЁър: ъы■ўхт√х яръхЄ√ Ёхры№эю т venv (р эх "т ёшёЄхьє")
 venv\Scripts\python.exe -c "import textual" >nul 2>nul
 if not errorlevel 1 goto :depsok
-echo  [ВНИМАНИЕ] Не найден пакет textual внутри venv.
-echo             Он нужен для оболочки console.bat (устанавливается из requirements.txt).
-echo             Если вы видите это сообщение - обновите исходники (git pull) и
-echo             запустите install.bat заново. Пробовать поставить textual сейчас? (y/n)
+echo  [┬═╚╠└═╚┼] ═х эрщфхэ яръхЄ textual тэєЄЁш venv.
+echo             ╬э эєцхэ фы  юсюыюўъш console.bat (єёЄрэртыштрхЄё  шч requirements.txt).
+echo             ┼ёыш т√ тшфшЄх ¤Єю ёююс∙хэшх - юсэютшЄх шёїюфэшъш (git pull) ш
+echo             чряєёЄшЄх install.bat чрэютю. ╧ЁюсютрЄ№ яюёЄртшЄ№ textual ёхщўрё? (y/n)
 choice /c yn /n >nul
 if errorlevel 2 goto :depsok
 venv\Scripts\python.exe -m pip install "textual>=0.63"
 if not errorlevel 1 goto :depsok2
-echo  [ОШИБКА] Не удалось установить textual. console.bat работать не будет,
-echo           но run.bat (обычный запуск бота) - заработает.
+echo  [╬╪╚┴╩└] ═х єфрыюё№ єёЄрэютшЄ№ textual. console.bat ЁрсюЄрЄ№ эх сєфхЄ,
+echo           эю run.bat (юс√ўэ√щ чряєёъ сюЄр) - чрЁрсюЄрхЄ.
 goto :depsok
 :depsok2
-echo  [OK] textual установлен в venv.
+echo  [OK] textual єёЄрэютыхэ т venv.
 :depsok
 
 if exist .env goto :envok
 copy .env.example .env >nul
-echo  [*] Создан .env из примера - ЗАПОЛНИТЕ его перед запуском:
+echo  [*] ╤ючфрэ .env шч яЁшьхЁр - ╟└╧╬╦═╚╥┼ хую яхЁхф чряєёъюь:
 echo      BOT_TOKEN, DATABASE_URL, TRACKED_CHAT_IDS, ADMIN_IDS
 notepad .env
 :envok
 
 echo.
-echo  [OK] Установка завершена.
-echo     Дальше: отредактируйте bot\.env и запустите run.bat
-echo     (или console.bat - если хотите интерфейс с вкладками).
+echo  [OK] ╙ёЄрэютър чртхЁ°хэр.
+echo     ─ры№°х: юЄЁхфръЄшЁєщЄх bot\.env ш чряєёЄшЄх run.bat
+echo     (шыш console.bat - хёыш їюЄшЄх шэЄхЁЇхщё ё тъырфърьш).
 echo.
 pause

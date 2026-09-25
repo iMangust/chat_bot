@@ -1,15 +1,17 @@
 @echo off
 rem ============================================================
-rem  TamaConsole - полноэкранный интерфейс управления:
-rem  вкладки Логи / Дашборд / БД / Настройки / Пользователи,
-rem  кнопки Запустить / Остановить / Перезапустить.
-rem  Горячие клавиши: r - пуск/стоп, l - логи, d - БД, q - выход.
+rem  TamaConsole - яюыэю¤ъЁрээ√щ шэЄхЁЇхщё єяЁртыхэш :
+rem  тъырфъш ╦юуш / ─р°сюЁф / ┴─ / ═рёЄЁющъш / ╧юы№чютрЄхыш,
+rem  ъэюяъш ╟ряєёЄшЄ№ / ╬ёЄрэютшЄ№ / ╧хЁхчряєёЄшЄ№.
+rem  ├юЁ ўшх ъыртш°ш: r - яєёъ/ёЄюя, l - ыюуш, d - ┴─, q - т√їюф.
 rem ============================================================
-chcp 866 >nul
-title TamaConsole - интерфейс управления
+chcp 1251 >nul
+set PYTHONUTF8=
+set PYTHONIOENCODING=cp1251
+title TamaConsole - шэЄхЁЇхщё єяЁртыхэш 
 if exist "%~dp0bot\app\main.py" goto :srcok
-echo  [ОШИБКА] Не найдена папка bot с исходниками проекта.
-echo  Положите console.bat в корень проекта, рядом с папкой bot\.
+echo  [╬╪╚┴╩└] ═х эрщфхэр яряър bot ё шёїюфэшърьш яЁюхъЄр.
+echo  ╧юыюцшЄх console.bat т ъюЁхэ№ яЁюхъЄр, Ё фюь ё яряъющ bot\.
 pause
 exit /b 1
 :srcok
@@ -17,8 +19,8 @@ cd /d "%~dp0bot"
 
 if exist .env goto :envok
 echo.
-echo  [ОШИБКА] Не найден файл .env
-echo  Скопируйте .env.example в .env и заполните BOT_TOKEN и DATABASE_URL.
+echo  [╬╪╚┴╩└] ═х эрщфхэ Їрщы .env
+echo  ╤ъюяшЁєщЄх .env.example т .env ш чряюыэшЄх BOT_TOKEN ш DATABASE_URL.
 echo.
 pause
 exit /b 1
@@ -27,13 +29,13 @@ exit /b 1
 set PY=python
 if exist venv\Scripts\python.exe set PY=venv\Scripts\python.exe
 
-rem --- проверка оболочки textual (ставится install.bat из requirements.txt) ---
+rem --- яЁютхЁър юсюыюўъш textual (ёЄртшЄё  install.bat шч requirements.txt) ---
 "%PY%" -c "import textual" >nul 2>nul
 if not errorlevel 1 goto :txtok
 echo.
-echo  [ОШИБКА] Модуль textual не установлен в venv бота.
-echo  Запустите install.bat - он доустановит зависимости.
-echo  (или вручную: venv\Scripts\python.exe -m pip install textual)
+echo  [╬╪╚┴╩└] ╠юфєы№ textual эх єёЄрэютыхэ т venv сюЄр.
+echo  ╟ряєёЄшЄх install.bat - юэ фюєёЄрэютшЄ чртшёшьюёЄш.
+echo  (шыш тЁєўэє■: venv\Scripts\python.exe -m pip install textual)
 echo.
 pause
 exit /b 1
@@ -42,7 +44,7 @@ exit /b 1
 "%PY%" -m app.console
 if not errorlevel 1 goto :conok
 echo.
-echo  Оболочка завершилась с ошибкой. Запустите сначала install.bat
+echo  ╬сюыюўър чртхЁ°шырё№ ё ю°шсъющ. ╟ряєёЄшЄх ёэрўрыр install.bat
 echo.
 pause
 :conok

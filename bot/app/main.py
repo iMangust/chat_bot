@@ -9,6 +9,8 @@ import sys
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.fsm.storage.base import DefaultKeyBuilder
+from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import BotCommand
 from loguru import logger
@@ -64,6 +66,22 @@ async def ensure_utf8mb4(conn) -> None:
         ))
 
 
+def _make_fsm_storage(redis_url: str):
+    """Redis-backed FSM storage.
+
+    ВАЖНО: protocol=2 отключает RESP3-рукопожатие HELLO, которое не
+    понимают Redis 2.x/3.x и старые сборки Memurai (<6.0) — иначе первый
+    же get_state() падает с «unknown command 'HELLO'». Вызывать только
+    после успешного пинга (см. main()).
+    """
+    from redis.asyncio import Redis
+
+    return RedisStorage(
+        Redis.from_url(redis_url, protocol=2),
+        key_builder=DefaultKeyBuilder(with_bot_id=True, with_destiny=True),
+    )
+
+
 async def on_startup(bot: Bot) -> None:
     # схемы (в проде — Alembic; create_all оставлен для dev-скорости)
     async with engine.begin() as conn:
@@ -94,23 +112,48 @@ async def main() -> None:
         raise RuntimeError("BOT_TOKEN не задан — скопируйте .env.example в .env")
     setup_logging(settings.log_level)
 
+    # активная проверка Redis: коннект ленив и падает позже внутри диспетчера,
+    # поэтому пингуем сразу — при отказе переключаемся на in-memory хранилище
+    redis_ok = False
+    try:
+        from redis.asyncio import Redis as _ARedis
+        # socket_connect/sock_timeout — чтобы недоступный сервер (firewall,
+        # зависший Memurai) не блокировал старт бота на таймаут ОС в 20+ сек
+        _probe = _ARedis.from_url(settings.redis_url, protocol=2,
+                                  socket_connect_timeout=2, socket_timeout=2)
+        await asyncio.wait_for(_probe.ping(), timeout=3)
+        await _probe.aclose()
+        redis_ok = True
+    except Exception as exc:
+        logger.warning(f"Redis недоступен ({exc!r}) — кулдауны и FSM in-memory "
+                       f"(сброс при рестарте; для прод-стабильности поставьте Memurai)")
+
     init_redis()
 
     bot = Bot(
         token=settings.bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
-    try:
-        storage = RedisStorage.from_url(settings.redis_url)
-    except Exception:
-        logger.warning("Redis недоступен для FSM — использую MemoryStorage (только dev!)")
-        from aiogram.fsm.storage.memory import MemoryStorage
+    if redis_ok:
+        storage = _make_fsm_storage(settings.redis_url)
+    else:
         storage = MemoryStorage()
 
     dp = Dispatcher(storage=storage)
     # мидлвары: сессия БД — глобально, throttle — только на callbacks
     dp.update.outer_middleware(DbMiddleware())
     dp.callback_query.outer_middleware(ThrottleMiddleware())
+
+    @dp.errors()
+    async def _on_error(exc_type, exc_value, traceback, event_handler, **kwargs):
+        """Сетевые сбои Redis не должны ронять обработку апдейта."""
+        import redis.exceptions as _rerr
+        if isinstance(exc_value, (_rerr.ResponseError, _rerr.ConnectionError,
+                                  _rerr.TimeoutError)):
+            logger.warning(f"Redis сбой при обработке апдейта: {exc_value!r} "
+                           f"(апдейт пропущен, бот продолжает работу)")
+            return True
+        return False
 
     dp.include_routers(
         start.router,
@@ -161,7 +204,7 @@ async def main() -> None:
                 handle_signals=False,
             )
         else:
-            from aiogram.webhook.aiohttp_server import SimpleRequestAiohttpHandler, aiohttp_webserver
+            from aiogram.webhook.aiohttp_server import SimpleRequestHandler
             from aiohttp import web
 
             await bot.set_webhook(
@@ -171,7 +214,7 @@ async def main() -> None:
             )
             app = web.Application()
             app.router.add_route("POST", "/webhook",
-                                 SimpleRequestAiohttpHandler(bot.process_update, dp, app))
+                                 SimpleRequestHandler(dp, bot))
             runner = web.AppRunner(app)
             await runner.setup()
             site = web.TCPSite(runner, port=settings.webhook_port)

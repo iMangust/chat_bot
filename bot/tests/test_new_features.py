@@ -173,3 +173,36 @@ async def test_profile_card_png(session):
     assert changed2 is False  # второй — кэш версии
     missing = await render_profile_card(session, 9999)
     assert missing is None
+
+
+# ---------------------------------------------------------------- v1.3 fixes
+def test_fsm_storage_uses_resp2_protocol():
+    """FSM-хранилище обязано запрашивать protocol=2 (иначе HELLO-ошибка)."""
+    import inspect
+    from app.main import _make_fsm_storage
+    src = inspect.getsource(_make_fsm_storage)
+    assert "protocol=2" in src
+
+
+def test_redis_client_resp2_and_timeouts():
+    """Клиент кулдаунов: RESP2 + короткие таймауты (не вешает бота)."""
+    import inspect
+    from app.utils import redis as ru
+    src = inspect.getsource(ru.init_redis)
+    assert "protocol=2" in src and "socket_timeout" in src
+
+
+@pytest.mark.asyncio
+async def test_set_cooldown_fallback_without_server(monkeypatch):
+    """Без живого Redis set_cooldown работает через in-memory fallback."""
+    from app.utils.redis import close_redis, init_redis, set_cooldown
+    monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:6399/0")  # заведомо мертвый
+    from app.config import get_settings
+    get_settings.cache_clear()
+    init_redis()
+    try:
+        assert await set_cooldown("test:cd:fallback", 5) is True
+        assert await set_cooldown("test:cd:fallback", 5) is False  # кулдаун сработал
+    finally:
+        await close_redis()
+        get_settings.cache_clear()

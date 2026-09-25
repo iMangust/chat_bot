@@ -2,12 +2,6 @@
 __pycache__/
 *.pyc
 
-# Logs and temporary database files
+# Logs
+logs/
 *.log
-*.db
-
-# Local env & caches
-.env
-.venv/
-venv/
-.pytest_cache/

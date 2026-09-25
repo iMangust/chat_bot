@@ -1,15 +1,18 @@
 """Тесты корректности .bat файлов для cmd.exe на Windows.
 
-cmd.exe читает batch-файлы в OEM-кодовой странице консоли (для русской
-локали это cp866). Если файл сохранён в UTF-8 без BOM, кириллица
-интерпретируется как мусор и строки echo/exec-команд распадаются на
-«команды» ('ый' is not recognized...). Плюс cmd требует CRLF.
+cmd.exe читает batch-файлы в кодовой странице консоли. Начиная с v1.3
+используется cp1251 (ANSI Windows Cyrillic): скрипты сохраняются в cp1251
+и выполняют `chcp 1251`, поэтому и парсер cmd, и вывод echo показывают
+корректную кириллицу. (Ранее был cp866/OEM — при просмотре файлов в ANSI
+или запуске из среды с другой страницей возникал mojibake «иероглифы».)
+Плюс cmd требует CRLF.
 
 Эти тесты гарантируют, что bat-файлы:
-  * декодируются как cp866 (т.е. не содержат байтов вне этой страницы);
+  * декодируются как cp1251 (т.е. не содержат байтов вне этой страницы);
   * не содержат UTF-8 BOM;
   * используют только CRLF-переводы строк;
-  * переключают кодовую страницу командой `chcp 866`.
+  * переключают кодовую страницу командой `chcp 1251`;
+  * задают PYTHONIOENCODING=cp1251 для вывода Python в той же странице.
 """
 
 from __future__ import annotations
@@ -27,14 +30,15 @@ BAT_FILES = sorted(ROOT.glob("*.bat"))
 @pytest.mark.parametrize(
     "bat", BAT_FILES, ids=lambda p: p.name
 )
-def test_bat_is_cp866_clean(bat: Path) -> None:
+def test_bat_is_cp1251_clean(bat: Path) -> None:
     data = bat.read_bytes()
     assert not data.startswith(b"\xef\xbb\xbf"), f"{bat.name}: UTF-8 BOM недопустим в .bat"
     try:
-        text = data.decode("cp866")
+        text = data.decode("cp1251")
     except UnicodeDecodeError as exc:  # pragma: no cover - fail path
-        pytest.fail(f"{bat.name}: файл не является валидным cp866 — {exc}")
-    assert "chcp 866" in text, f"{bat.name}: отсутствует 'chcp 866 >nul'"
+        pytest.fail(f"{bat.name}: файл не является валидным cp1251 — {exc}")
+    assert "chcp 1251" in text, f"{bat.name}: отсутствует 'chcp 1251 >nul'"
+    assert "PYTHONIOENCODING=cp1251" in text, f"{bat.name}: нет PYTHONIOENCODING=cp1251"
 
 
 def test_bat_line_endings_are_crlf() -> None:
@@ -44,13 +48,13 @@ def test_bat_line_endings_are_crlf() -> None:
         assert b"\n" not in stripped, f"{bat.name}: найдены LF-переводы строк (cmd требует CRLF)"
 
 
-def test_bat_no_emoji_outside_cp866() -> None:
-    """Эмодзи/стрелки не представимы в cp866 — их быть не должно."""
+def test_bat_no_emoji_outside_cp1251() -> None:
+    """Эмодзи/стрелки не представимы в cp1251 — их быть не должно."""
     for bat in BAT_FILES:
-        text = bat.read_bytes().decode("cp866")
+        text = bat.read_bytes().decode("cp1251")
         for ch in text:
             assert ord(ch) < 0x2500 or ch in "─│", (
-                f"{bat.name}: символ {ch!r} не поддерживается консолью cp866"
+                f"{bat.name}: символ {ch!r} не поддерживается консолью cp1251"
             )
 
 
@@ -69,7 +73,7 @@ def test_bat_no_double_ampersand_after_if() -> None:
     проверкой `%errorlevel%`. Тест запрещает любые `&&` в bat-скриптах.
     """
     for bat in BAT_FILES:
-        text = bat.read_bytes().decode("cp866")
+        text = bat.read_bytes().decode("cp1251")
         for num, line in enumerate(text.split("\r\n"), 1):
             stripped = line.strip()
             if stripped.lower().startswith("rem"):
@@ -97,7 +101,7 @@ def test_bat_no_errorlevel_inside_parenthesized_if_blocks() -> None:
     подстановку errorlevel с оператором сравнения).
     """
     for bat in BAT_FILES:
-        text = bat.read_bytes().decode("cp866")
+        text = bat.read_bytes().decode("cp1251")
         inside_block = False
         depth = 0
         for num, line in enumerate(text.split("\r\n"), 1):
@@ -133,7 +137,7 @@ def test_bat_no_parenthesized_if_blocks() -> None:
     строками с goto-метками — тест запрещает открывающие `(` в конце if-строк.
     """
     for bat in BAT_FILES:
-        text = bat.read_bytes().decode("cp866")
+        text = bat.read_bytes().decode("cp1251")
         for num, line in enumerate(text.split("\r\n"), 1):
             stripped = line.strip()
             if stripped.lower().startswith(("rem", "::")) or not stripped:
@@ -154,7 +158,7 @@ def test_bat_python_invocations_are_quoted() -> None:
 
     pat_unquoted = re.compile(r"^%(PY|PYCMD)%\s", re.M)
     for bat in BAT_FILES:
-        text = bat.read_bytes().decode("cp866")
+        text = bat.read_bytes().decode("cp1251")
         m = pat_unquoted.search(text)
         if m is not None:
             pytest.fail(
