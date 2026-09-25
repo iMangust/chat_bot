@@ -83,7 +83,7 @@ def _main_menu_text(user) -> str:
     ch = get_settings().channel_username
     lines = [
         "🏠 <b>Главное меню</b>\n",
-        f"👤 {html.escape(user.first_name or '')}, уровень {user.level} · {bar} {user.xp}/{need} XP",
+        f"👤 {_html.escape(user.first_name or '')}, уровень {user.level} · {bar} {user.xp}/{need} XP",
         f"🪙 Монеты: {user.coins} · 🔥 Серия: {user.streak_days} дн.",
         "",
         "📌 Что делать:",

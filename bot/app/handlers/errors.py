@@ -21,9 +21,21 @@ error_router = Router(name="errors")
 
 
 @error_router.errors()
-async def on_error(event: TelegramObject, exception: Exception, **kwargs: Any) -> Any:
-    logger.opt(exception=exception).error("unhandled error while processing update: {}",
-                                          type(exception).__name__)
+async def on_error(event: Any, exception: Exception | None = None, **kwargs: Any) -> Any:
+    """Страховка диспетчера.
+
+    aiogram передаёт сюда ErrorEvent (поля `update` + `exception`) либо
+    позиционный аргумент — сигнатура намеренно устойчива к обоим вариантам,
+    чтобы сам error-handler не падал с TypeError и не маскировал первопричину.
+    """
+    exc = exception
+    if exc is None and hasattr(event, "exception"):  # aiogram ErrorEvent
+        exc = event.exception
+    upd = getattr(event, "update", event)
+    if isinstance(upd, CallbackQuery):
+        event = upd
+    logger.opt(exception=exc).error("unhandled error while processing update: {}",
+                                    type(exc).__name__ if exc else "?")
     # Если это callback — обязательно «погасим» часы у пользователя,
     # иначе кнопка крутится вечно и экран кажется сломанным.
     if isinstance(event, CallbackQuery):

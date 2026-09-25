@@ -10,6 +10,8 @@
 from __future__ import annotations
 
 import asyncio
+import glob
+import os
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -162,3 +164,52 @@ def test_custom_emoji_reaction_recognized():
     custom = SimpleNamespace(type="custom_emoji", custom_emoji_id="123")
     assert _reaction_emoji(custom) == "💎"
     assert _reaction_emoji(ReactionTypeEmoji(type="emoji", emoji="😁")) == "😁"
+
+
+# ---------- v1.4.2: регрессии на краш /start и error-handler ----------
+
+def test_start_handlers_use_bare_html_name():
+    """Все `html.escape(...)` в хендлерах должны ссылаться на импортированный
+    модуль — иначе NameError при рендере (краш /start в 1.4.1)."""
+    import ast as _ast
+    import app
+    for fn in glob.glob(os.path.join(os.path.dirname(app.__file__), "handlers", "*.py")):
+        tree = _ast.parse(open(fn, encoding="utf-8").read())
+        imported = set()
+        for node in _ast.walk(tree):
+            if isinstance(node, _ast.Import):
+                for a in node.names:
+                    if a.name == "html" or a.name.startswith("html."):
+                        imported.add(a.asname or "html")
+        for node in _ast.walk(tree):
+            # html.escape(...) где html — свободная переменная
+            if (isinstance(node, _ast.Attribute) and isinstance(node.value, _ast.Name)
+                    and node.value.id == "html" and node.attr == "escape"):
+                assert "html" in imported, f"{os.path.basename(fn)}: html.escape без import html"
+
+
+def test_main_menu_text_renders_with_weird_name():
+    from app.handlers.start import _main_menu_text
+
+    class U:
+        first_name = "Mangust <b>&</b>"
+        username = None
+        level, xp, coins, streak_days = 1, 0, 10, 1
+        pet_id, language = None, "ru"
+
+    text = _main_menu_text(U())
+    assert "&lt;b&gt;&amp;" in text          # имя экранировано
+    assert "<b>" in text                      # own-разметка жива
+
+
+def test_on_error_accepts_aiogram_error_event():
+    """aiogram шлёт ErrorEvent(update=..., exception=...) одной позиционной
+    пачкой — on_error не должен падать с TypeError (маскировал первопричину)."""
+    import asyncio
+    from types import SimpleNamespace
+    from app.handlers.errors import on_error
+
+    ev = SimpleNamespace(update=SimpleNamespace(from_user=None),
+                         exception=ValueError("boom"))
+    result = asyncio.run(on_error(ev))
+    assert result is True                     # событие погашено, дипсейчер жив
