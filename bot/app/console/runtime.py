@@ -80,7 +80,6 @@ class BotRuntime:
         self.last_error: str | None = None
 
     # ------------------------------------------------------------------ run
-    @staticmethod
     async def start(self) -> None:
         """Полный старт: Redis → БД → сиды → роутеры → поллинг."""
         if self.state != "stopped":

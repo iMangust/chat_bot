@@ -132,7 +132,7 @@ python -m app.main
 ```powershell
 cd C:\tamabot\bot
 venv\Scripts\activate
-python -m pytest tests -q        # ожидаем: 31 passed (включая проверки формата .bat)
+python -m pytest tests -q        # ожидаем: 48 passed (включая проверки формата .bat)
 ```
 Тесты идут на SQLite-in-memory, Redis/MySQL не нужны.
 
@@ -186,11 +186,21 @@ python -m pytest tests -q        # ожидаем: 31 passed (включая п�
 ✅ TamaConsole (Textual 8): вкладки Логи / Дашборд / БД / Настройки / Пользователи,
    кнопки Пуск/Стоп/Рестарт, live-хвост логов, редактор .env из UI (`console.bat`)
 ✅ BAT-оболочки install/run/console в кодировке cp1251+CRLF (тестируются в CI-тестах)
-✅ Тесты бизнес-логики + форматные проверки: 31 passed
+✅ Тесты бизнес-логики + форматные проверки: 48 passed
 
 Команды бота: `/start /top /stats /achievements /shop /award /card /settings /help`
 
-## 7. Отложено на v1.3+ (не блокирует запуск)
+## 7. История исправлений v1.3.x (продовые фиксы Windows Server)
+
+| Версия | Исправление |
+|---|---|
+| 1.3.0 | Redis: `protocol=2` (RESP2) вместо HELLO/RESP3; BAT → cp1251 (`chcp 1251`) |
+| 1.3.1 | README в UTF-8, таймауты сокетов Redis, RESP2 для FSM |
+| 1.3.2 | console-runtime использовал `RedisStorage.from_url` (RESP3) — переведён на общий конструктор + probe/PING с fallback на MemoryStorage |
+| 1.3.3 | нормализация TTL (`_norm_ttl`: float→int), активный PING-probe до поллинга |
+| 1.3.4–1.3.6 | **краш live-режима** `BotRuntime.start() missing 'self'` — метод был ошибочно помечен `@staticmethod`; убран, добавлены регресс-тесты связки livelog→runtime и AST-проверка всего пакета app |
+
+## 8. Отложено на v1.4+ (не блокирует запуск)
 
 ⏳ Alembic-миграции (пока `create_all` + идемпотентные сиды; при первой смене схемы — `alembic init`)
 ⏳ Webhook-режим (для Windows Server не нужен — polling стабилен)

@@ -1,4 +1,4 @@
-# 🐾 TamaBot v1.2.2 — развлекательный Telegram-бот (тамагочи + достижения + топы)
+# 🐾 TamaBot v1.3.6 — развлекательный Telegram-бот (тамагочи + достижения + топы)
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
 [![aiogram](https://img.shields.io/badge/aiogram-3.x-green.svg)](https://docs.aiogram.dev/)
@@ -42,7 +42,7 @@ console.bat    :: 5. (альтернатива) TamaConsole — полноэкр
 
 ---
 
-## 🧩 Возможности (реализовано, v1.0–v1.2)
+## 🧩 Возможности (реализовано, v1.0–v1.3)
 
 | Блок | Что внутри |
 |---|---|
@@ -81,7 +81,7 @@ console.bat    :: 5. (альтернатива) TamaConsole — полноэкр
     │   ├── middlewares/                  # throttle, user, session
     │   ├── console/                      # TamaConsole (Textual): логи/дашборд/БД/настройки
     │   └── tasks/scheduler.py            # APScheduler-джобы
-    ├── tests/                            # pytest: 31 passed (SQLite in-memory)
+    ├── tests/                            # pytest: 48 passed (SQLite in-memory)
     ├── requirements.txt / pytest.ini
     └── README.md                         # ПОЛНАЯ документация (установка, NSSM, чек-лист Telegram, диагностика)
 ```
@@ -93,7 +93,7 @@ console.bat    :: 5. (альтернатива) TamaConsole — полноэкр
 ```powershell
 cd bot
 venv\Scripts\activate
-python -m pytest tests -q      # ожидаем: 31 passed
+python -m pytest tests -q      # ожидаем: 48 passed
 ```
 
 Тесты не требуют MySQL/Redis (SQLite in-memory) и включают проверки формата BAT-файлов.
@@ -105,14 +105,14 @@ python -m pytest tests -q      # ожидаем: 31 passed
 | Компонент | Версия | Комментарий |
 |---|---|---|
 | Windows Server | 2016+ | запуск под обычным пользователем или сервисом |
-| Python | 3.11 / 3.12 x64 | готовые wheels для aiomysql/cryptography |
+| Python | 3.11+ x64 (проверено на 3.13) | готовые wheels для aiomysql/cryptography |
 | MySQL Community | 8.x | БД `tamabot`, utf8mb4 |
 | Memurai / Redis | опционально | кулдауны/FSM переживают рестарт |
 | NSSM | опционально | автостарт как сервис Windows |
 
 ---
 
-## 🔜 План v1.3+
+## 🔜 План v1.4+
 
 ⏳ Alembic-миграции (сейчас `create_all` + идемпотентные сиды)
 ⏳ Ежемесячные лиги и косметика (окрас/аксессуары; поле `settings_extra` уже в схеме)
