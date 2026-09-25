@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import contextlib
 import signal
 import sys
@@ -39,14 +40,12 @@ def _console_sink(message) -> None:
 def setup_live_logging(level: str) -> None:
     """Консоль (живая) + файл логов. Отдельно от GUI-настройки в runtime."""
     logger.remove()
-    # Консоль Windows работает в cp1251 (run.bat ставит chcp 1251).
-    # Python по умолчанию пишет UTF-8 -> cmd показывает «иероглифы».
-    # Приводим stdout к активной кодовой странице консоли; при любой
-    # ошибке оставляем как есть (Linux/терминалы с UTF-8 работают нормально).
+    # Логи пишем в кодировку консоли (bat выставляет chcp 1251 + PYTHONIOENCODING).
+    # Принудительный utf-8 здесь ломал кириллицу на русской Windows — эмодзи
+    # заменяются на '?', но текст остаётся читаемым.
+    enc = (os.environ.get("PYTHONIOENCODING") or "cp1251").split(":")[0]
     with contextlib.suppress(Exception):
-        import locale
-        enc = (locale.getpreferredencoding(False) or "utf-8").lower()
-        if enc not in ("utf-8", "utf8") and hasattr(sys.stdout, "reconfigure"):
+        if hasattr(sys.stdout, "reconfigure"):
             sys.stdout.reconfigure(encoding=enc, errors="replace")
     logger.add(_console_sink, level=level)
     from pathlib import Path

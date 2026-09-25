@@ -1,13 +1,7 @@
 """Redis: кулдауны, rate-limit, FSM-стейты, распределённые локи.
 
-Если Redis недоступен (или не установлен) — graceful fallback на
-in-memory словарь: бот работает полностью, но кулдауны/FSM сбрасываются
-при рестарте процесса. Для Windows Server Redis опционален (Memurai).
-
-Совместимость: клиент redis-py>=5 по умолчанию использует RESP3-протокол
-(команда HELLO при подключении), которую не понимают Redis 2.x/3.x и
-старые сборки Memurai (<6.0). Поэтому явно запрашиваем protocol=2 —
-работает с любым сервером.
+Если Redis недоступен — graceful fallback на in-memory словарь
+(для разработки; в проде Redis обязателен).
 """
 from __future__ import annotations
 
@@ -27,12 +21,8 @@ _mem_store: dict[str, float] = {}
 
 
 def init_redis() -> Redis:
-    """Создаёт пул клиентов Redis (RESP2 — совместим со старыми серверами)."""
     global redis_client
-    redis_client = Redis.from_url(
-        _settings.redis_url, decode_responses=True, protocol=2,
-        socket_connect_timeout=2, socket_timeout=2,
-    )
+    redis_client = Redis.from_url(_settings.redis_url, decode_responses=True, protocol=2)
     return redis_client
 
 
@@ -43,31 +33,16 @@ async def close_redis() -> None:
         redis_client = None
 
 
-_ping_cache: dict[str, tuple[float, bool]] = {}
-
-
 async def _try_redis() -> Any:
-    """Возвращает рабочий redis-клиент или None (при недоступности).
-
-    PING кэшируется на 5 секунд: иначе каждый cooldown-check давал бы
-    лишний roundtrip, а при недоступном сервере — тормозил обработку.
-    Важно: здесь ловятся И ResponseError (старые серверы без RESP3 и т.п.)
-    — тогда клиент не считается рабочим и включается in-memory fallback.
-    """
-    import time as _t
-    now = _t.monotonic()
-    cached = _ping_cache.get("ok")
-    if cached and cached[0] > now:
-        return redis_client if cached[1] else None
-    result = False
-    if redis_client is not None:
-        try:
-            await redis_client.ping()
-            result = True
-        except Exception:
-            result = False
-    _ping_cache["ok"] = (now + 5.0, result)
-    return redis_client if result else None
+    """Возвращает рабочий redis-клиент или None (при недоступности)."""
+    global redis_client
+    if redis_client is None:
+        return None
+    try:
+        await redis_client.ping()
+        return redis_client
+    except Exception:
+        return None
 
 
 async def set_cooldown(key: str, ttl_sec: int) -> bool:

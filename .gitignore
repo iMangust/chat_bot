@@ -1,7 +1,6 @@
-# Python compiled files
+# Compiled files
 __pycache__/
 *.pyc
 
-# Logs
-logs/
-*.log
+# Environment and config
+.env

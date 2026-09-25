@@ -1,4 +1,4 @@
-# 🐾 TamaBot v1.2.9 — развлекательный Telegram-бот (тамагочи + достижения + топы)
+# 🐾 TamaBot v1.2.2 — развлекательный Telegram-бот (тамагочи + достижения + топы)
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
 [![aiogram](https://img.shields.io/badge/aiogram-3.x-green.svg)](https://docs.aiogram.dev/)
@@ -33,33 +33,12 @@ console.bat    :: 5. (альтернатива) TamaConsole — полноэкр
 ```
 
 ⚠️ **Важно:** `install.bat`, `run.bat`, `console.bat` сохранены в кодировке
-**cp866 (OEM Russian) с CRLF** — обязательное требование `cmd.exe`. При редактировании
-сохраняйте именно в cp866 (Notepad++ → Кодировки → Кириллица → OEM 866), иначе cmd
+**cp1251 (ANSI Russian) с CRLF** + переключение `chcp 1251` — обязательное требование `cmd.exe`. При редактировании
+сохраняйте именно в cp1251/«Кириллица Windows» (Notepad++ → Кодировки → Кириллица → Windows-1251), иначе cmd
 начнёт «выполнять» русские строки (`'ый' is not recognized...`). Корректность формата
-контролируется тестами `bot/tests/test_bat_files.py`.
-
-📌 **Расположение файлов:** BAT-скрипты должны лежать **в корне проекта, рядом с
-папкой `bot\`** (т.е. `C:\tamabot\install.bat` и `C:\tamabot\bot\`). Если скрипт
-запускается не оттуда — он покажет понятную ошибку и окно не закроется молча.
-
-🔧 **Если окно всё же закрылось мгновенно** — запустите из уже открытой `cmd.exe`:
-```bat
-cd C:\tamabot && install.bat
-```
-Так вы увидите текст ошибки (например, «Python не найден» или «не найдена папка bot»).
-Скрипты проверяют: наличие папки `bot\`, Python (`py` или `python` в PATH —
-подходит и установка без py-launcher), создание venv, установку зависимостей,
-и на каждой ошибке делают `pause`.
-
-🩹 **v1.2.4–v1.2.5:** полностью устранена ошибка «Непредвиденное появление: ..»
-на Windows Server 2019 (cmd 10.0.17763). Причина оказалась глубже, чем `&&`:
-многострочные блоки `if ... ( echo ... )` с кириллицей/кавычками и подстановкой
-`%errorlevel%==` внутри скобок ломают разбор пакета. Все три скрипта
-(`install.bat`, `run.bat`, `console.bat`) переписаны в **плоском goto-стиле**
-без единого многострочного if-блока; вызовы Python закавычены (`"%PYCMD%"`),
-проверка интерпретатора через `where py.exe / python.exe` + `if not errorlevel 1`.
-Добавлены регресс-тесты: запрет `&&`, запрет if-блоков со скобками, запрет
-незакавыченных переменных Python (итого 35 passed).
+контролируется тестами `bot/tests/test_bat_files.py`. Логи Python пишутся в UTF-8 и
+корректно отображаются в окне chcp 1251 (переменные `PYTHONUTF8=0`, `PYTHONIOENCODING=utf-8`
+выставляются в run.bat/console.bat).
 
 ---
 
@@ -87,7 +66,7 @@ cd C:\tamabot && install.bat
 ## 🗂 Структура репозитория
 
 ```
-├── install.bat / run.bat / console.bat   # BAT-оболочки запуска (cp866+CRLF!)
+├── install.bat / run.bat / console.bat   # BAT-оболочки запуска (cp1251+CRLF!)
 ├── README.md                             # этот файл (быстрый старт)
 └── bot/
     ├── app/
@@ -145,10 +124,3 @@ python -m pytest tests -q      # ожидаем: 31 passed
 
 MIT. Полная инструкция по эксплуатации, чек-лист настройки Telegram и таблица
 диагностики частых проблем — в [bot/README.md](bot/README.md).
-
-### console.bat: ModuleNotFoundError: No module named 'textual'
-
-Текстовая оболочка ставится вместе с остальными зависимостями через install.bat (requirements.txt). Если ошибка появилась:
-1. Запустите install.bat заново — он доустановит textual в venv бота (проверка и предложение установки добавлены в v1.2.9).
-2. Быстрый вариант вручную: `bot\venv\Scripts\python.exe -m pip install textual`
-3. Важно: системный pip (например, Python 3.13 из AppData) не подходит — оболочке нужен именно venv бота, поэтому console.bat сам запускает модуль из `bot\venv` и корректно сообщает об ошибке.

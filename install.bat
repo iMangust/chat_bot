@@ -5,85 +5,38 @@ rem  Запустить один раз после копирования проекта на сервер.
 rem  Требуется установленный Python 3.11+ (в PATH как "py").
 rem ============================================================
 chcp 1251 >nul
-set PYTHONUTF8=
-set PYTHONIOENCODING=cp1251
 title TamaBot - установка
-if exist "%~dp0bot\requirements.txt" goto :srcok
-echo  [ОШИБКА] Не найдена папка bot с исходниками проекта.
-echo  Положите install.bat в корень проекта, рядом с папкой bot\.
-echo  Текущая папка: %CD%
-pause
-exit /b 1
-:srcok
 cd /d "%~dp0bot"
 
 echo  [*] Проверка Python...
-rem --- Python: ищем в PATH через "where", без вложенных if-блоков
-rem     (вложенные скобки + errorlevel ломают разбор на некоторых сборках cmd)
-set PYCMD=
-where py.exe >nul 2>nul
-if not errorlevel 1 set PYCMD=py
-if defined PYCMD goto :pyfound
-where python.exe >nul 2>nul
-if not errorlevel 1 set PYCMD=python
-:pyfound
-if defined PYCMD goto :pyok
-echo  [ОШИБКА] Python не найден. Установите Python 3.11+ с python.org
-echo           Обязательно включите "Add to PATH" при установке.
-pause
-exit /b 1
-:pyok
-echo  [*] Найден интерпретатор: %PYCMD%
-"%PYCMD%" --version
-if not errorlevel 1 goto :verok
-echo  [ОШИБКА] Команда проверки версии Python завершилась с ошибкой.
-pause
-exit /b 1
-:verok
+py -3 --version >nul 2>&1
+if errorlevel 1 (
+    echo  [ОШИБКА] Python не найден. Установите Python 3.11+ с python.org
+    echo           (обязательно включите "Add to PATH" при установке).
+    pause
+    exit /b 1
+)
 
-if exist venv goto :venvok
-echo  [*] Создание виртуального окружения venv...
-"%PYCMD%" -m venv venv
-if not errorlevel 1 goto :venvcreated
-echo  [ОШИБКА] venv не создан.
-pause
-exit /b 1
-:venvcreated
-:venvok
+if not exist venv (
+    echo  [*] Создание виртуального окружения venv...
+    py -3 -m venv venv || (echo  [ОШИБКА] venv не создан & pause & exit /b 1)
+)
 
 echo  [*] Установка зависимостей (первый запуск - 2-5 минут)...
 venv\Scripts\python.exe -m pip install --upgrade pip >nul
 venv\Scripts\python.exe -m pip install -r requirements.txt
-if not errorlevel 1 goto :pipok
-echo  [ОШИБКА] pip install завершился с ошибкой - проверьте интернет/антивирус.
-pause
-exit /b 1
-:pipok
+if errorlevel 1 (
+    echo  [ОШИБКА] pip install завершился с ошибкой - проверьте интернет/антивирус.
+    pause
+    exit /b 1
+)
 
-rem --- Проверка: ключевые пакеты реально в venv (а не "в систему")
-venv\Scripts\python.exe -c "import textual" >nul 2>nul
-if not errorlevel 1 goto :depsok
-echo  [ВНИМАНИЕ] Не найден пакет textual внутри venv.
-echo             Он нужен для оболочки console.bat (устанавливается из requirements.txt).
-echo             Если вы видите это сообщение - обновите исходники (git pull) и
-echo             запустите install.bat заново. Пробовать поставить textual сейчас? (y/n)
-choice /c yn /n >nul
-if errorlevel 2 goto :depsok
-venv\Scripts\python.exe -m pip install "textual>=0.63"
-if not errorlevel 1 goto :depsok2
-echo  [ОШИБКА] Не удалось установить textual. console.bat работать не будет,
-echo           но run.bat (обычный запуск бота) - заработает.
-goto :depsok
-:depsok2
-echo  [OK] textual установлен в venv.
-:depsok
-
-if exist .env goto :envok
-copy .env.example .env >nul
-echo  [*] Создан .env из примера - ЗАПОЛНИТЕ его перед запуском:
-echo      BOT_TOKEN, DATABASE_URL, TRACKED_CHAT_IDS, ADMIN_IDS
-notepad .env
-:envok
+if not exist .env (
+    copy .env.example .env >nul
+    echo  [*] Создан .env из примера - ЗАПОЛНИТЕ его перед запуском:
+    echo      BOT_TOKEN, DATABASE_URL, TRACKED_CHAT_IDS, ADMIN_IDS
+    notepad .env
+)
 
 echo.
 echo  [OK] Установка завершена.
