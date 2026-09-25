@@ -108,6 +108,7 @@ async def on_startup(bot: Bot) -> None:
         BotCommand(command="card", description="🖼 Карточка профиля"),
         BotCommand(command="award", description="🎁 Итоги недели"),
         BotCommand(command="settings", description="⚙️ Настройки"),
+        BotCommand(command="help", description="❓ Справка"),
     ])
     logger.info("✅ bot started")
 
@@ -131,6 +132,9 @@ async def main() -> None:
     # мидлвары: сессия БД — глобально, throttle — только на callbacks
     dp.update.outer_middleware(DbMiddleware())
     dp.callback_query.outer_middleware(ThrottleMiddleware())
+    # страховка на уровне callback-мидлваров (ошибки до/вне хендлеров:
+    # throttle, FSM, БД-сессия) — пользователь получит тост, а не «вечные часы»
+    dp.callback_query.outer_middleware(errors.ErrorNotifyMiddleware())
 
     dp.include_routers(
         errors.error_router,   # страховка: падающий хендлер не «вешает» callback
@@ -145,6 +149,10 @@ async def main() -> None:
         stats.router,
         settings.router,
     )
+    # Глобальная страховка уровня диспетчера: даже если ошибка возникнет вне
+    # error_router (например, в другом мидлваре), обработчик на месте —
+    # aiogram больше не будет логировать её как «Unhandled exceptions».
+    dp.errors.register(errors.on_error)
 
     scheduler = build_scheduler(bot)
 
@@ -178,18 +186,24 @@ async def main() -> None:
                 allowed_updates=dp.resolve_used_update_types() + ["message_reaction"],
                 handle_signals=False,
             )
+            # polling завершился сам (например, остановлен извне) —
+            # переводим процесс в штатную финализацию через finally
+            stop.set()
         else:
-            from aiogram.webhook.aiohttp_server import SimpleRequestAiohttpHandler, aiohttp_webserver
+            # aiogram 3.x: обработчик называется SimpleRequestHandler
+            # (имени SimpleRequestAiohttpHandler в библиотеке нет — старый код
+            # падал с ImportError при первом же включении вебхука).
+            from aiogram.webhook.aiohttp_server import SimpleRequestHandler
             from aiohttp import web
 
             await bot.set_webhook(
                 url=f"{settings.webhook_url}/webhook",
-                secret_token="change-me-in-env",
+                secret_token=settings.webhook_secret_token,
                 allowed_updates=dp.resolve_used_update_types() + ["message_reaction"],
             )
             app = web.Application()
             app.router.add_route("POST", "/webhook",
-                                 SimpleRequestAiohttpHandler(bot.process_update, dp, app))
+                                 SimpleRequestHandler(dp, bot))
             runner = web.AppRunner(app)
             await runner.setup()
             site = web.TCPSite(runner, port=settings.webhook_port)
@@ -198,7 +212,12 @@ async def main() -> None:
 
         await stop.wait()  # ждём сигнал завершения
     finally:
-        await dp.emit_shutdown() if not dp.frozen else None
+        # Штатный graceful shutdown: эмитим событие shutdown — хендлер _shutdown
+        # закроет scheduler/Redis/engine/session. Условие `not dp.frozen` и
+        # конструктора-заглушки aiohttp_webserver раньше были мёртвым/битым кодом.
+        if not dp.frozen:
+            with contextlib.suppress(Exception):
+                await dp.emit_shutdown()
 
 
 if __name__ == "__main__":

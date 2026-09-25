@@ -26,8 +26,8 @@ from loguru import logger
 from app.config import get_settings
 from app.db.models import Base
 from app.db.session import DbMiddleware, engine, session_factory
-from app.handlers import (games, settings as settings_handlers, shop, social,
-                          start, stats, tamagotchi, tracker, welcome)
+from app.handlers import (errors, games, merch, settings as settings_handlers, shop,
+                          social, start, stats, tamagotchi, tracker, welcome)
 from app.handlers.shop import seed_items
 from app.middlewares.throttle import ThrottleMiddleware
 from app.services.achievements import seed_achievements
@@ -112,11 +112,17 @@ class BotRuntime:
             dp = Dispatcher(storage=storage)
             dp.update.outer_middleware(DbMiddleware())
             dp.callback_query.outer_middleware(ThrottleMiddleware())
+            # страховка на уровне callback-мидлваров (до/вне хендлеров) —
+            # юзер не останется с «висящими часами», а админы увидят сбой в логе
+            dp.callback_query.outer_middleware(errors.ErrorNotifyMiddleware())
             dp.include_routers(
+                errors.error_router,
                 start.router, welcome.router, tracker.router,
                 tamagotchi.router, games.router, shop.router,
+                merch.router,
                 social.router, stats.router, settings_handlers.router,
             )
+            dp.errors.register(errors.on_error)
 
             # схемы + справочники (идемпотентно)
             async with engine.begin() as conn:
@@ -129,11 +135,13 @@ class BotRuntime:
             await self.bot.set_my_commands([
                 BotCommand(command="start", description="Главное меню"),
                 BotCommand(command="pet", description="🐾 Питомец"),
-                BotCommand(command="stats", description="📊 Статистика"),
+                BotCommand(command="stats", description="📊 Моя статистика"),
                 BotCommand(command="ach", description="🏆 Достижения"),
                 BotCommand(command="top", description="🏅 Топы"),
                 BotCommand(command="card", description="🖼 Карточка профиля"),
+                BotCommand(command="award", description="🎁 Итоги недели"),
                 BotCommand(command="settings", description="⚙️ Настройки"),
+                BotCommand(command="help", description="❓ Справка"),
             ])
 
             # проверка токена/связи с Telegram API до старта поллинга —

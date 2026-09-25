@@ -116,13 +116,16 @@ async def track_group_message(message: Message, session: AsyncSession) -> None:
         msg_local = message.date.replace(tzinfo=timezone.utc) + timedelta(
             hours=get_settings().tz_offset_hours)
         if 3 <= msg_local.hour <= 5:
+            # ВАЖНО: автор может быть sender_chat (пост от имени канала),
+            # тогда message.from_user is None — раньше это роняло хендлер
+            # с AttributeError прямо на засчитанном сообщении.
             from app.services.achievements import AchievementService
             ach = AchievementService(session)
-            unlocked = await ach.unlock_by_code(message.from_user.id, "night_owl")
+            unlocked = await ach.unlock_by_code(author, "night_owl")
             if unlocked:
                 try:
                     await message.bot.send_message(
-                        message.from_user.id,
+                        author,
                         f"🎭 Секретное достижение: {unlocked.icon} <b>{unlocked.title}</b>!\n"
                         f"{unlocked.description}",
                     )

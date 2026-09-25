@@ -9,7 +9,8 @@ import random
 from datetime import datetime, timezone
 
 from aiogram import F, Router
-from aiogram.types import CallbackQuery
+from aiogram.filters import Command
+from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 
@@ -32,6 +33,48 @@ def _collect_walk_result(svc: TamagotchiService, pet: Pet, session: AsyncSession
         return None
     text, coins, xp = svc.finish_walk_event(pet)
     return text, coins, xp
+
+
+HELP_TEXT = (
+    "🐾 <b>Как я работаю</b>\n\n"
+    "<b>Основное</b>\n"
+    "/start — главное меню и онбординг (создание питомца)\n"
+    "/pet — карточка твоего питомца\n"
+    "/stats — твоя статистика (XP, уровень, монеты)\n"
+    "/ach — достижения\n"
+    "/top — топы чата\n"
+    "/card — PNG-карточка профиля\n"
+    "/award — итоги недели\n"
+    "/settings — настройки уведомлений\n"
+    "/help — эта справка\n\n"
+    "<b>Заработок XP и 🪙</b>\n"
+    "• Сообщения в чате (текст, фото, голосовые, кружки, стикеры) — с кулдауном;\n"
+    "• Реакции на сообщения собеседника (с дневным лимитом антифрода);\n"
+    "• Активность в канале, если бот там админ.\n\n"
+    "<b>Питомец</b>\n"
+    "Корми, мой, играй, тренируй и гуляй — за активность капают монеты,\n"
+    "а питомец растёт и эволюционирует. Не забывай: без ухода он скучает!\n"
+)
+
+
+@router.message(Command("help"))
+async def cmd_help(message: Message) -> None:
+    await message.answer(HELP_TEXT)
+
+
+@router.message(Command("pet"))
+async def cmd_pet(message: Message, session: AsyncSession) -> None:
+    """Текстовый дубликат кнопки «🐾 Питомец» (команда есть в меню Telegram)."""
+    svc = TamagotchiService(session)
+    pet = await _get_pet(session, message.from_user.id)
+    if pet is None:
+        await message.answer("🥚 У тебя пока нет питомца. Нажми /start и пройди онбординг!")
+        return
+    await svc.apply_decay(pet)
+    users = UserRepository(session)
+    user = await users.get(message.from_user.id)
+    await message.answer(svc.render(pet, user.first_name if user else ""),
+                         reply_markup=pet_hub())
 
 
 @router.callback_query(F.data == "menu:pet")

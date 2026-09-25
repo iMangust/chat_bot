@@ -1,4 +1,4 @@
-# 🐾 TamaBot v1.3.8 — развлекательный Telegram-бот (тамагочи + достижения + топы)
+# 🐾 TamaBot v1.4.0 — развлекательный Telegram-бот (тамагочи + достижения + топы)
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
 [![aiogram](https://img.shields.io/badge/aiogram-3.x-green.svg)](https://docs.aiogram.dev/)
@@ -42,7 +42,7 @@ console.bat    :: 5. (альтернатива) TamaConsole — полноэкр
 
 ---
 
-## 🧩 Возможности (реализовано, v1.0–v1.3)
+## 🧩 Возможности (реализовано, v1.0–v1.4)
 
 | Блок | Что внутри |
 |---|---|
@@ -116,7 +116,7 @@ python -m pytest tests -q      # ожидаем: 48 passed
 
 ⏳ Alembic-миграции (сейчас `create_all` + идемпотентные сиды)
 ⏳ Ежемесячные лиги и косметика (окрас/аксессуары; поле `settings_extra` уже в схеме)
-⏳ Webhook-режим (для Windows не требуется — polling стабилен)
+✅ Webhook-режим починен в 1.4.0 (SimpleRequestHandler + секрет из .env; для Windows по-прежнему не требуется — polling стабилен)
 
 ---
 

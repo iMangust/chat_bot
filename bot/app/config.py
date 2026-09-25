@@ -8,7 +8,7 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-__version__ = "1.3.9"
+__version__ = "1.4.0"
 
 
 class Settings(BaseSettings):
@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     is_dev: bool = True                  # poling vs webhook, отладочные хендлеры
     webhook_url: str | None = None
     webhook_port: int = 8081
+    # Секретный токен вебхука (X-Telegram-Bot-Api-Secret-Token). В проде обязателен:
+    # без него на ваш URL сможет слать фейковые апдейты кто угодно.
+    webhook_secret_token: str = "change-me-in-env"
 
     # Администраторы бота (tg_id), через запятую в env: ADMIN_IDS=1,2
     admin_ids: list[int] = []
