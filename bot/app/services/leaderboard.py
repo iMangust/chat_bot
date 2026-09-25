@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import (ChatMessageLog, LeaderboardSnapshot, Pet, ReactionLog,
                            User, UserStat, utcnow)
 from app.services.notifications import queue_notification
+from app.utils.html_text import esc as _esc
 
 MEDALS = {1: "🥇", 2: "🥈", 3: "🥉"}
 WEEKLY_PRIZES = {1: 500, 2: 250, 3: 100}  # монеты за 1/2/3 место недели
@@ -98,15 +99,15 @@ def leaderboard_text(payload: dict) -> str:
     if payload.get("messages"):
         lines.append("💬 Болтуны:")
         for i, (_tid, name, c) in enumerate(payload["messages"][:5], start=1):
-            lines.append(f"  {MEDALS.get(i, f'{i}.')} {name} — {c} сообщ.")
+            lines.append(f"  {MEDALS.get(i, f'{i}.')} {_esc(name)} — {c} сообщ.")
     if payload.get("reactions"):
         lines.append("\n💖 Любимцы чата (реакции):")
         for i, (_tid, name, c) in enumerate(payload["reactions"][:5], start=1):
-            lines.append(f"  {MEDALS.get(i, f'{i}.')} {name} — {c} реакций")
+            lines.append(f"  {MEDALS.get(i, f'{i}.')} {_esc(name)} — {c} реакций")
     if payload.get("pets"):
         lines.append("\n🐾 Питомцы:")
         for i, (_pid, pname, lvl, owner) in enumerate(payload["pets"][:5], start=1):
-            lines.append(f"  {MEDALS.get(i, f'{i}.')} {pname} (ур. {lvl}) · {owner}")
+            lines.append(f"  {MEDALS.get(i, f'{i}.')} {_esc(pname)} (ур. {lvl}) · {_esc(owner)}")
     lines.append("\n🪙 Призёрам 💬-топа начислены монеты: 500 / 250 / 100!")
     return "\n".join(lines)
 

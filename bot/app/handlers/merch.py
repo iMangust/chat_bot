@@ -218,7 +218,9 @@ async def merch_buy(cb: CallbackQuery, session) -> None:
     await cb.message.answer(
         f"✅ Заказ <b>№{order_id}</b> принят!\n"
         f"{it['icon']} {html.escape(it['name'])} — {it['price']:,} ₽\n\n"
-        "Мы сохранили заявку и свяжемся с тобой для уточнения размера и доставки 🚚")
+        "Мы сохранили заявку и свяжемся с тобой для уточнения размера и доставки 🚚",
+        parse_mode="HTML",
+    )
     await cb.answer("Заявка отправлена ✅")
 
 

@@ -17,9 +17,16 @@
 """
 from __future__ import annotations
 
+from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.types import CallbackQuery, Message
 from loguru import logger
+
+# Явный HTML по умолчанию для всех исходящих сообщений.
+# Важно: аргумент parse_mode=None при вызове edit_text/answer НЕ «наследует»
+# default из DefaultBotProperties — aiogram передаёт None напрямую в Telegram
+# API и клиент показывает сырые теги (<b>...</b>) вместо жирного текста.
+DEFAULT_PARSE_MODE = ParseMode.HTML
 
 
 def _has_editable_text(message: Message) -> bool:
@@ -33,13 +40,17 @@ async def safe_edit_or_answer(
     text: str,
     *,
     reply_markup=None,
-    parse_mode: str | None = None,
+    parse_mode: str | None = "HTML",
     **kwargs,
 ) -> Message:
     """Редактирует ``target``, а если нельзя — шлёт новое сообщение.
 
     Возвращает итоговое сообщение (отредактированное или новое), чтобы
     вызывающий код мог продолжить работу с ним.
+
+    ``parse_mode`` по умолчанию — HTML: без него aiogram передаёт ``None``
+    напрямую в API и Telegram показывает сырые теги (<b>...</b>) вместо
+    жирного текста.
     """
     if _has_editable_text(target):
         try:
@@ -61,7 +72,7 @@ async def safe_edit_or_answer(
 
 
 async def answer_cb(cb: CallbackQuery, text: str, *, reply_markup=None,
-                    parse_mode: str | None = None, **kwargs) -> None:
+                    parse_mode: str | None = "HTML", **kwargs) -> None:
     """Сокращение: безопасный ответ на callback (edit → fallback answer)."""
     if cb.message is None:
         return

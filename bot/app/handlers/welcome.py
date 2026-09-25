@@ -78,7 +78,8 @@ async def on_new_members(message: Message, bot: Bot, session: AsyncSession) -> N
             logger.info("welcome DM sent to {}", member.id)
         except TelegramForbiddenError:
             # ЛС закрыты — попросим написать сами (упоминание соберём ниже)
-            greeters.append(f"@{member.username or member.first_name} (ЛС закрыты — напиши мне /start!)")
+            greeters.append(html.escape(f"@{member.username or member.first_name}")
+                         + " (ЛС закрыты — напиши мне /start!)")
         except TelegramRetryAfter as e:
             logger.warning("rate limited while welcoming {}: sleep {}", member.id, e.retry_after)
         except TelegramAPIError as e:
@@ -89,7 +90,8 @@ async def on_new_members(message: Message, bot: Bot, session: AsyncSession) -> N
         await message.answer(
             f"🎉 Добро пожаловать, {names}!\n"
             f"Я бот-компаньон: за активность тут дают XP, монеты и достижения, "
-            f"а ещё можно завести питомца. Проверь личные сообщения от меня 🐾"
+            f"а ещё можно завести питомца. Проверь личные сообщения от меня 🐾",
+            parse_mode="HTML",
         )
 
 

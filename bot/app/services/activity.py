@@ -24,6 +24,7 @@ from app.config import get_settings
 from app.db.models import ChatMessageLog, User
 from app.db.repositories import AchievementRepository, ActivityRepository, UserRepository
 from app.services.achievements import AchievementService
+from app.utils.html_text import esc
 from app.utils.redis import set_cooldown
 
 
@@ -181,10 +182,11 @@ class ActivityService:
         try:
             await self.bot.send_message(
                 inviter.tg_id,
-                f"🤝 Твоя ссылка сработала! <b>{user.first_name or 'друг'}</b> "
+                f"🤝 Твоя ссылка сработала! <b>{esc(user.first_name or 'друг')}</b> "
                 f"проявил активность в чате.\n"
                 f"Награда: +{self.settings.invite_reward_coins} 🪙 и 30 XP. "
                 f"Приглашено всего: {gained}.",
+              parse_mode="HTML",
             )
         except Exception as exc:  # ЛС закрыты — не критично
             logger.debug("referral notify failed for {}: {}", inviter.tg_id, exc)
@@ -271,7 +273,8 @@ class ActivityService:
         if self.bot is not None and leveled_to:
             try:
                 await self.bot.send_message(
-                    from_user, f"🎉 Новый уровень: <b>{leveled_to[-1]}</b>!")
+                    from_user, f"🎉 Новый уровень: <b>{leveled_to[-1]}</b>!",
+                    parse_mode="HTML")
             except Exception as exc:
                 logger.debug("reaction levelup notify failed: {}", exc)
         for ach in unlocked:

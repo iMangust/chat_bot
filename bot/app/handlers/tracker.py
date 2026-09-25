@@ -128,6 +128,7 @@ async def track_group_message(message: Message, session: AsyncSession) -> None:
                         author,
                         f"🎭 Секретное достижение: {unlocked.icon} <b>{unlocked.title}</b>!\n"
                         f"{unlocked.description}",
+                      parse_mode="HTML",
                     )
                 except Exception as e:  # ЛС закрыты — не критично
                     logger.debug("no DM for secret achievement: {}", e)
@@ -157,7 +158,7 @@ async def track_reaction_update(update: MessageReactionUpdated,
         return
     # юзер может быть None у анонимных админов — тогда берём actor_chat или выходим
     from_user_id: int | None = None
-    if isinstance(update.user, User):
+    if getattr(update.user, "id", None) is not None:
         from_user_id = update.user.id
     elif update.actor_chat is not None:
         # реакция от имени канала: автор действия — сам канал, не считаем

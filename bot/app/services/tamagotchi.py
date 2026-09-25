@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Pet, PetStage
 from app.utils.formatting import clamp, season_for, stat_bar, weather_info
+from app.utils.html_text import esc
 
 
 def _aware(dt: datetime) -> datetime:
@@ -463,7 +464,8 @@ class TamagotchiService:
             PetStage.adult: "😼", PetStage.legendary: "🐲",
         }[pet.stage]
         lines = [
-            f"{stage_icon} <b>{pet.name}</b> · {sp['title']} {sprite}",
+            f"{stage_icon} <b>{esc(pet.name)}</b> · {sp['title']} {sprite}"
+            + (f" · хозяин: {esc(owner_first_name)}" if owner_first_name else ""),
             f"Уровень {pet.level} · опыт {pet.xp}/{pet_xp_needed(pet.level)} "
             f"[{stat_bar(pet.xp, 6)}]",  # грубо, но мило
             "",

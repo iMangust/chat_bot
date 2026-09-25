@@ -85,7 +85,7 @@ async def flush_notifications(bot: Bot) -> None:
             sent = 0
             for n in rows:
                 try:
-                    await bot.send_message(n.user_id, n.text)
+                    await bot.send_message(n.user_id, n.text, parse_mode="HTML")
                     n.sent = True
                     sent += 1
                 except Exception:

@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import get_settings
 from app.db.models import NotificationQueue, NotificationSetting, Pet, User
 from app.services.tamagotchi import MOOD_TEXT, compute_mood
+from app.utils.html_text import esc
 
 
 async def queue_notification(session: AsyncSession, user_id: int, kind: str,
@@ -34,6 +35,8 @@ async def queue_notification(session: AsyncSession, user_id: int, kind: str,
         }.get(kind)
         if flag is False:
             return False
+    # все пуши уходят с parse_mode=HTML — экранируем династические куски,
+    # чтобы имя юзера/питомца не сломало разметку
     session.add(NotificationQueue(user_id=user_id, kind=kind, text=text,
                                   send_at=send_at or datetime.now(timezone.utc)))
     await session.flush()
@@ -67,23 +70,23 @@ async def build_pet_sad_text(pet: Pet) -> str:
         "sick": "Нужно 💊 лечение — загляни в магазин, это дёшево.",
     }
     hint = hints.get(mood, "")
-    return f"🐾 <b>{pet.name}</b> {reason}\n{hint}".strip()
+    return f"🐾 <b>{esc(pet.name)}</b> {reason}\n{hint}".strip()
 
 
 async def build_streak_warning(user: User) -> str:
-    return (f"🔥 {user.first_name}, серия из <b>{user.streak_days}</b> дн. сгорит в полночь!\n"
+    return (f"🔥 {esc(user.first_name)}, серия из <b>{user.streak_days}</b> дн. сгорит в полночь!\n"
             f"Напиши что-нибудь в чат — даже «спасибо» засчитается 🙂")
 
 
 async def build_daily_report(user: User, pet: Pet | None, stats_today: int,
                              rank: int | None) -> str:
-    lines = [f"🌅 <b>Твой день, {user.first_name}</b>", ""]
+    lines = [f"🌅 <b>Твой день, {esc(user.first_name)}</b>", ""]
     lines.append(f"💬 Сообщений сегодня: <b>{stats_today}</b>")
     if rank:
         lines.append(f"🏅 Место в дневном топе чата: <b>#{rank}</b>")
     if pet is not None:
         mood = compute_mood(pet)
-        lines.append(f"🐾 {pet.name}: {_mood_phrase(mood)}")
+        lines.append(f"🐾 {esc(pet.name)}: {_mood_phrase(mood)}")
     if user.streak_days:
         lines.append(f"🔥 Серия: {user.streak_days} дн. — не теряй её завтра!")
     lines.append("")

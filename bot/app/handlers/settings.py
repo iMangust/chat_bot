@@ -60,7 +60,8 @@ async def cmd_awards(message: Message, session: AsyncSession) -> None:
     if not payload:
         await message.answer("Пока нечего показать — топ будет после первой недели 🏁")
         return
-    await message.answer(leaderboard_text(payload), reply_markup=back_to_main())
+    await message.answer(leaderboard_text(payload), reply_markup=back_to_main(),
+                         parse_mode="HTML")
 
 
 @router.message(Command("settings"))

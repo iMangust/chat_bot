@@ -6,6 +6,7 @@ from aiogram.filters import CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
+import html as _html  # noqa: E402  (экран имён в HTML-текстах)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Pet, PetSpecies
@@ -82,7 +83,7 @@ def _main_menu_text(user) -> str:
     ch = get_settings().channel_username
     lines = [
         "🏠 <b>Главное меню</b>\n",
-        f"👤 {user.first_name}, уровень {user.level} · {bar} {user.xp}/{need} XP",
+        f"👤 {html.escape(user.first_name or '')}, уровень {user.level} · {bar} {user.xp}/{need} XP",
         f"🪙 Монеты: {user.coins} · 🔥 Серия: {user.streak_days} дн.",
         "",
         "📌 Что делать:",
@@ -124,22 +125,25 @@ async def cmd_start(message: Message, state: FSMContext, session: AsyncSession,
             inviter_id = None
         if inviter_id and inviter_id != user.tg_id:
             inviter = await users.get(inviter_id)
-            who = inviter.first_name if inviter and inviter.first_name else "друг"
+            who = _html.escape(inviter.first_name if inviter and inviter.first_name else "друг")
             await users.set_referrer(user.tg_id, inviter_id)
             await message.answer(
                 f"🤝 Тебя пригласил <b>{who}</b>! После онбординга он получит "
-                f"+{get_settings().invite_reward_coins} 🪙, как только ты напишешь первое сообщение в чате."
+                f"+{get_settings().invite_reward_coins} 🪙, как только ты напишешь первое сообщение в чате.",
+                parse_mode="HTML",
             )
     if not user.onboarded:
         await message.answer(
-            WELCOME_DM.format(name=user.first_name or "друг", channel_line=_channel_line()),
+            WELCOME_DM.format(name=_html.escape(user.first_name or "друг"),
+                                channel_line=_channel_line()),
             reply_markup=welcome_start_button(),
         )
         return
     link = invite_link_for(user.tg_id)
     reward = get_settings().invite_reward_coins
     text = _main_menu_text(user)
-    await message.answer(text, reply_markup=main_menu(link=link, reward=reward))
+    await message.answer(text, reply_markup=main_menu(link=link, reward=reward),
+                       parse_mode="HTML")
 
 
 @router.callback_query(F.data == "onb:start")
@@ -223,7 +227,8 @@ async def _finish_onboarding_from_msg(message: Message, state: FSMContext,
     ach = AchievementService(session)
     await ach.unlock_by_code(user.tg_id, "first_steps")
     await message.answer(
-        f"🎉 У тебя появился питомец <b>{name}</b> — {SPECIES_DATA[species_code]['emoji']} "
+        f"🎉 У тебя появился питомец <b>{_html.escape(name)}</b> — "
+        f"{SPECIES_DATA[species_code]['emoji']} "
         f"{SPECIES_DATA[species_code]['title']}!\n\n"
         "Шаг 3 из 3 — мини-тур:\n"
         "• 🐾 Питомец — корми, мой, играй (статы падают со временем!)\n"
@@ -253,7 +258,8 @@ async def _finish_onboarding(cb: CallbackQuery, state: FSMContext,
     await ach.unlock_by_code(user.tg_id, "first_steps")
     sp = SPECIES_DATA.get(species.value, SPECIES_DATA["cat"])
     await safe_edit_or_answer(cb.message, 
-        f"🎉 У тебя появился питомец <b>{name}</b> — {sp['emoji']} {sp['title']}!\n\n"
+        f"🎉 У тебя появился питомец <b>{_html.escape(name)}</b> — "
+        f"{sp['emoji']} {sp['title']}!\n\n"
         "Мини-тур:\n"
         "• 🐾 Питомец — корми, мой, играй (статы падают со временем!)\n"
         "• 📊 Статы — твоя активность и уровень\n"

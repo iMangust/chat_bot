@@ -129,7 +129,8 @@ async def do_guess_msg(message: Message, state: FSMContext, session: AsyncSessio
     if won:
         await bump_games_won(session, message.from_user.id)
     hint = "" if won else f" Это было число <b>{secret}</b>."
-    await message.answer(f"{result}{hint}", reply_markup=games_menu())
+    await message.answer(f"{result}{hint}", reply_markup=games_menu(),
+                           parse_mode="HTML")
 
 
 # ---------------------------------------------------------------------------

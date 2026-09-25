@@ -40,7 +40,8 @@ async def _top_lines(session: AsyncSession, period_label: str, since: datetime |
     if not talkers:
         lines.append("   пока пусто — будь первым! 💬")
     for i, (u, cnt) in enumerate(talkers, start=1):
-        lines.append(f"{_medal(i)} {u.first_name} — {cnt} сообщ. (ур. {u.level})")
+        name = html.escape(u.first_name or "")
+        lines.append(f"{_medal(i)} {name} — {cnt} сообщ. (ур. {u.level})")
     return lines
 
 
@@ -56,7 +57,7 @@ async def stats_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     need = xp_needed_for_level(user.level)
     text = (
         f"📊 <b>Твоя статистика</b>\n\n"
-        f"👤 {user.first_name} (@{user.username or '—'})\n"
+        f"👤 {html.escape(user.first_name or '')} (@{html.escape(user.username or '—')})\n"
         f"🏅 Уровень {user.level} · {progress_bar(user.xp, need)} {user.xp}/{need} XP\n"
         f"🪙 Монеты: {user.coins}\n\n"
         f"💬 Сообщения: сегодня {st['day']} · неделя {st['week']} · всего {st['total']}\n"
@@ -139,34 +140,35 @@ async def _top_screen_text(session: AsyncSession, period: str) -> tuple[str, int
         lines.append("   пока пусто — будь первым! 💬")
     for i, (u, c) in enumerate(talkers, start=1):
         m = _medal(i)
+        name = html.escape(u.first_name or "")
         me = " 👈 <i>это ты</i>" if u.tg_id == _TOP_CTX.get("me") else ""
         if u.tg_id == _TOP_CTX.get("me"):
             my_rank = i
-        lines.append(f"{m} {u.first_name} — {c} сообщ. (ур. {u.level}){me}")
+        lines.append(f"{m} {name} — {c} сообщ. (ур. {u.level}){me}")
 
     reactors = await top_reactions(session, since, 5)
     if reactors:
         lines.append("\n💖 <b>По полученным реакциям</b>")
         for i, (u, c) in enumerate(reactors, start=1):
-            lines.append(f"{_medal(i)} {u.first_name} — {c}")
+            lines.append(f"{_medal(i)} {html.escape(u.first_name or '')} — {c}")
 
     streaks = await top_streaks(session, 5)
     if streaks:
         lines.append("\n🔥 <b>Серии дней</b>")
         for i, u in enumerate(streaks, start=1):
-            lines.append(f"{_medal(i)} {u.first_name} — {u.streak_days} дн.")
+            lines.append(f"{_medal(i)} {html.escape(u.first_name or '')} — {u.streak_days} дн.")
 
     pets = await top_pets(session, 5)
     if pets:
         lines.append("\n🐾 <b>Питомцы</b>")
         for i, (p, owner) in enumerate(pets, start=1):
-            lines.append(f"{_medal(i)} {p.name} (ур. {p.level}) · {owner}")
+            lines.append(f"{_medal(i)} {html.escape(p.name)} (ур. {p.level}) · {html.escape(owner or '')}")
 
     levels = await top_levels(session, 5)
     if levels:
         lines.append("\n🏅 <b>Уровни игроков</b>")
         for i, u in enumerate(levels, start=1):
-            lines.append(f"{_medal(i)} {u.first_name} — ур. {u.level}")
+            lines.append(f"{_medal(i)} {html.escape(u.first_name or '')} — ур. {u.level}")
 
     lines.append("\n<i>/award — итоги прошлой недели с призами 🎁</i>")
     return "\n".join(lines), my_rank
@@ -193,7 +195,7 @@ async def cmd_top(message: Message, session: AsyncSession) -> None:
     """Алиас команды — показывает недельный топ прямо в ЛС."""
     _TOP_CTX["me"] = message.from_user.id
     text, _ = await _top_screen_text(session, "week")
-    await message.answer(text, reply_markup=top_tabs("week"))
+    await message.answer(text, reply_markup=top_tabs("week"), parse_mode="HTML")
 
 
 @router.message(Command("ach", "achievements"))
@@ -202,7 +204,8 @@ async def cmd_ach(message: Message, session: AsyncSession) -> None:
     svc = AchievementService(session)
     items = await svc.list_for_user(message.from_user.id)
     text, page, total_pages = _render_achievements(items, page=0)
-    await message.answer(text, reply_markup=achievements_list(items, page, total_pages))
+    await message.answer(text, reply_markup=achievements_list(items, page, total_pages),
+                       parse_mode="HTML")
 
 
 # ---------- командный алиас статистики ----------

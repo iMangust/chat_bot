@@ -59,7 +59,7 @@ HELP_TEXT = (
 
 @router.message(Command("help"))
 async def cmd_help(message: Message) -> None:
-    await message.answer(HELP_TEXT)
+    await message.answer(HELP_TEXT, parse_mode="HTML")
 
 
 @router.message(Command("pet"))
@@ -74,7 +74,7 @@ async def cmd_pet(message: Message, session: AsyncSession) -> None:
     users = UserRepository(session)
     user = await users.get(message.from_user.id)
     await message.answer(svc.render(pet, user.first_name if user else ""),
-                         reply_markup=pet_hub())
+                         reply_markup=pet_hub(), parse_mode="HTML")
 
 
 @router.callback_query(F.data == "menu:pet")
