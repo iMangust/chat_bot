@@ -144,10 +144,15 @@ def species_picker() -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
-def achievements_list(pairs: list[tuple[int, bool]], page: int = 0,
-                      page_size: int = 8) -> InlineKeyboardMarkup:
-    """Простая постраничная навигация ачивок: ◀ 1/3 ▶ + Назад."""
-    total_pages = max(1, (len(pairs) + page_size - 1) // page_size)
+def achievements_list(pairs: list, page: int = 0,
+                      total_pages: int | None = None) -> InlineKeyboardMarkup:
+    """Постраничная навигация ачивок: ◀ 2/3 ▶ + Назад.
+
+    total_pages можно передать явно (уже посчитан в рендере); если None —
+    считаем от размера списка при стандартной странице из 8.
+    """
+    if total_pages is None:
+        total_pages = max(1, (len(pairs) + 8 - 1) // 8)
     b = InlineKeyboardBuilder()
     if page > 0:
         b.button(text="◀️", callback_data=f"ach:page:{page - 1}")

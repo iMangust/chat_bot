@@ -276,12 +276,8 @@ async def cb_main_menu(cb: CallbackQuery, session: AsyncSession) -> None:
     users = UserRepository(session)
     user = await users.get_or_create(cb.from_user.id, cb.from_user.first_name or "",
                                      cb.from_user.username)
-    need = xp_needed_for_level(user.level)
-    bar = progress_bar(user.xp, need)
-    await safe_edit_or_answer(cb.message, 
-        f"🏠 <b>Главное меню</b>\n\n"
-        f"👤 {user.first_name}, уровень {user.level} · {bar} {user.xp}/{need} XP\n"
-        f"🪙 Монеты: {user.coins} · 🔥 Серия: {user.streak_days} дн.",
-        reply_markup=main_menu(),
-    )
+    link = invite_link_for(user.tg_id)
+    reward = get_settings().invite_reward_coins
+    await safe_edit_or_answer(cb.message, _main_menu_text(user),
+                              reply_markup=main_menu(link=link, reward=reward))
     await cb.answer()

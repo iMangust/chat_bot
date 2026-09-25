@@ -216,11 +216,22 @@ class AchievementService:
                         user_id, a.code, a.reward_xp, a.reward_coins)
 
     async def list_for_user(self, user_id: int) -> list[tuple[Achievement, UserAchievement | None]]:
-        """Полный список ачивок с прогрессом пользователя (для экрана 🏆)."""
+        """Полный список ачивок с прогрессом пользователя (для экрана 🏆).
+
+        Сортировка: сначала разблокированные (по дате), затем по редкости и
+        порогу условия — так «Открыто: 2/20» на первой странице видно сразу.
+        """
         rows = {r.achievement_id: r for r in await self.repo.get_progress_rows(user_id)}
         out = []
         for a in (await self.session.execute(select(Achievement))).scalars():
             if a.is_hidden and (ur := rows.get(a.id)) and not ur.unlocked_at:
                 continue
             out.append((a, rows.get(a.id)))
+        rarity_order = {"legendary": 0, "epic": 1, "rare": 2, "common": 3}
+        out.sort(key=lambda t: (
+            0 if (t[1] and t[1].unlocked_at) else 1,          # открытые — первыми
+            rarity_order.get(getattr(t[0].rarity, "value", str(t[0].rarity)), 4),
+            t[0].condition_value,                              # простые цели — раньше
+            t[0].id,
+        ))
         return out

@@ -1,6 +1,7 @@
 """Экраны статистики, достижений и топов."""
 from __future__ import annotations
 
+import html
 from datetime import datetime, timedelta, timezone
 
 from aiogram import F, Router
@@ -67,36 +68,51 @@ async def stats_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     await cb.answer()
 
 
-@router.callback_query(F.data == "menu:ach")
-async def ach_screen(cb: CallbackQuery, session: AsyncSession, page: int = 0) -> None:
-    svc = AchievementService(session)
-    items = await svc.list_for_user(cb.from_user.id)
-    page_size = 8
+def _render_achievements(items, page: int = 0, page_size: int = 8) -> tuple[str, int, int]:
+    """Собирает текст страницы ачивок.
+
+    Возвращает (text, page, total_pages). Все пользовательские/справочные
+    строки экранируются — иначе Telegram показывает сырые <b>...</b>.
+    """
     total_pages = max(1, (len(items) + page_size - 1) // page_size)
     page = max(0, min(page, total_pages - 1))
     chunk = items[page * page_size:(page + 1) * page_size]
 
-    lines = ["🏆 <b>Достижения</b>\n"]
     unlocked_count = sum(1 for a, ur in items if ur and ur.unlocked_at)
-    lines.append(f"Открыто: {unlocked_count}/{len(items)}\n")
+    lines = [f"🏆 <b>Достижения</b>\n", f"Открыто: {unlocked_count}/{len(items)}\n"]
     for a, ur in chunk:
         progress = ur.progress if ur else 0
         done = bool(ur and ur.unlocked_at)
         bar = progress_bar(min(progress, a.condition_value), a.condition_value, 8)
         mark = "✅" if done else "🔒"
+        title = html.escape(a.title or "")
+        desc = html.escape(a.description or "")
+        icon = a.icon or "🏅"
         hidden = "🎭 " if a.is_hidden and not done else ""
         lines.append(
-            f"{mark} {a.icon} <b>{hidden}{a.title}</b> — {a.description}\n"
+            f"{mark} {icon} <b>{hidden}{title}</b> — {desc}\n"
             f"   {bar} {min(progress, a.condition_value)}/{a.condition_value}"
         )
-    await safe_edit_or_answer(cb.message, "\n".join(lines),
-                               reply_markup=achievements_list(items, page, page_size))
+    return "\n".join(lines), page, total_pages
+
+
+@router.callback_query(F.data == "menu:ach")
+async def ach_screen(cb: CallbackQuery, session: AsyncSession, page: int = 0) -> None:
+    svc = AchievementService(session)
+    items = await svc.list_for_user(cb.from_user.id)
+    text, page, total_pages = _render_achievements(items, page=page)
+    await safe_edit_or_answer(cb.message, text,
+                              reply_markup=achievements_list(items, page, total_pages))
     await cb.answer()
 
 
 @router.callback_query(F.data.startswith("ach:page:"))
 async def ach_page(cb: CallbackQuery, session: AsyncSession) -> None:
-    await ach_screen(cb, session, page=int(cb.data.split(":")[2]))
+    try:
+        page = int(cb.data.split(":")[2])
+    except (IndexError, ValueError):
+        page = 0
+    await ach_screen(cb, session, page=page)
 
 
 PERIODS = {"day": "📅 День", "week": "🗓 Неделя", "all": "♾ Всё время"}
@@ -180,16 +196,13 @@ async def cmd_top(message: Message, session: AsyncSession) -> None:
     await message.answer(text, reply_markup=top_tabs("week"))
 
 
-@router.callback_query(F.data == "menu:settings")
-async def settings_stub(cb: CallbackQuery) -> None:
-    await safe_edit_or_answer(cb.message, 
-        "⚙️ Настройки уведомлений появятся на Этапе 6:\n"
-        "• 🔔 напоминания о питомце\n• 🌅 утренний/вечерний дайджест\n"
-        "• 🎄 праздничные события\n\n"
-        "Пока что я всегда на связи 😉",
-        reply_markup=back_to_main(),
-    )
-    await cb.answer()
+@router.message(Command("ach", "achievements"))
+async def cmd_ach(message: Message, session: AsyncSession) -> None:
+    """Алиас команды — достижения прямо в ЛС (первая страница)."""
+    svc = AchievementService(session)
+    items = await svc.list_for_user(message.from_user.id)
+    text, page, total_pages = _render_achievements(items, page=0)
+    await message.answer(text, reply_markup=achievements_list(items, page, total_pages))
 
 
 # ---------- командный алиас статистики ----------
