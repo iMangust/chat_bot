@@ -99,7 +99,9 @@ class _FakeActivityService:
     last_kwargs = None
 
     def __init__(self, session, bot=None):
-        pass
+        # хендлер сначала ищет автора в локальном логе — имитируем попадание
+        self.activity = SimpleNamespace(
+            get_message_author=AsyncMock(return_value=200))
 
     async def process_reaction(self, **kw):
         _FakeActivityService.last_kwargs = kw
@@ -109,6 +111,9 @@ class _FakeActivityService:
 def _mk_update(old_em, new_em, *, user_id=100, msg_author=200):
     def rl(emojis):
         return [ReactionTypeEmoji(type="emoji", emoji=e) for e in emojis]
+    fwd = AsyncMock(return_value=SimpleNamespace(
+        message_id=1, from_user=SimpleNamespace(id=msg_author, is_bot=False),
+        sender_chat=None))
     upd = SimpleNamespace(
         chat=SimpleNamespace(id=-1001, type="supergroup"),
         message_id=777,
@@ -116,10 +121,28 @@ def _mk_update(old_em, new_em, *, user_id=100, msg_author=200):
         new_reaction=rl(new_em),
         user=SimpleNamespace(id=user_id),
         actor_chat=None,
-        bot=SimpleNamespace(get_message=AsyncMock(
-            return_value=SimpleNamespace(from_user=SimpleNamespace(id=msg_author, is_bot=False)))),
+        bot=SimpleNamespace(
+            get_me=AsyncMock(return_value=SimpleNamespace(id=77)),
+            forward_message=fwd,
+            delete_message=AsyncMock()),
     )
     return upd
+
+
+def _patch_log_miss(monkeypatch):
+    """Локальный лог не знает автора → хендлер идёт в forward-фолбэк."""
+    import app.handlers.tracker as tr
+
+    class _FakeSvc:
+        def __init__(self, session, bot=None):
+            self.activity = SimpleNamespace(
+                get_message_author=AsyncMock(return_value=None))
+
+        async def process_reaction(self, **kw):
+            _FakeActivityService.last_kwargs = kw
+            return True
+
+    monkeypatch.setattr(tr, "ActivityService", _FakeSvc)
 
 
 @pytest.fixture()
@@ -130,6 +153,7 @@ def patch_tracker(monkeypatch):
     # хендлер импортирует ActivityService по имени модуля — патчим там же
     import app.handlers.tracker as tr
     monkeypatch.setattr(tr, "ActivityService", _FakeActivityService)
+    # дефолт: автор известен из локального лога (200) — без сетевого фолбэка
     _FakeActivityService.last_kwargs = None
 
 
@@ -154,7 +178,8 @@ def test_reaction_swap_counts_only_added(patch_tracker):
     assert _FakeActivityService.last_kwargs["emoji"] == "🔥"
 
 
-def test_self_reaction_not_counted(patch_tracker):
+def test_self_reaction_not_counted(patch_tracker, monkeypatch):
+    _patch_log_miss(monkeypatch)  # лог молчит — проверяем и forward-путь
     upd = _mk_update([], ["❤️"], user_id=200, msg_author=200)
     asyncio.run(track_reaction_update(upd, session=None))
     assert _FakeActivityService.last_kwargs is None
@@ -240,3 +265,29 @@ def test_on_error_accepts_aiogram_error_event():
                          exception=ValueError("boom"))
     result = asyncio.run(on_error(ev))
     assert result is True                     # событие погашено, дипсейчер жив
+
+
+# ---------- v1.4.9: forward-фолбэк вместо несуществующего get_message ----------
+
+def test_reaction_falls_back_to_forward_when_log_misses(patch_tracker, monkeypatch):
+    """Локальный лог не знает автора -> бот пересылает сообщение себе,
+    берёт from_user и удаляет пересылку (regression: bot.get_message не
+    существует в aiogram 3.x и ронял весь учёт реакций вне лога)."""
+    _patch_log_miss(monkeypatch)
+    upd = _mk_update([], ["👍"])
+    asyncio.run(track_reaction_update(upd, session=None))
+    kw = _FakeActivityService.last_kwargs
+    assert kw is not None and kw["to_user"] == 200
+    upd.bot.forward_message.assert_awaited_once()
+    upd.bot.delete_message.assert_awaited_once()
+
+
+def test_reaction_skipped_when_forward_fails(patch_tracker, monkeypatch):
+    """Нет доступа к сообщению (Forbidden при пересылке) -> начисления нет,
+    но и краша нет (сообщение может быть удалено/из анонимного канала)."""
+    from unittest.mock import AsyncMock as AM
+    _patch_log_miss(monkeypatch)
+    upd = _mk_update([], ["👍"])
+    upd.bot.forward_message = AM(side_effect=Exception("Forbidden"))
+    asyncio.run(track_reaction_update(upd, session=None))
+    assert _FakeActivityService.last_kwargs is None

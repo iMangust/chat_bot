@@ -17,9 +17,10 @@ allowed_updates=[… "message_reaction", "message_reaction_count"] при пол
 """
 from __future__ import annotations
 
+import contextlib
 from datetime import timedelta, timezone
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.types import (Message, MessageReactionUpdated,
                            MessageReactionCountUpdated, ReactionTypeEmoji,
                            User)
@@ -147,6 +148,31 @@ def _reaction_emoji(rt) -> str | None:
     return None
 
 
+async def _fetch_author_via_forward(bot: Bot, chat_id: int, message_id: int) -> int | None:
+    """Автор сообщения через forward_message в ЛС самого бота.
+
+    В aiogram 3.x нет прямого «get message by id» (ограничение Bot API).
+    Пересланное в личные сообщения бота сообщение содержит исходного автора
+    в ``from_user``; сразу удаляем пересылку, чтобы не копить мусор. Если бот
+    не может читать чат/пересылать (нет доступа, канал с анонимными постами) —
+    возвращаем None, начисление по такой реакции пропускаем.
+    """
+    me = await bot.get_me()
+    try:
+        fwd = await bot.forward_message(chat_id=me.id, from_chat_id=chat_id, message_id=message_id)
+    except Exception as exc:  # Forbidden / MessageCan'tBeForwarded / удалено
+        logger.debug("reaction fetch failed (forward): {}", exc)
+        return None
+    author = fwd.sender_chat or None
+    uid: int | None = fwd.from_user.id if (fwd.from_user and not fwd.from_user.is_bot) else None
+    if uid is None and author is not None and author.type in ("private", "channel"):
+        # пересылка от имени канала/группы — персонального автора нет, не накручиваем
+        uid = None
+    with contextlib.suppress(Exception):
+        await bot.delete_message(chat_id=me.id, message_id=fwd.message_id)
+    return uid
+
+
 @router.message_reaction()
 async def track_reaction_update(update: MessageReactionUpdated,
                                 session: AsyncSession) -> None:
@@ -176,19 +202,24 @@ async def track_reaction_update(update: MessageReactionUpdated,
         return  # снял реакцию или ничего не изменилось — не начисляем
     emoji = sorted(added)[0]
 
-    # автор сообщения, на которое поставили реакцию
+    # автор сообщения, на которое поставили реакцию.
+    # Источник №1 — локальный лог (быстрый, без сетевого запроса).
+    # Источник №2 — Telegram API: в aiogram 3.x у Bot нет метода get_message
+    # (Bot API 7.0 не отдаёт «прочитать сообщение» напрямую), поэтому делаем
+    # forward_message в ЛС самого бота и берём автора из пересланного
+    # сообщения. Прежний вызов bot.get_message падал с AttributeError и
+    # молча терял все реакции на сообщения, которых бот не видел в логе.
     to_user: int | None = None
+    svc = ActivityService(session, bot=update.bot)
     try:
-        src = await update.bot.get_message(update.chat.id, update.message_id)
-        if src.from_user and not src.from_user.is_bot:
-            to_user = src.from_user.id
-    except Exception as exc:  # сообщение удалено/недоступно
-        logger.debug("reaction fetch failed: {}", exc)
-        return
+        to_user = await svc.activity.get_message_author(update.chat.id, update.message_id)
+    except Exception as exc:  # noqa: BLE001 — БД-фолбэки не должны ронять учёт
+        logger.debug("reaction author lookup failed (db): {}", exc)
+    if to_user is None:
+        to_user = await _fetch_author_via_forward(update.bot, update.chat.id, update.message_id)
     if to_user is None or to_user == from_user_id:
         return  # неясный автор или само-реакция — не накручиваем
 
-    svc = ActivityService(session, bot=update.bot)
     await svc.process_reaction(
         from_user=from_user_id, to_user=to_user,
         chat_id=update.chat.id, message_id=update.message_id, emoji=emoji,

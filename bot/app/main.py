@@ -13,6 +13,8 @@ from aiogram.fsm.storage.redis import RedisStorage
 from aiogram.types import BotCommand
 from loguru import logger
 
+from sqlalchemy import inspect as sa_inspect
+
 from app.config import get_settings
 from app.db.models import Base
 from app.db.session import DbMiddleware, engine, session_factory
@@ -92,37 +94,86 @@ async def probe_fsm_storage(storage):
         return MemoryStorage()
 
 
+async def _column_exists(conn, table: str, column: str) -> bool:
+    """Проверка наличия колонки через inspector (кросс-СУБД, без information_schema вручную)."""
+    def _check(sync_conn) -> bool:
+        try:
+            cols = {c["name"] for c in sa_inspect(sync_conn).get_columns(table)}
+        except Exception:  # таблицы ещё нет — create_all создаст её со свежей схемой
+            return False
+        return column in cols
+
+    return bool(await conn.run_sync(_check))
+
+
+async def _index_exists(conn, index_name: str) -> bool:
+    def _check(sync_conn) -> bool:
+        insp = sa_inspect(sync_conn)
+        for tbl in insp.get_table_names():
+            if any(idx.get("name") == index_name for idx in insp.get_indexes(tbl)):
+                return True
+        return False
+
+    return bool(await conn.run_sync(_check))
+
+
+# описание лёгких миграций: таблица → [(колонка, DDL-тип)]
+_LIGHT_COLUMNS: dict[str, list[tuple[str, str]]] = {
+    # v1.4.7: история питомцев — у пользователя может быть несколько строк
+    # (архив + текущий), «текущий» выбирается фильтром is_archived=False.
+    "pets": [
+        ("generation", "INTEGER NOT NULL DEFAULT 1"),
+        ("is_archived", "BOOLEAN NOT NULL DEFAULT 0"),
+        ("archived_at", "DATETIME"),
+        ("archive_reason", "VARCHAR(32)"),
+    ],
+}
+
+
 async def _light_migrations(conn) -> None:
     """Лёгкие инкрементальные миграции для колонок, появившихся после v1.4.6.
 
     create_all умеет только СОЗДАвать недостающие таблицы, но не добавляет
     колонки в уже существующие — на живой БД pets без generation/is_archived
-    новый код падал бы с OperationalError. Добавляем колонки идемпотентным
-    ALTER TABLE ... IF NOT EXISTS (Postgres/SQLite 3.35+). Для MySQL-совместимых
-    движок-специфичных случаев в проде — Alembic.
+    новый код падал с OperationalError (1054 Unknown column на MySQL).
+
+    Реализация кросс-СУБД (MySQL/MariaDB, PostgreSQL, SQLite): сначала через
+    inspector проверяем, чего реально не хватает, затем выполняем обычный
+    ``ALTER TABLE ... ADD COLUMN`` БЕЗ ``IF NOT EXISTS`` — этого синтаксиса в
+    MySQL нет (он есть только в PG/SQLite 3.35+, но и там предварительная
+    проверка делает его избыточным). Ошибки конкретной инструкции логируются
+    и не валят старт бота (best-effort; в проде — Alembic).
     """
     from sqlalchemy import text
 
-    stmts = [
-        # v1.4.7: история питомцев — у пользователя может быть несколько строк
-        # (архив + текущий), «текущий» выбирается фильтром is_archived=False.
-        # Снимаем старый UNIQUE(pets.user_id): в sqlite он встроен в таблицу и
-        # не удаляется DROP INDEX — живой БД нужна ручная пересборка таблицы
-        # (или Alembic); на dev/new-БД create_all делает корректную схему.
-        "ALTER TABLE pets ADD COLUMN IF NOT EXISTS generation INTEGER NOT NULL DEFAULT 1",
-        "ALTER TABLE pets ADD COLUMN IF NOT EXISTS is_archived BOOLEAN NOT NULL DEFAULT 0",
-        "ALTER TABLE pets ADD COLUMN IF NOT EXISTS archived_at DATETIME",
-        "ALTER TABLE pets ADD COLUMN IF NOT EXISTS archive_reason VARCHAR(32)",
-        # защита от «двух текущих» на новых/dev БД (sqlite+PG); на живой sqlite
-        # с инлайновым UNIQUE в таблице команда не проходит и логируется debug'ом
-        "CREATE UNIQUE INDEX IF NOT EXISTS uq_pets_current_per_user "
-        "ON pets (user_id) WHERE COALESCE(is_archived, 0) = 0",
-    ]
-    for sql in stmts:
+    dialect = conn.dialect.name  # 'mysql' | 'postgresql' | 'sqlite' | ...
+
+    for table, columns in _LIGHT_COLUMNS.items():
+        for column, ddl_type in columns:
+            if not await _column_exists(conn, table, column):
+                sql = f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}"
+                try:
+                    await conn.execute(text(sql))
+                    logger.info("лёгкая миграция: {}.{} добавлена ({})", table, column, dialect)
+                except Exception as exc:  # noqa: BLE001 — гонка с другим воркером и т.п.
+                    logger.warning(
+                        "лёгкая миграция {} не применена ({}): {}",
+                        sql[:80], type(exc).__name__, exc,
+                    )
+
+    # Защита «не более одного текущего питомца на пользователя» — частичный
+    # уникальный индекс. Частичные индексы (WHERE) MySQL не поддерживает:
+    # на MySQL/MariaDB целостность обеспечивает фильтр is_archived=False во
+    # всех запросах + проверка в сервисе усыновления.
+    idx_name = "uq_pets_current_per_user"
+    if dialect in {"postgresql", "sqlite"} and not await _index_exists(conn, idx_name):
         try:
-            await conn.execute(text(sql))
-        except Exception as exc:  # noqa: BLE001 — best-effort: старый PG без IF NOT EXISTS и т.п.
-            logger.debug("лёгкая миграция пропущена ({}): {}", sql[:60], type(exc).__name__)
+            await conn.execute(text(
+                f"CREATE UNIQUE INDEX IF NOT EXISTS {idx_name} "
+                "ON pets (user_id) WHERE COALESCE(is_archived, 0) = 0"
+            ))
+        except Exception as exc:  # noqa: BLE001 — старая sqlite без partial-индексов и т.п.
+            logger.debug("частичный индекс {} пропущен: {}", idx_name, type(exc).__name__)
 
 
 async def on_startup(bot: Bot) -> None:

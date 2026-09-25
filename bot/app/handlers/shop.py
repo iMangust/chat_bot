@@ -19,10 +19,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 
+from aiogram.types import InlineKeyboardButton
+
 from app.config import get_settings
 from app.db.models import Item, PetInventory, User
 from app.db.repositories import PetRepository, UserRepository
 from app.keyboards.inline import back_to_main, pet_hub
+from app.keyboards.paged import paged_keyboard
 from app.handlers.tamagotchi import set_pet_page
 from app.services.tamagotchi import TamagotchiService
 from app.utils.safe_edit import safe_edit_or_answer
@@ -83,6 +86,7 @@ def shop_keyboard(items: list[Item], user_coins: int) -> "InlineKeyboardBuilder 
 
 
 @router.callback_query(F.data.in_({"menu:shop", "pet:shop"}))
+@router.callback_query(F.data.startswith("shop:page:"))
 async def shop_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     set_pet_page(cb.message.chat.id, 1)  # «Назад» из магазина вернёт на стр. «Вещи»
     users = UserRepository(session)
@@ -97,25 +101,54 @@ async def shop_screen(cb: CallbackQuery, session: AsyncSession) -> None:
         items = list((await session.execute(
             select(Item).where(Item.type != "merch").order_by(Item.type, Item.price)
         )).scalars())
-    lines = [f"🛒 <b>Магазин питомца</b> · у тебя 🪙 {user.coins}\n"]
-    groups: dict[str, list[Item]] = {}
-    for it in items:
-        groups.setdefault(it.type, []).append(it)
+    # UX v1.4.9: магазин листается постранично (≤6 товаров на страницу),
+    # текст показывает только товары текущей страницы — кнопки и список всегда
+    # синхронны. Страница берётся из callback_data (shop:page:<n>).
+    try:
+        page = int(cb.data.split(":")[2]) if cb.data.startswith("shop:page:") else 0
+    except (IndexError, ValueError):
+        page = 0
+    grouped = [it for t in ("food", "toy", "medicine")
+               for it in items if it.type == t] + \
+              [it for it in items if it.type not in ("food", "toy", "medicine")]
+    size = 6
+    total_pages = max(1, (len(grouped) + size - 1) // size)
+    page = max(0, min(page, total_pages - 1))
+    chunk = grouped[page * size:(page + 1) * size]
+
     titles = {"food": "🍎 Еда", "toy": "🎾 Игрушки", "medicine": "💊 Лекарства"}
-    for t, lst in groups.items():
-        lines.append(f"<b>{titles.get(t, html.escape(t))}</b>")
-        for it in lst:
-            price = f" — {it.price} 🪙" if it.price else ""
-            lines.append(f"  {it.icon} {html.escape(it.name)}{price} · {html.escape(it.description)}")
-        lines.append("")
-    kb = shop_keyboard(items, user.coins)
+    lines = [f"🛒 <b>Магазин питомца</b> · у тебя 🪙 {user.coins}"
+             + (f" · стр. {page + 1}/{total_pages}" if total_pages > 1 else ""), ""]
+    last_type = None
+    for it in chunk:
+        head = titles.get(it.type, html.escape(it.type or ""))
+        if it.type != last_type:
+            lines.append(f"<b>{head}</b>")
+            last_type = it.type
+        price = f" — {it.price} 🪙" if it.price else ""
+        lines.append(f"  {it.icon} {html.escape(it.name)}{price} · {html.escape(it.description or '')}")
+    lines.append("")
+    lines.append("<i>🪙 — по карману, 🔒 — не хватает монет</i>")
+
+    buttons = [
+        InlineKeyboardButton(
+            text=f"{'🪙' if user.coins >= it.price else '🔒'} {it.icon} {html.escape(it.name)} · {it.price}🪙",
+            callback_data=f"buy:{it.id}")
+        for it in chunk
+    ]
     settings = get_settings()
-    if settings.merch_enabled:
-        kb.row()
-        kb.button(text="🧢 Мерч канала — в отдельном разделе ➡️",
-                  callback_data="menu:merch")
-    kb.button(text="⬅️ Назад", callback_data="menu:main")
-    await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=kb.as_markup())
+    kb, page = paged_keyboard(
+        buttons, prefix="shop", title="🛒 Магазин", page=page,
+        back_cb="menu:main",
+        home_cb="menu:merch" if settings.merch_enabled else None,
+    )
+    await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=kb)
+    await cb.answer()
+
+
+@router.callback_query(F.data.in_({"shop:noop", "inv:noop"}))
+async def shop_noop(cb: CallbackQuery) -> None:
+    """Клик по неразрывной подписи страницы — просто снять «часики»."""
     await cb.answer()
 
 
@@ -143,6 +176,8 @@ async def buy_item(cb: CallbackQuery, session: AsyncSession) -> None:
         await cb.answer(f"Не хватает {item.price - user.coins} монет 🪙", show_alert=True)
         return
 
+    # UX v1.4.9: возврат к списку с сохранением страницы (было: всегда 0)
+    cb.data = "shop:page:0"
     # защита от двойного списания при быстрых дабл-кликах: UPDATE ... WHERE coins>=price
     from sqlalchemy import update
     res = await session.execute(
@@ -169,6 +204,7 @@ async def buy_item(cb: CallbackQuery, session: AsyncSession) -> None:
 
 
 @router.callback_query(F.data == "pet:inv")
+@router.callback_query(F.data.startswith("inv:page:"))
 async def inventory_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     pets = PetRepository(session)
     pet = await pets.get_by_user(cb.from_user.id)
@@ -186,15 +222,29 @@ async def inventory_screen(cb: CallbackQuery, session: AsyncSession) -> None:
         await cb.answer()
         return
 
-    b = InlineKeyboardBuilder()
-    lines = ["🎒 <b>Инвентарь</b>\n"]
-    for inv, item in rows:
-        lines.append(f"{item.icon} {item.name} ×{inv.quantity}")
-        b.button(text=f"Использовать {item.icon}×{inv.quantity}",
-                 callback_data=f"use:{item.id}")
-    b.adjust(1)
-    b.button(text="⬅️ Назад", callback_data="menu:pet")
-    await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=b.as_markup())
+    # UX v1.4.9: предметы с количеством >1 получают подписи «Использовать ×N» —
+    # раньше кнопки были идентичны до исчерпания стопки (непонятно, что нажимаешь).
+    try:
+        page = int(cb.data.split(":")[2]) if cb.data.startswith("inv:page:") else 0
+    except (IndexError, ValueError):
+        page = 0
+    size = 6
+    total_pages = max(1, (len(rows) + size - 1) // size)
+    page = max(0, min(page, total_pages - 1))
+    chunk = rows[page * size:(page + 1) * size]
+    lines = ["🎒 <b>Инвентарь</b>"
+             + (f" · стр. {page + 1}/{total_pages}" if total_pages > 1 else ""), ""]
+    buttons = []
+    for inv, item in chunk:
+        lines.append(f"{item.icon} {html.escape(item.name)} ×{inv.quantity}")
+        buttons.append(InlineKeyboardButton(
+            text=f"🎯 Использовать {item.icon} {html.escape(item.name)} ×{inv.quantity}",
+            callback_data=f"use:{item.id}"))
+    kb, page = paged_keyboard(
+        buttons, prefix="inv", title="🎒 Инвентарь", page=page,
+        back_cb="menu:pet", home_cb="menu:main",
+    )
+    await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=kb)
     await cb.answer()
 
 

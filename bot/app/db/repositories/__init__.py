@@ -159,6 +159,16 @@ class ActivityRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
+    async def get_message_author(self, chat_id: int, message_id: int) -> int | None:
+        """Автор сообщения из локального лога (None — если сообщение не видели)."""
+        stmt = (
+            select(ChatMessageLog.user_id)
+            .where(ChatMessageLog.chat_id == chat_id,
+                   ChatMessageLog.message_id == message_id)
+            .limit(1)
+        )
+        return (await self.session.execute(stmt)).scalar_one_or_none()
+
     async def log_message(self, entry: ChatMessageLog) -> ChatMessageLog:
         """Пишет запись лога, идемпотентно по (chat_id, message_id).
 

@@ -21,8 +21,11 @@ import json
 from datetime import datetime, timezone
 
 from aiogram import F, Router
-from aiogram.types import CallbackQuery
+from aiogram.types import (CallbackQuery, InlineKeyboardButton,
+                                InlineKeyboardMarkup)
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+from app.keyboards.paged import paged_keyboard
 from loguru import logger
 
 from app.config import get_settings
@@ -121,24 +124,45 @@ async def merch_screen(cb: CallbackQuery, session=None) -> None:
     groups = _items_by_cat()
     lines = ["🧢 <b>Мерч канала</b>",
              "Одежда и атрибутика для своих. Выбирай категорию 👇", ""]
-    b = InlineKeyboardBuilder()
-    for code, (icon, title) in CATEGORIES.items():
-        n = len(groups.get(code, []))
-        if n:
-            lines.append(f"{icon} <b>{title}</b> — {n} шт.")
-            b.button(text=f"{icon} {title} ({n})", callback_data=f"merch:cat:{code}")
-    b.adjust(1)
-    if settings.merch_url:
-        b.row()
-        b.button(text="🌐 Открыть магазин мерча", url=settings.merch_url)
-    b.button(text="⬅️ Назад", callback_data="menu:main")
-    await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=b.as_markup())
+    buttons = [
+        InlineKeyboardButton(text=f"{icon} {title} · {len(groups.get(code, []))} шт.",
+                             callback_data=f"merch:cat:{code}")
+        for code, (icon, title) in CATEGORIES.items() if groups.get(code)
+    ]
+    url_btn = (InlineKeyboardButton(text="🌐 Открыть магазин мерча", url=settings.merch_url)
+               if settings.merch_url else None)
+    kb, _page = paged_keyboard(
+        buttons, prefix="merch", title="🧢 Мерч", page=0,
+        back_cb="menu:main", url_button=url_btn,
+    )
+    await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=kb)
     await cb.answer()
 
 
+def _category_kb(buttons: list[InlineKeyboardButton], code: str,
+                 title: str, page: int, total_pages: int) -> InlineKeyboardMarkup:
+    """Клавиатура витрины категории: листание merch:page:<n>:<code> + фикс. низ."""
+    # layout: по одной кнопке в ряд (подписи товаров длинные)
+    b2 = InlineKeyboardBuilder()
+    for btn in buttons:
+        b2.add_button(btn)
+        b2.row()
+    if total_pages > 1:
+        b2.button(text="◀️", callback_data=f"merch:page:{(page - 1) % total_pages}:{code}")
+        b2.button(text=f"{title} 📖 {page + 1}/{total_pages}", callback_data="merch:noop")
+        b2.button(text="▶️", callback_data=f"merch:page:{(page + 1) % total_pages}:{code}")
+        b2.row()
+    b2.button(text="⬅️ К категориям", callback_data="menu:merch")
+    b2.button(text="🏠 Меню", callback_data="menu:main")
+    return b2.as_markup()
+
+
 @router.callback_query(F.data.startswith("merch:cat:"))
+@router.callback_query(F.data.startswith("merch:page:"))
 async def merch_category(cb: CallbackQuery) -> None:
-    code = cb.data.split(":")[2] if len(cb.data.split(":")) > 2 else ""
+    parts = cb.data.split(":")
+    # merch:cat:<code> или merch:page:<n>:<code>
+    code = parts[3] if cb.data.startswith("merch:page:") and len(parts) > 3 else (parts[2] if len(parts) > 2 else "")
     if code not in CATEGORIES:
         return await cb.answer("Категория не найдена 😅", show_alert=True)
     icon, title = CATEGORIES[code]
@@ -148,16 +172,27 @@ async def merch_category(cb: CallbackQuery) -> None:
             cb.message, f"{icon} <b>{html.escape(title)}</b>\n\nПока пусто — скоро новинки!",
             reply_markup=_back_kb("menu:merch", f"⬅️ К категориям").as_markup())
         return await cb.answer()
-    lines = [f"{icon} <b>{html.escape(title)}</b>\n"]
-    b = InlineKeyboardBuilder()
-    for idx, it in products:
+    # UX v1.4.9: витрина категории листается (≤6 товаров на страницу);
+    # страница зашита в callback: merch:page:<n>:<code>.
+    try:
+        page = int(parts[2]) if cb.data.startswith("merch:page:") else 0
+    except (IndexError, ValueError):
+        page = 0
+    size = 6
+    total_pages = max(1, (len(products) + size - 1) // size)
+    page = max(0, min(page, total_pages - 1))
+    chunk = products[page * size:(page + 1) * size]
+    lines = [f"{icon} <b>{html.escape(title)}</b>"
+             + (f" · стр. {page + 1}/{total_pages}" if total_pages > 1 else ""), ""]
+    buttons = []
+    for idx, it in chunk:
         sizes = f" · {'/'.join(it['sizes'])}" if it["sizes"] else ""
         lines.append(f"• <b>{html.escape(it['name'])}</b> — {it['price']:,} ₽{sizes}")
-        b.button(text=f"{it['name']} · {it['price']} ₽", callback_data=f"merch:item:{idx}")
-    b.adjust(1)
-    b.button(text="⬅️ К категориям", callback_data="menu:merch")
-    b.button(text="🏠 Меню", callback_data="menu:main")
-    await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=b.as_markup())
+        buttons.append(InlineKeyboardButton(
+            text=f"👕 {html.escape(it['name'])} · {it['price']} ₽",
+            callback_data=f"merch:item:{idx}"))
+    kb = _category_kb(buttons, code, title, page, total_pages)
+    await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=kb)
     await cb.answer()
 
 
@@ -224,6 +259,7 @@ async def merch_buy(cb: CallbackQuery, session) -> None:
     await cb.answer("Заявка отправлена ✅")
 
 
-@router.callback_query(F.data == "merch:noop")
+@router.callback_query(F.data.startswith("merch:noop"))
 async def merch_noop(cb: CallbackQuery) -> None:
+    """Клик по неразрывной подписи страницы — просто снять «часики»."""
     await cb.answer()

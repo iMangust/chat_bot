@@ -77,9 +77,9 @@ def pet_hub(page: int = 0, critical: bool = False) -> InlineKeyboardMarkup:
     b.button(text="📜 История питомцев", callback_data="pet:history")
     b.adjust(2)
     b.row()
-    b.button(text="◀️", callback_data=f"pet:page:{(page - 1) % n}")
-    b.button(text=f"📖 {title} · {page + 1}/{n}", callback_data="noop")
-    b.button(text="▶️", callback_data=f"pet:page:{(page + 1) % n}")
+    b.button(text="◀️ Назад", callback_data=f"pet:page:{(page - 1) % n}")
+    b.button(text=f"📖 {title} {page + 1}/{n}", callback_data="noop")
+    b.button(text="Вперёд ▶️", callback_data=f"pet:page:{(page + 1) % n}")
     b.row()
     b.button(text="⬅️ Назад", callback_data="menu:main")
     b.adjust(3, 1)
@@ -215,11 +215,10 @@ def achievements_list(pairs: list, page: int = 0,
     if total_pages is None:
         total_pages = max(1, (len(pairs) + 8 - 1) // 8)
     b = InlineKeyboardBuilder()
-    if page > 0:
-        b.button(text="◀️", callback_data=f"ach:page:{page - 1}")
-    b.button(text=f"{page + 1}/{total_pages}", callback_data="noop")
-    if page < total_pages - 1:
-        b.button(text="▶️", callback_data=f"ach:page:{page + 1}")
+    # обе стрелки всегда (зацикление): положение кнопок не прыгает между страницами
+    b.button(text="◀️ Новее", callback_data=f"ach:page:{(page - 1) % total_pages}")
+    b.button(text=f"🏆 {page + 1}/{total_pages}", callback_data="noop")
+    b.button(text="Старше ▶️", callback_data=f"ach:page:{(page + 1) % total_pages}")
     b.row()
     b.button(text="⬅️ Назад", callback_data="menu:main")
     return b.as_markup()
@@ -248,10 +247,10 @@ def top_tabs(active: str = "week", section: str = "talk") -> InlineKeyboardMarku
         mark = "✅ " if key == active else ""
         b.button(text=f"{mark}{label}", callback_data=f"top:{key}:{keys[idx]}")
     b.row()
-    b.button(text="◀️", callback_data=f"top:{active}:{keys[(idx - 1) % n]}")
+    b.button(text="◀️ Раздел", callback_data=f"top:{active}:{keys[(idx - 1) % n]}")
     b.button(text=f"{TOP_SECTION_LABELS.get(keys[idx], '🏅')} {idx + 1}/{n}",
              callback_data="noop")
-    b.button(text="▶️", callback_data=f"top:{active}:{keys[(idx + 1) % n]}")
+    b.button(text="Раздел ▶️", callback_data=f"top:{active}:{keys[(idx + 1) % n]}")
     b.row()
     b.button(text="⬅️ Назад", callback_data="menu:main")
     b.adjust(3, 3, 1)
@@ -270,7 +269,7 @@ def settings_keyboard(flags: dict[str, bool], lang: str = "ru") -> InlineKeyboar
     for key, label in labels.items():
         on = flags.get(key, True)
         b.button(text=f"{'✅' if on else '❌'} {label}", callback_data=f"set:{key}")
-    b.adjust(1)
+    b.adjust(2)
     b.row()
     ru = "✅" if lang == "ru" else "🌐"
     en = "✅" if lang == "en" else "🌐"
