@@ -16,7 +16,7 @@ Redis опционален (на Windows — Memurai); без него рабо�
    сервис автозапуска, порт 3306.
 2. В `mysql -u root -p` выполнить:
    ```sql
-   CREATE DATABASE tamabot CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+   CREATE DATABASE tamabot CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;  -- ВАЖНО: utf8mb4 (эмодзи)
    CREATE USER 'tamabot'@'localhost' IDENTIFIED BY 'СИЛЬНЫЙ_ПАРОЛЬ';
    GRANT ALL PRIVILEGES ON tamabot.* TO 'tamabot'@'localhost';
    FLUSH PRIVILEGES;
@@ -146,6 +146,7 @@ python -m pytest tests -q        # ожидаем: 31 passed (включая п�
   |---|---|
   | `RuntimeError: BOT_TOKEN не задан` | нет `.env` или токен пуст |
   | `Can't connect to MySQL server` | MySQL не запущен / неверный `DATABASE_URL` |
+  | `Incorrect string value: '\xF0\x9F...' (1366)` | база создана в utf8mb3. С v1.2.6 бот чинит это сам при старте (авто-конвертация в utf8mb4). Вручную: `ALTER DATABASE tamabot CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;` + перезапуск |
   | Бот молчит в группе | не админ / `TRACKED_CHAT_IDS` не совпадает / сообщение короче `MIN_MESSAGE_LENGTH` или в кулдауне |
   | Реакции не считаются | в группе выключен «Выбор реакции» |
   | Предупреждение про Redis | Redis недоступен — ok, работает fallback; для прод-стабильности поставьте Memurai |

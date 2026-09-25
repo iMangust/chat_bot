@@ -34,9 +34,40 @@ def setup_logging(level: str) -> None:
                level="DEBUG", encoding="utf-8")
 
 
+async def ensure_utf8mb4(conn) -> None:
+    """Гарантирует полную поддержку эмодзи в MySQL.
+
+    Даже если в DATABASE_URL указан charset=utf8mb4, база на сервере могла
+    быть создана с дефолтным utf8mb3 (MySQL 5.x / старый my.cnf) — тогда
+    вставка 4-байтных символов (🐾💬🔥) падает с ошибкой 1366.
+    Команды конвертации идемпотентны и безопасны (sqlite пропускается).
+    """
+    if engine.dialect.name != "mysql":
+        return
+    from sqlalchemy import text
+
+    row = (await conn.execute(text(
+        "SELECT @@character_set_database AS cs, @@collation_database AS col"
+    ))).mappings().first()
+    if row and str(row["cs"]).lower() != "utf8mb4":
+        await conn.execute(text(
+            "ALTER DATABASE CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+        ))
+        logger.warning(
+            f"база была {row['cs']} — сконвертирована в utf8mb4 (эмодзи OK)")
+    # конвертация существующих таблиц/колонок (для старых дампов utf8mb3)
+    tables = (await conn.execute(text("SHOW TABLES"))).scalars().all()
+    for t in tables:
+        await conn.execute(text(
+            f"ALTER TABLE `{t}` CONVERT TO CHARACTER SET utf8mb4 "
+            "COLLATE utf8mb4_unicode_ci"
+        ))
+
+
 async def on_startup(bot: Bot) -> None:
     # схемы (в проде — Alembic; create_all оставлен для dev-скорости)
     async with engine.begin() as conn:
+        await ensure_utf8mb4(conn)
         await conn.run_sync(Base.metadata.create_all)
     async with session_factory() as session:
         await seed_achievements(session)

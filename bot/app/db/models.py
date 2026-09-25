@@ -20,7 +20,15 @@ def utcnow() -> datetime:
 
 
 class Base(DeclarativeBase):
-    pass
+    # MySQL: таблицы создаются сразу в utf8mb4 — 4-байтные эмодзи (🐾💬)
+    # проходят даже если база по умолчанию utf8mb3. Для sqlite игнорируется.
+    __table_args__ = {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"}
+
+
+def _ta(*args):
+    """Собирает __table_args__: индексы/констрейны + mysql utf8mb4."""
+    return (*args, {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"})
+
 
 
 # ---------------------------------------------------------------------------
@@ -62,7 +70,7 @@ class User(Base):
 # ---------------------------------------------------------------------------
 class ChatMessageLog(Base):
     __tablename__ = "chat_messages_log"
-    __table_args__ = (
+    __table_args__ = _ta(
         Index("ix_cml_user_created", "user_id", "created_at"),
         Index("ix_cml_chat_created", "chat_id", "created_at"),
     )
@@ -83,7 +91,7 @@ class ChatMessageLog(Base):
 
 class ReactionLog(Base):
     __tablename__ = "reactions_log"
-    __table_args__ = (
+    __table_args__ = _ta(
         Index("ix_rl_to_created", "to_user", "created_at"),
         UniqueConstraint("from_user", "message_id", "emoji", name="uq_reaction_once"),
     )
@@ -157,7 +165,7 @@ class Achievement(Base):
 
 class UserAchievement(Base):
     __tablename__ = "user_achievements"
-    __table_args__ = (UniqueConstraint("user_id", "achievement_id", name="uq_user_ach"),)
+    __table_args__ = _ta(UniqueConstraint("user_id", "achievement_id", name="uq_user_ach"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.tg_id", ondelete="CASCADE"))
@@ -237,7 +245,7 @@ class Item(Base):
 
 class PetInventory(Base):
     __tablename__ = "pet_inventory"
-    __table_args__ = (UniqueConstraint("pet_id", "item_id", name="uq_pet_item"),)
+    __table_args__ = _ta(UniqueConstraint("pet_id", "item_id", name="uq_pet_item"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     pet_id: Mapped[int] = mapped_column(Integer, ForeignKey("pets.id", ondelete="CASCADE"))
@@ -250,7 +258,7 @@ class PetInventory(Base):
 
 class PetActionLog(Base):
     __tablename__ = "pet_actions_log"
-    __table_args__ = (Index("ix_pal_pet_created", "pet_id", "created_at"),)
+    __table_args__ = _ta(Index("ix_pal_pet_created", "pet_id", "created_at"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     pet_id: Mapped[int] = mapped_column(Integer, ForeignKey("pets.id", ondelete="CASCADE"))
@@ -262,7 +270,7 @@ class PetActionLog(Base):
 
 class PetFriend(Base):
     __tablename__ = "pet_friends"
-    __table_args__ = (UniqueConstraint("pet_id", "friend_pet_id", name="uq_pet_friend"),)
+    __table_args__ = _ta(UniqueConstraint("pet_id", "friend_pet_id", name="uq_pet_friend"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     pet_id: Mapped[int] = mapped_column(Integer, ForeignKey("pets.id", ondelete="CASCADE"))
@@ -308,7 +316,7 @@ class LeaderboardSnapshot(Base):
 class UserStat(Base):
     """Пользовательские счётчики для ачивок (invites и т.п.)."""
     __tablename__ = "user_stats"
-    __table_args__ = (UniqueConstraint("user_id", "key", name="uq_user_stat"),)
+    __table_args__ = _ta(UniqueConstraint("user_id", "key", name="uq_user_stat"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.tg_id", ondelete="CASCADE"))
