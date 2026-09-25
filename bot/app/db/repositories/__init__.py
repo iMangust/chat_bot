@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import Integer, func, select, update
+from sqlalchemy import Integer, func, insert, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -162,24 +163,42 @@ class ActivityRepository:
         """Пишет запись лога, идемпотентно по (chat_id, message_id).
 
         Telegram может доставить один и тот же апдейт повторно (ретраи
-        long-polling/webhook после таймаута) — без upsert это либо плодило
-        дубли в статистике, либо падало на уникальном индексе.
-        on_conflict_do_nothing есть и в sqlite-, и в postgres-диалектах.
+        long-polling/webhook после таймаута) — без дедупликации это плодит
+        дубли в статистике. Диалект upsert выбирается строго по имени диалекта
+        соединения: sqlite/postgres имеют ON CONFLICT, MySQL — только
+        INSERT IGNORE / ON DUPLICATE KEY. Жёсткий выбор sqlite-варианта для
+        всего, что не postgres, ронял трекер на проде с MySQL
+        (UnsupportedCompilationError: visit_on_conflict_do_nothing).
         """
-        from sqlalchemy.dialects.postgresql import insert as pg_insert
-        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-
-        dialect = self.session.bind.dialect.name if self.session.bind else "sqlite"
-        insert = pg_insert if dialect == "postgresql" else sqlite_insert
-        stmt = insert(ChatMessageLog).values(
+        values = dict(
             user_id=entry.user_id, chat_id=entry.chat_id,
             message_id=entry.message_id, length=entry.length,
             has_media=entry.has_media, media_type=entry.media_type,
             is_reply=entry.is_reply, mentions_count=entry.mentions_count,
             is_counted=entry.is_counted, skip_reason=entry.skip_reason,
             created_at=entry.created_at,
-        ).on_conflict_do_nothing(index_elements=["chat_id", "message_id"])
-        await self.session.execute(stmt)
+        )
+        dialect = self.session.bind.dialect.name if self.session.bind else "sqlite"
+        try:
+            if dialect in ("sqlite", "postgresql"):
+                if dialect == "postgresql":
+                    from sqlalchemy.dialects.postgresql import insert as ins
+                else:
+                    from sqlalchemy.dialects.sqlite import insert as ins
+                stmt = ins(ChatMessageLog).values(**values).on_conflict_do_nothing(
+                    index_elements=["chat_id", "message_id"]
+                )
+            elif dialect.startswith("mysql"):
+                from sqlalchemy.dialects.mysql import insert as ins
+                # UNIQUE (chat_id, message_id) + INSERT IGNORE — mysql-аналог do-nothing
+                stmt = ins(ChatMessageLog).values(**values).prefix_with("IGNORE")
+            else:  # неизвестный диалект — обычная вставка (дедуп не гарантируется)
+                stmt = insert(ChatMessageLog).values(**values)
+            await self.session.execute(stmt)
+        except IntegrityError:
+            # гонка повторных доставок / отсутствие UNIQUE-индекса на старой БД:
+            # конфликт по (chat_id, message_id) означает «уже записано» — ок.
+            await self.session.rollback()
         return entry
 
     async def messages_count(self, tg_id: int, since: datetime | None = None) -> int:
