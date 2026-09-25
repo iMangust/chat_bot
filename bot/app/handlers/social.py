@@ -18,6 +18,7 @@ from app.services.pet_social import (MAX_FRIENDS, list_friends, make_friends,
                                      render_friend_list, suggest_friend)
 from app.services.profile_card import get_or_render_card
 from app.services.tamagotchi import SPECIES_DATA
+from app.utils.safe_edit import safe_edit_or_answer
 
 router = Router(name="social")
 
@@ -48,7 +49,7 @@ async def _friends_screen(cb: CallbackQuery, session: AsyncSession, note: str = 
             markup = _friend_kb(html.escape(sug.name), sug.id)
     if note:
         text = f"{note}\n\n{text}"
-    await cb.message.edit_text(text, reply_markup=markup)
+    await safe_edit_or_answer(cb.message, text, reply_markup=markup)
 
 
 @router.callback_query(F.data == "pet:friends")
@@ -96,8 +97,21 @@ async def _send_card(message: Message, session: AsyncSession, tg_id: int) -> Non
 
 @router.callback_query(F.data == "menu:card")
 async def cb_card(cb: CallbackQuery, session: AsyncSession) -> None:
+    if cb.message is None:
+        await cb.answer("Нет сообщения-контекста 😅 Нажми /start", show_alert=True)
+        return
+    # Если исходное сообщение без текста (фото/стикер/кружок) — edit_text
+    # невозможен в принципе; навигацию обеспечивает кнопка «Назад» под фото.
     await _send_card(cb.message, session, cb.from_user.id)
-    await cb.answer("Карточка готова ✨" )
+    await cb.answer("Карточка готова ✨")
+
+
+# Кнопка ⬅️ Назад под фото карточки ведёт на callback menu:main, который
+# умеет отвечать и в пустых/медиа-сообщениях — см. start.cb_main_menu.
+@router.callback_query(F.data == "noop")
+async def cb_noop(cb: CallbackQuery) -> None:
+    """Информационные кнопки (номер страницы и т.п.) — просто гасим часы."""
+    await cb.answer()
 
 
 @router.message(Command("card", "profile"))

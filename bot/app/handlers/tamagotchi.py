@@ -16,6 +16,7 @@ from loguru import logger
 from app.db.models import Pet
 from app.db.repositories import PetRepository, UserRepository
 from app.keyboards.inline import back_to_main, pet_hub, train_menu
+from app.utils.safe_edit import safe_edit_or_answer
 from app.services.tamagotchi import SPECIES_DATA, TamagotchiService, _species_key
 
 router = Router(name="tamagotchi")
@@ -38,7 +39,7 @@ async def pet_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     svc = TamagotchiService(session)
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
-        await cb.message.edit_text(
+        await safe_edit_or_answer(cb.message, 
             "🥚 У тебя пока нет питомца. Нажми /start и пройди онбординг!",
             reply_markup=back_to_main(),
         )
@@ -48,7 +49,7 @@ async def pet_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     users = UserRepository(session)
     user = await users.get(cb.from_user.id)
     text = svc.render(pet, user.first_name if user else "")
-    await cb.message.edit_text(text, reply_markup=pet_hub())
+    await safe_edit_or_answer(cb.message, text, reply_markup=pet_hub())
     await cb.answer()
 
 
@@ -75,7 +76,7 @@ async def _after_action(cb: CallbackQuery, session: AsyncSession, result_text: s
         await svc.add_pet_xp(pet, xp)
         await PetRepository(session).log_action(pet.id, "walk_done", value=coins)
         prefix = f"{wtext}\n\n"
-    await cb.message.edit_text(
+    await safe_edit_or_answer(cb.message, 
         f"{prefix}{result_text}\n\n" + svc.render(pet),
         reply_markup=pet_hub(),
     )
@@ -153,7 +154,7 @@ async def train_screen(cb: CallbackQuery, session: AsyncSession) -> None:
         f"  💪 — профиль 🐶 · 🏃 — профиль 🦊 · 🧠 — профиль 🦉 (сейчас у тебя {sp['emoji']})\n",
         "⚡ Тренировка стоит 15 энергии и 8 сытости.",
     ]
-    await cb.message.edit_text("\n".join(lines), reply_markup=train_menu())
+    await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=train_menu())
     await cb.answer()
 
 
@@ -183,7 +184,7 @@ async def act_walk(cb: CallbackQuery, session: AsyncSession) -> None:
 
 @router.callback_query(F.data == "pet:shop")
 async def act_shop_stub(cb: CallbackQuery) -> None:
-    await cb.message.edit_text(
+    await safe_edit_or_answer(cb.message, 
         "🛒 Магазин откроется на Этапе 4 (еда, игрушки, лекарства, скины).\n"
         "Твои монеты в безопасности 🪙",
         reply_markup=back_to_main(),
@@ -193,7 +194,7 @@ async def act_shop_stub(cb: CallbackQuery) -> None:
 
 @router.callback_query(F.data == "pet:inv")
 async def act_inv_stub(cb: CallbackQuery) -> None:
-    await cb.message.edit_text(
+    await safe_edit_or_answer(cb.message, 
         "🎒 Инвентарь появится вместе с магазином (Этап 4).",
         reply_markup=back_to_main(),
     )

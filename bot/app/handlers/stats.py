@@ -19,6 +19,7 @@ from app.services.leaderboard import (top_levels, top_messages, top_pets,
 from app.services.activity import ActivityService
 from app.services.achievements import AchievementService
 from app.utils.formatting import progress_bar, xp_needed_for_level
+from app.utils.safe_edit import safe_edit_or_answer
 
 router = Router(name="stats")
 
@@ -62,7 +63,7 @@ async def stats_screen(cb: CallbackQuery, session: AsyncSession) -> None:
         f"🔥 Серия: {user.streak_days} дн. (рекорд {user.best_streak})\n"
         f"🐣 Питомец: {user.pet_name or 'ещё не заведён'}"
     )
-    await cb.message.edit_text(text, reply_markup=back_to_main())
+    await safe_edit_or_answer(cb.message, text, reply_markup=back_to_main())
     await cb.answer()
 
 
@@ -88,7 +89,7 @@ async def ach_screen(cb: CallbackQuery, session: AsyncSession, page: int = 0) ->
             f"{mark} {a.icon} <b>{hidden}{a.title}</b> — {a.description}\n"
             f"   {bar} {min(progress, a.condition_value)}/{a.condition_value}"
         )
-    await cb.message.edit_text("\n".join(lines),
+    await safe_edit_or_answer(cb.message, "\n".join(lines),
                                reply_markup=achievements_list(items, page, page_size))
     await cb.answer()
 
@@ -167,7 +168,7 @@ async def top_screen(cb: CallbackQuery, session: AsyncSession) -> None:
         period = "week"
     _TOP_CTX["me"] = cb.from_user.id
     text, _rank = await _top_screen_text(session, period)
-    await cb.message.edit_text(text, reply_markup=top_tabs(period))
+    await safe_edit_or_answer(cb.message, text, reply_markup=top_tabs(period))
     await cb.answer()
 
 
@@ -181,7 +182,7 @@ async def cmd_top(message: Message, session: AsyncSession) -> None:
 
 @router.callback_query(F.data == "menu:settings")
 async def settings_stub(cb: CallbackQuery) -> None:
-    await cb.message.edit_text(
+    await safe_edit_or_answer(cb.message, 
         "⚙️ Настройки уведомлений появятся на Этапе 6:\n"
         "• 🔔 напоминания о питомце\n• 🌅 утренний/вечерний дайджест\n"
         "• 🎄 праздничные события\n\n"

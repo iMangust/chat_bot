@@ -18,6 +18,7 @@ from app.db.models import Item, PetInventory
 from app.db.repositories import PetRepository, UserRepository
 from app.keyboards.inline import back_to_main, pet_hub
 from app.services.tamagotchi import TamagotchiService
+from app.utils.safe_edit import safe_edit_or_answer
 
 router = Router(name="shop")
 
@@ -87,7 +88,7 @@ async def shop_screen(cb: CallbackQuery, session: AsyncSession) -> None:
         lines.append("")
     kb = shop_keyboard(items, user.coins)
     kb.button(text="⬅️ Назад", callback_data="menu:pet")
-    await cb.message.edit_text("\n".join(lines), reply_markup=kb.as_markup())
+    await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=kb.as_markup())
     await cb.answer()
 
 
@@ -135,7 +136,7 @@ async def inventory_screen(cb: CallbackQuery, session: AsyncSession) -> None:
         .where(PetInventory.pet_id == pet.id)
     )).all()
     if not rows:
-        await cb.message.edit_text(
+        await safe_edit_or_answer(cb.message, 
             "🎒 Инвентарь пуст. Загляни в 🛒 Магазин!",
             reply_markup=pet_hub(),
         )
@@ -150,7 +151,7 @@ async def inventory_screen(cb: CallbackQuery, session: AsyncSession) -> None:
                  callback_data=f"use:{item.id}")
     b.adjust(1)
     b.button(text="⬅️ Назад", callback_data="menu:pet")
-    await cb.message.edit_text("\n".join(lines), reply_markup=b.as_markup())
+    await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=b.as_markup())
     await cb.answer()
 
 
@@ -190,5 +191,5 @@ async def use_item(cb: CallbackQuery, session: AsyncSession) -> None:
         await session.delete(inv)
     await session.flush()
     await pets.log_action(pet.id, "use", meta={"item": item.code})
-    await cb.message.edit_text(f"{result}\n\n" + svc.render(pet), reply_markup=pet_hub())
+    await safe_edit_or_answer(cb.message, f"{result}\n\n" + svc.render(pet), reply_markup=pet_hub())
     await cb.answer()

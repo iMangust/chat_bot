@@ -97,9 +97,14 @@ class ActivityService:
 
         # --- засчёт: XP + монеты + стрик ---
         xp_gain = self.settings.xp_per_message
-        # небольшие бонусы за «социальные» форматы (медиа дороже текста, reply — взаимодействие)
+        # небольшие бонусы за «социальные» форматы: голосовые/кружки дороже текста,
+        # reply — взаимодействие. Тип медиа определяет бонус (см. tracker.MEDIA_XP_BONUS).
         if has_media:
-            xp_gain += 1
+            try:
+                from app.handlers.tracker import MEDIA_XP_BONUS
+                xp_gain += MEDIA_XP_BONUS.get(media_type or "", 1)
+            except Exception:
+                xp_gain += 1
         if is_reply:
             xp_gain += 1
         coins_gain = self.settings.coins_per_message_cap

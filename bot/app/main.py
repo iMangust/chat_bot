@@ -16,7 +16,7 @@ from loguru import logger
 from app.config import get_settings
 from app.db.models import Base
 from app.db.session import DbMiddleware, engine, session_factory
-from app.handlers import (games, settings, shop, social, start, stats,
+from app.handlers import (errors, games, settings, shop, social, start, stats,
                          tamagotchi, tracker, welcome)
 from app.middlewares.throttle import ThrottleMiddleware
 from app.handlers.shop import seed_items
@@ -133,6 +133,7 @@ async def main() -> None:
     dp.callback_query.outer_middleware(ThrottleMiddleware())
 
     dp.include_routers(
+        errors.error_router,   # страховка: падающий хендлер не «вешает» callback
         start.router,
         welcome.router,
         tracker.router,

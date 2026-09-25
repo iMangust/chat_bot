@@ -24,6 +24,7 @@ from app.keyboards.inline import (
     guess_hint_keyboard, games_menu, pet_hub, reaction_keyboard, rps_keyboard,
 )
 from app.services.achievements import AchievementService
+from app.utils.safe_edit import safe_edit_or_answer
 from app.services.tamagotchi import SPECIES_DATA, TamagotchiService, _species_key
 
 router = Router(name="games")
@@ -47,12 +48,12 @@ async def games_screen(cb: CallbackQuery, state: FSMContext, session: AsyncSessi
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
         await state.clear()
-        await cb.message.edit_text("🥚 Сначала заведи питомца (/start).", reply_markup=pet_hub())
+        await safe_edit_or_answer(cb.message, "🥚 Сначала заведи питомца (/start).", reply_markup=pet_hub())
         await cb.answer()
         return
     sp = SPECIES_DATA.get(_species_key(pet), SPECIES_DATA["cat"])
     await state.clear()
-    await cb.message.edit_text(
+    await safe_edit_or_answer(cb.message, 
         f"🎮 <b>Игровая с {pet.name}</b> {sp['emoji']}\n\n"
         "• 🔢 <i>Угадай число</i> — 🧠 интеллект сужает подсказку\n"
         "• ✂️ <i>Камень-ножницы-бумага</i> — честный рандом\n"
@@ -75,7 +76,7 @@ async def start_guess(cb: CallbackQuery, state: FSMContext, session: AsyncSessio
     secret, (lo, hi) = svc.guess_range(pet)
     await state.set_state(Games.guessing)
     await state.update_data(secret=secret, lo=lo, hi=hi)
-    await cb.message.edit_text(
+    await safe_edit_or_answer(cb.message, 
         f"🔢 Питомец загадал число от 1 до 20. Друзья шепчут, что оно в диапазоне "
         f"<b>{lo}…{hi}</b> (чем умнее питомец, тем точнее подсказка!).\n\n"
         "Нажми кнопку-вариант или напиши своё число сообщением:",
@@ -102,7 +103,7 @@ async def do_guess_cb(cb: CallbackQuery, state: FSMContext, session: AsyncSessio
     if won:
         await bump_games_won(session, cb.from_user.id)
     hint = "" if won else f" Это было число <b>{secret}</b>."
-    await cb.message.edit_text(f"{result}{hint}\n\n" + svc.render(pet),
+    await safe_edit_or_answer(cb.message, f"{result}{hint}\n\n" + svc.render(pet),
                                reply_markup=games_menu())
     await cb.answer()
 
@@ -140,7 +141,7 @@ async def start_rps(cb: CallbackQuery, state: FSMContext, session: AsyncSession)
     if pet is None:
         return await cb.answer()
     await state.set_state(Games.rps)
-    await cb.message.edit_text(
+    await safe_edit_or_answer(cb.message, 
         "✂️ <b>Камень-ножницы-бумага!</b>\n\n"
         f"{pet.name} уже выбрал ход (честный рандом). Выбирай свой — откроемся одновременно.",
         reply_markup=rps_keyboard(),
@@ -169,7 +170,7 @@ async def play_rps(cb: CallbackQuery, state: FSMContext, session: AsyncSession) 
     if won:
         await bump_games_won(session, cb.from_user.id)
     outcome = "🤝 Ничья!" if draw else ("🎉 Ты выиграл!" if won else "😿 Питомец хитрее…")
-    await cb.message.edit_text(
+    await safe_edit_or_answer(cb.message, 
         f"Ты: {RPS_EMOJI[mine]} · {pet.name}: {RPS_EMOJI[theirs]} — {outcome}\n\n"
         f"{result}\n\n" + svc.render(pet),
         reply_markup=games_menu(),
@@ -192,7 +193,7 @@ async def start_reaction(cb: CallbackQuery, state: FSMContext, session: AsyncSes
     ts = datetime.now(timezone.utc).isoformat()
     await state.set_state(Games.reaction)
     await state.update_data(react_start=ts, budget=budget)
-    await cb.message.edit_text(
+    await safe_edit_or_answer(cb.message, 
         f"⚡ <b>Тест реакции!</b>\n\n"
         f"Нажми «ЛОВИ!» быстрее, чем за <b>{budget} мс</b>.\n"
         f"🏃 Ловкость питомца = +60 мс за каждый пункт. Пошёл!",
@@ -229,7 +230,7 @@ async def finish_reaction(cb: CallbackQuery, state: FSMContext, session: AsyncSe
                                             meta={"kind": "reaction", "ms": int(elapsed_ms)})
     if won:
         await bump_games_won(session, cb.from_user.id)
-    await cb.message.edit_text(
+    await safe_edit_or_answer(cb.message, 
         f"⏱ Твоё время: <b>{int(elapsed_ms)} мс</b> (бюджет {budget} мс)\n\n"
         f"{result}\n\n" + svc.render(pet),
         reply_markup=games_menu(),

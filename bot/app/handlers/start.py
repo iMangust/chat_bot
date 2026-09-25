@@ -17,6 +17,7 @@ from app.keyboards.inline import (
 from app.services.achievements import AchievementService
 from app.services.tamagotchi import SPECIES_DATA
 from app.utils.formatting import progress_bar, xp_needed_for_level
+from app.utils.safe_edit import safe_edit_or_answer
 from app.config import get_settings
 
 router = Router(name="start")
@@ -89,11 +90,11 @@ async def cb_onboard_start(cb: CallbackQuery, state: FSMContext,
     user = await users.get_or_create(cb.from_user.id, cb.from_user.first_name or "",
                                      cb.from_user.username)
     if user.onboarded:
-        await cb.message.edit_text("Ты уже с нами! 🎉", reply_markup=main_menu())
+        await safe_edit_or_answer(cb.message, "Ты уже с нами! 🎉", reply_markup=main_menu())
         await cb.answer()
         return
     await state.set_state(Onboarding.choosing_pet_species)
-    await cb.message.edit_text(
+    await safe_edit_or_answer(cb.message, 
         "🐣 Шаг 1 из 3. Выбери питомца — у каждого свой характер и бонусы:\n\n"
         + species_picker_text(),
         reply_markup=species_picker(),
@@ -109,7 +110,7 @@ async def cb_pick_species(cb: CallbackQuery, state: FSMContext) -> None:
         return
     await state.update_data(species=code)
     await state.set_state(Onboarding.choosing_pet_name)
-    await cb.message.edit_text(
+    await safe_edit_or_answer(cb.message, 
         f"{SPECIES_DATA[code]['emoji']} Отличный выбор — {SPECIES_DATA[code]['title']}!\n\n"
         "Шаг 2 из 3. Выбери имя питомцу (или напиши своё сообщением):",
         reply_markup=start_pet_name_suggestions(PET_NAME_SUGGESTIONS),
@@ -121,7 +122,7 @@ async def cb_pick_species(cb: CallbackQuery, state: FSMContext) -> None:
 async def cb_pick_name(cb: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     name = cb.data.split(":", 2)[2]
     if name == "Имя своё…":
-        await cb.message.edit_text("✍️ Напиши своё имя питомца сообщением:")
+        await safe_edit_or_answer(cb.message, "✍️ Напиши своё имя питомца сообщением:")
         return
     data = await state.get_data()
     species_code = data.get("species", "cat")
@@ -192,7 +193,7 @@ async def _finish_onboarding(cb: CallbackQuery, state: FSMContext,
     ach = AchievementService(session)
     await ach.unlock_by_code(user.tg_id, "first_steps")
     sp = SPECIES_DATA.get(species.value, SPECIES_DATA["cat"])
-    await cb.message.edit_text(
+    await safe_edit_or_answer(cb.message, 
         f"🎉 У тебя появился питомец <b>{name}</b> — {sp['emoji']} {sp['title']}!\n\n"
         "Мини-тур:\n"
         "• 🐾 Питомец — корми, мой, играй (статы падают со временем!)\n"
@@ -207,12 +208,18 @@ async def _finish_onboarding(cb: CallbackQuery, state: FSMContext,
 
 @router.callback_query(F.data == "menu:main")
 async def cb_main_menu(cb: CallbackQuery, session: AsyncSession) -> None:
+    # «⬅️ Назад» ведёт сюда с любого экрана. Если сообщение-контекст — фото
+    # (карточка профиля) или вообще отсутствует, edit_text невозможен;
+    # safe_edit_or_answer отправит меню новым сообщением, и навигация не сломается.
+    if cb.message is None:
+        await cb.answer("Открой бота командой /start 🙂", show_alert=True)
+        return
     users = UserRepository(session)
     user = await users.get_or_create(cb.from_user.id, cb.from_user.first_name or "",
                                      cb.from_user.username)
     need = xp_needed_for_level(user.level)
     bar = progress_bar(user.xp, need)
-    await cb.message.edit_text(
+    await safe_edit_or_answer(cb.message, 
         f"🏠 <b>Главное меню</b>\n\n"
         f"👤 {user.first_name}, уровень {user.level} · {bar} {user.xp}/{need} XP\n"
         f"🪙 Монеты: {user.coins} · 🔥 Серия: {user.streak_days} дн.",
