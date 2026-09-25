@@ -1,6 +1,2 @@
-# Compiled files
 __pycache__/
 *.pyc
-
-# Environment and config
-.env

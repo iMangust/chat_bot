@@ -4,8 +4,10 @@ from __future__ import annotations
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from app.config import get_settings
 
-def main_menu() -> InlineKeyboardMarkup:
+
+def main_menu(link: str | None = None, reward: int = 0) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="🐾 Питомец", callback_data="menu:pet")
     b.button(text="📊 Статы", callback_data="menu:stats")
@@ -14,8 +16,17 @@ def main_menu() -> InlineKeyboardMarkup:
     b.button(text="🏅 Топы", callback_data="menu:top")
     b.row()
     b.button(text="🖼 Карточка", callback_data="menu:card")
+    b.button(text="🛒 Магазин", callback_data="menu:shop")
+    b.row()
     b.button(text="⚙️ Настройки", callback_data="menu:settings")
-    b.adjust(2, 2, 2)
+    settings = get_settings()
+    if settings.merch_enabled and settings.merch_url:
+        b.button(text="🧢 Мерч канала", url=settings.merch_url)
+    b.row()
+    if link:
+        text = "🤝 Пригласить друга" + (f" (+{reward} 🪙)" if reward else "")
+        b.button(text=text, url=link)
+    b.adjust(2, 2, 2, 2, 1)
     return b.as_markup()
 
 

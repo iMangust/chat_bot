@@ -54,6 +54,10 @@ class User(Base):
     onboarded: Mapped[bool] = mapped_column(Boolean, default=False)
     pet_name: Mapped[str | None] = mapped_column(String(64))
     is_banned: Mapped[bool] = mapped_column(Boolean, default=False)
+    # кто пригласил пользователя (deep-link invite_<tg_id>) — для реф-системы
+    referrer_id: Mapped[int | None] = mapped_column(BigInteger, default=None)
+    # произвольные сервисные флаги (например _ref_credited) — без новых миграций
+    settings_extra: Mapped[dict] = mapped_column(JSON, default=dict)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
@@ -237,7 +241,7 @@ class Item(Base):
     code: Mapped[str] = mapped_column(String(64), unique=True)
     name: Mapped[str] = mapped_column(String(128))
     icon: Mapped[str] = mapped_column(String(16), default="📦")
-    type: Mapped[str] = mapped_column(String(32))  # food/toy/medicine/accessory/species
+    type: Mapped[str] = mapped_column(String(32))  # food/toy/medicine/accessory/species/merch
     price: Mapped[int] = mapped_column(Integer, default=10)
     effect: Mapped[dict] = mapped_column(JSON, default=dict)  # {"hunger": +20, "happiness": +5}
     description: Mapped[str] = mapped_column(Text, default="")

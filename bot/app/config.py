@@ -60,6 +60,17 @@ class Settings(BaseSettings):
     weather_enabled: bool = True         # сезонная модификация деградации
     redis_socket_timeout: int = 5      # таймауты Redis (socket/connect), сек
 
+    # --- Рефералка / канал ---
+    # Публичный юзернейм КАНАЛА (без @). Реферальная ссылка ведёт на канал,
+    # а не в группу: https://t.me/<channel_username>?start=invite_<tg_id>
+    channel_username: str | None = None
+    channel_chat_id: int | None = None   # ID канала (-100...), если бот там админ
+
+    # --- Мерч канала ---
+    merch_enabled: bool = True           # показывать раздел 🧢 Мерч в меню/магазине
+    merch_url: str | None = None         # ссылка на магазин мерча (Telegram-бот/сайт)
+    merch_items: str | None = None       # "Название|цена|описание;..." — витрина в магазине (пусто = дефолтный сид)
+
 
 @lru_cache
 def get_settings() -> Settings:
