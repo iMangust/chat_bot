@@ -202,6 +202,33 @@ def test_main_menu_text_renders_with_weird_name():
     assert "<b>" in text                      # own-разметка жива
 
 
+def test_channel_anonymous_reaction_not_counted(patch_tracker):
+    """v1.4.3: анонимная реакция (user=None, actor_chat задан) не должна
+    начисляться конкретному юзеру — Telegram не раскрывает автора."""
+    upd = _mk_update([], ["❤️"])
+    upd.user = None
+    upd.actor_chat = SimpleNamespace(id=-1001)
+    asyncio.run(track_reaction_update(upd, session=None))
+    assert _FakeActivityService.last_kwargs is None
+
+
+def test_message_reaction_count_handler_registered():
+    """v1.4.3: апдейты message_reaction_count должны разрешаться в
+    allowed_updates и иметь хендлер (иначе бот их никогда не увидит)."""
+    import inspect
+    from aiogram import Dispatcher
+    from app.handlers import tracker
+    dp = Dispatcher()
+    dp.include_router(tracker.router)
+    used = set(dp.resolve_used_update_types())
+    assert {"message_reaction", "message_reaction_count"} <= used
+    # polling/webhook explicitly добавляют их к resolve_used_update_types
+    main_src = inspect.getsource(__import__("app.main", fromlist=["main"]))
+    assert '"message_reaction", "message_reaction_count"' in main_src
+    runtime_src = inspect.getsource(__import__("app.console.runtime", fromlist=["runtime"]))
+    assert '"message_reaction", "message_reaction_count"' in runtime_src
+
+
 def test_on_error_accepts_aiogram_error_event():
     """aiogram шлёт ErrorEvent(update=..., exception=...) одной позиционной
     пачкой — on_error не должен падать с TypeError (маскировал первопричину)."""

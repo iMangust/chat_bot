@@ -1,13 +1,15 @@
 """Хендлеры трекера активности (сообщения, медиа и реакции в группах).
 
 Важно: aiogram 3 по умолчанию НЕ получает reaction-события — нужно включить
-allowed_updates=[… "message_reaction"] при поллинге (см. main.py) и иметь
-права админа с правом Manage Reaction Messages в группе.
+allowed_updates=[… "message_reaction", "message_reaction_count"] при поллинге
+(см. main.py) и иметь права админа с правом Manage Reaction Messages в группе.
 
 Реакции приходят апдейтом ``message_reaction`` (объект MessageReactionUpdated),
 а НЕ сообщением с полем ``reactions`` — поэтому хендлер зарегистрирован через
 ``router.message_reaction``. Старый фильтр ``F.reactions`` никогда не срабатывал,
-и бот молча игнорировал все реакции.
+и бот молча игнорировал все реакции. Анонимные реакции каналов приходят отдельным
+апдейтом ``message_reaction_count`` (только счётчики без авторов) — см. второй
+хендлер ниже.
 
 Типы сообщений разделяются честно: текст / фото / видео / видеокружок
 (video_note) / голосовое (voice) / аудио / стикер / анимация(GIF) / документ —
@@ -18,7 +20,8 @@ from __future__ import annotations
 from datetime import timedelta, timezone
 
 from aiogram import F, Router
-from aiogram.types import (Message, MessageReactionUpdated, ReactionTypeEmoji,
+from aiogram.types import (Message, MessageReactionUpdated,
+                           MessageReactionCountUpdated, ReactionTypeEmoji,
                            User)
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
@@ -189,4 +192,29 @@ async def track_reaction_update(update: MessageReactionUpdated,
     await svc.process_reaction(
         from_user=from_user_id, to_user=to_user,
         chat_id=update.chat.id, message_id=update.message_id, emoji=emoji,
+    )
+
+
+@router.message_reaction_count()
+async def track_reaction_count_update(update: MessageReactionCountUpdated) -> None:
+    """Апдейт message_reaction_count: АНОНИМНЫЕ счётчики реакций в каналах.
+
+    Telegram присылает ``message_reaction_count`` вместо ``message_reaction``,
+    когда реакции анонимные (включённая опция «Анонимные реакции» в канале) —
+    в апдейте есть только chat, message_id и суммарные счётчики
+    (``ReactionCount``: тип + total_count), но НЕТ автора действия и НЕТ
+    автора сообщения. Поэтому построчный учёт «кто кому поставил» здесь
+    невозможен: пересчёт дельт по счётчикам дал бы ложные начисления
+    (неизвестно, чья это реакция), а ``get_message`` в анонимном канале не
+    вернёт автора. Ограничение зафиксировано в Bot API 7.0 осознанно —
+    корректный способ учитывать персональные реакции описан выше
+    (``message_reaction`` + автор из ``ChatMessageLog``). Логируем событие,
+    чтобы админ видел факт анонимных реакций и мог сверить статистику.
+    """
+    if not _is_tracked(update.chat.id):
+        return
+    total = sum(rc.total_count for rc in (update.reaction_count or []))
+    logger.info(
+        "анонимные реакции: chat={} msg={} всего={}",
+        update.chat.id, update.message_id, total,
     )
