@@ -21,8 +21,20 @@ _mem_store: dict[str, float] = {}
 
 
 def init_redis() -> Redis:
+    """Создаёт Redis-клиент.
+
+    protocol=2 (RESP2) — обязательно для совместимости со старыми
+    серверами Redis/Memurai (< 6.0), которые не знают команду HELLO.
+    Таймауты защищают от зависания на недоступном сервере.
+    """
     global redis_client
-    redis_client = Redis.from_url(_settings.redis_url, decode_responses=True, protocol=2)
+    redis_client = Redis.from_url(
+        _settings.redis_url,
+        decode_responses=True,
+        protocol=2,
+        socket_timeout=5,
+        socket_connect_timeout=5,
+    )
     return redis_client
 
 
