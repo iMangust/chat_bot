@@ -10,6 +10,7 @@ pydantic>=2.7               # модели
 pydantic-settings>=2.3      # конфигурация из .env
 python-dotenv>=1.0          # загрузка .env
 Pillow>=10.3                # карточки профиля (этап 5)
+textual>=0.63               # TamaConsole — терминальная оболочка управления (console.bat)
 
 # --- Dev / тесты ---
 pytest>=8.0

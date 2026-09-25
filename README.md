@@ -145,3 +145,10 @@ python -m pytest tests -q      # ╨╛╨╢╨╕╨┤╨░╨╡╨╝: 31 passed
 
 MIT. ╨Я╨╛╨╗╨╜╨░╤П ╨╕╨╜╤Б╤В╤А╤Г╨║╤Ж╨╕╤П ╨┐╨╛ ╤Н╨║╤Б╨┐╨╗╤Г╨░╤В╨░╤Ж╨╕╨╕, ╤З╨╡╨║-╨╗╨╕╤Б╤В ╨╜╨░╤Б╤В╤А╨╛╨╣╨║╨╕ Telegram ╨╕ ╤В╨░╨▒╨╗╨╕╤Ж╨░
 ╨┤╨╕╨░╨│╨╜╨╛╤Б╤В╨╕╨║╨╕ ╤З╨░╤Б╤В╤Л╤Е ╨┐╤А╨╛╨▒╨╗╨╡╨╝ тАФ ╨▓ [bot/README.md](bot/README.md).
+
+### console.bat: ModuleNotFoundError: No module named 'textual'
+
+Текстовая оболочка ставится вместе с остальными зависимостями через install.bat (requirements.txt). Если ошибка появилась:
+1. Запустите install.bat повторно - он доустановит textual в venv бота.
+2. Быстрый вариант вручную: bot\venv\Scripts\python.exe -m pip install textual
+3. Важно: системный pip (Python 3.13 из AppData) не подходит - оболочке нужен именно venv бота, поэтому console.bat теперь сам проверяет наличие модуля и подсказывает решение.

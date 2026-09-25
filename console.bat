@@ -27,6 +27,18 @@ exit /b 1
 set PY=python
 if exist venv\Scripts\python.exe set PY=venv\Scripts\python.exe
 
+rem --- проверка оболочки textual (ставится install.bat из requirements.txt) ---
+"%PY%" -c "import textual" >nul 2>nul
+if not errorlevel 1 goto :txtok
+echo.
+echo  [ОШИБКА] Модуль textual не установлен в venv бота.
+echo  Запустите install.bat - он доустановит зависимости.
+echo  (или вручную: venv\Scripts\python.exe -m pip install textual)
+echo.
+pause
+exit /b 1
+:txtok
+
 "%PY%" -m app.console
 if not errorlevel 1 goto :conok
 echo.
