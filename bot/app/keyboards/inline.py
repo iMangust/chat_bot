@@ -4,8 +4,10 @@ from __future__ import annotations
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+from app.config import get_settings
 
-def main_menu() -> InlineKeyboardMarkup:
+
+def main_menu(link: str | None = None, reward: int = 0) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="🐾 Питомец", callback_data="menu:pet")
     b.button(text="📊 Статы", callback_data="menu:stats")
@@ -14,8 +16,17 @@ def main_menu() -> InlineKeyboardMarkup:
     b.button(text="🏅 Топы", callback_data="menu:top")
     b.row()
     b.button(text="🖼 Карточка", callback_data="menu:card")
+    b.button(text="🛒 Магазин", callback_data="menu:shop")
+    b.row()
     b.button(text="⚙️ Настройки", callback_data="menu:settings")
-    b.adjust(2, 2, 2)
+    settings = get_settings()
+    if settings.merch_enabled and settings.merch_url:
+        b.button(text="🧢 Мерч канала", url=settings.merch_url)
+    b.row()
+    if link:
+        text = "🤝 Пригласить друга" + (f" (+{reward} 🪙)" if reward else "")
+        b.button(text=text, url=link)
+    b.adjust(2, 2, 2, 2, 1)
     return b.as_markup()
 
 
@@ -133,10 +144,15 @@ def species_picker() -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
-def achievements_list(pairs: list[tuple[int, bool]], page: int = 0,
-                      page_size: int = 8) -> InlineKeyboardMarkup:
-    """Простая постраничная навигация ачивок: ◀ 1/3 ▶ + Назад."""
-    total_pages = max(1, (len(pairs) + page_size - 1) // page_size)
+def achievements_list(pairs: list, page: int = 0,
+                      total_pages: int | None = None) -> InlineKeyboardMarkup:
+    """Постраничная навигация ачивок: ◀ 2/3 ▶ + Назад.
+
+    total_pages можно передать явно (уже посчитан в рендере); если None —
+    считаем от размера списка при стандартной странице из 8.
+    """
+    if total_pages is None:
+        total_pages = max(1, (len(pairs) + 8 - 1) // 8)
     b = InlineKeyboardBuilder()
     if page > 0:
         b.button(text="◀️", callback_data=f"ach:page:{page - 1}")

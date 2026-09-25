@@ -40,8 +40,9 @@ def _day(dt: datetime) -> datetime:
 
 
 class ActivityService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, bot=None) -> None:
         self.session = session
+        self.bot = bot  # опционально: для мгновенных уведомлений о ачивках/локапах в ЛС
         self.users = UserRepository(session)
         self.activity = ActivityRepository(session)
         self.achievements = AchievementService(session)
@@ -60,14 +61,29 @@ class ActivityService:
         mentions_count: int,
         is_command: bool,
     ) -> ChatMessageLog | None:
-        """Главная точка входа для события Message из группы.
+        """Главная точка входа для события Message из группы/канала.
 
         Возвращает запись лога (counted или нет) либо None, если юзер ещё
         не зарегистрирован (не жмём /start — не трогаем БД лишний раз).
         """
         user = await self.users.get(user_id)
-        if user is None or user.is_banned or not user.onboarded:
+        if user is None or user.is_banned:
             return None
+        # Автор поста в канале — сам канал (sender_chat): у него нет ЛС и он
+        # не проходил онбординг. Регистрируем «виртуального» автора, чтобы
+        # канальная активность начислялась на статистику канала.
+        if not user.onboarded:
+            if chat_id == user_id:
+                user.onboarded = True
+                if not user.first_name:
+                    try:
+                        chat = await self.bot.get_chat(user_id)
+                        user.first_name = (chat.title or chat.username or "")[:128]
+                    except Exception as exc:  # бот не видит канал — оставляем как есть
+                        logger.debug("channel author name fetch failed: {}", exc)
+                await self.session.flush()
+            else:
+                return None
 
         now = datetime.now(timezone.utc)
         length = len(text or "")
@@ -96,6 +112,8 @@ class ActivityService:
             return entry
 
         # --- засчёт: XP + монеты + стрик ---
+        await self._credit_referral(user)
+
         xp_gain = self.settings.xp_per_message
         # небольшие бонусы за «социальные» форматы: голосовые/кружки дороже текста,
         # reply — взаимодействие. Тип медиа определяет бонус (см. tracker.MEDIA_XP_BONUS).
@@ -128,7 +146,81 @@ class ActivityService:
         for ach in unlocked:
             logger.bind(notify=True).info("achievement {} unlocked for {}", ach.code, user_id)
 
+        # мгновенные DM-уведомления (если сервис создан с bot): локап, ачивки
+        # и зачёт нестандартного типа сообщения (голос/кружок/фото…).
+        if self.bot is not None and (leveled_to or unlocked or has_media):
+            await self._notify_instant(user_id, leveled_to, unlocked,
+                                       media_type=media_type)
+
         return entry
+
+    async def _credit_referral(self, user: User) -> None:
+        """Разовая награда пригласившему за первую засчитанную активность новичка.
+
+        Реферальная связка создаётся в /start по deep-link `invite_<tg_id>`
+        (см. handlers/start.py). Здесь она «монетизируется»: бонд происходит
+        только после реального действия приглашённого — это отсекает накрутку
+        пустыми регистрациями. Флаг `_ref_credited` живёт в JSON-колонке
+        settings_extra, поэтому не требует новой миграции.
+        """
+        if not user.referrer_id:
+            return
+        extra = dict(user.settings_extra or {})
+        if extra.get("_ref_credited"):
+            return
+        inviter = await self.users.get(user.referrer_id)
+        if inviter is None or inviter.is_banned:
+            return
+        gained = await self.users.bump_stat(inviter.tg_id, "invites", 1)
+        await self.users.add_xp_coins(inviter.tg_id, xp=30,
+                                      coins=self.settings.invite_reward_coins)
+        await self.achievements.check(inviter.tg_id, {"invites": gained})
+        extra["_ref_credited"] = True
+        user.settings_extra = extra
+        await self.session.flush()
+        try:
+            await self.bot.send_message(
+                inviter.tg_id,
+                f"🤝 Твоя ссылка сработала! <b>{user.first_name or 'друг'}</b> "
+                f"проявил активность в чате.\n"
+                f"Награда: +{self.settings.invite_reward_coins} 🪙 и 30 XP. "
+                f"Приглашено всего: {gained}.",
+            )
+        except Exception as exc:  # ЛС закрыты — не критично
+            logger.debug("referral notify failed for {}: {}", inviter.tg_id, exc)
+        logger.info("referral credited: inviter={} invitee={}", inviter.tg_id, user.tg_id)
+
+    @staticmethod
+    def _media_label(media_type: str | None) -> str:
+        """Понятная человеку метка типа сообщения (для мгновенных уведомлений)."""
+        return {
+            "photo": "фото 🖼", "video_note": "видеокружок 🎥", "video": "видео 📹",
+            "voice": "голосовое 🎤", "audio": "аудио 🎵", "sticker": "стикер 🎨",
+            "animation": "GIF 🌀", "document": "файл 📄", "contact": "контакт 👤",
+            "location": "локацию 📍", "poll": "опрос 📊",
+        }.get(media_type or "", "")
+
+    async def _notify_instant(self, user_id: int, leveled_to, unlocked,
+                              media_type: str | None = None) -> None:
+        parts: list[str] = []
+        if media_type:
+            label = self._media_label(media_type)
+            if label:
+                parts.append(f"Зачтено {label} — бонусные XP уже на счету ✨")
+        for lvl in (leveled_to or []):
+            parts.append(f"🎉 Новый уровень: <b>{lvl}</b>!")
+        for ach in (unlocked or []):
+            reward = f"\nНаграда: {ach.reward_xp} XP" if ach.reward_xp else ""
+            if ach.reward_coins:
+                reward += f" и {ach.reward_coins} 🪙"
+            parts.append(f"{ach.icon} <b>Достижение пробито:</b> {ach.title}!{reward}")
+        if not parts:
+            return
+        try:
+            await self.bot.send_message(user_id, "\n".join(parts))
+        except Exception as exc:  # ЛС закрыты / юзер заблокировал бота — не критично
+            from loguru import logger
+            logger.debug("instant notify failed for {}: {}", user_id, exc)
 
     async def process_reaction(
         self, *, from_user: int, to_user: int, chat_id: int,
@@ -136,8 +228,10 @@ class ActivityService:
     ) -> bool:
         """Зачёт реакции. True — если новая (не дубль от того же юзера).
 
-        Антифрод: взаимный «накрутас» из двух аккаунтов режется дневным
-        лимитом зачёта реакций на одного получателя (reactions_cap_per_day).
+        XP за реакцию получают обе стороны: автор реакции (социальный вклад)
+        и получатель (признание). Антифрод: взаимный «накрутас» из двух
+        аккаунтов режется дневным лимитом зачёта реакций на одного
+        получателя (reactions_cap_per_day).
         """
         from app.db.models import ReactionLog
         user = await self.users.get(from_user)
@@ -162,15 +256,26 @@ class ActivityService:
             return False
 
         user.reactions_given += 1
+        # небольшой XP за социальное действие (без монет — только за сообщения)
+        _, user.xp, leveled_to = self._apply_user_xp(user, 1)
         target = await self.users.get(to_user)
         if target is not None and target.tg_id != from_user:
             target.reactions_received += 1
+            _, target.xp, _ = self._apply_user_xp(target, 2)
             t_counters = {"reactions_received": target.reactions_received}
             await self.achievements.check(to_user, t_counters)
         await self.session.flush()
 
         counters = {"reactions_given": user.reactions_given}
-        await self.achievements.check(from_user, counters)
+        unlocked = await self.achievements.check(from_user, counters)
+        if self.bot is not None and leveled_to:
+            try:
+                await self.bot.send_message(
+                    from_user, f"🎉 Новый уровень: <b>{leveled_to[-1]}</b>!")
+            except Exception as exc:
+                logger.debug("reaction levelup notify failed: {}", exc)
+        for ach in unlocked:
+            logger.bind(notify=True).info("achievement {} unlocked for {}", ach.code, from_user)
         return True
 
     # ------------------------------------------------------------------

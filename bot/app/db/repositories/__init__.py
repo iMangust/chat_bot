@@ -86,6 +86,25 @@ class UserRepository:
         )).scalar_one_or_none()
         return row.value if row else 0
 
+    # ---- реферальная система ----
+    async def set_referrer(self, tg_id: int, referrer_id: int) -> bool:
+        """Запоминаем пригласившего. True — если запись создана впервые."""
+        user = await self.get(tg_id)
+        if user is None or user.tg_id == referrer_id:
+            return False
+        if user.referrer_id == referrer_id:
+            return False
+        first_time = user.referrer_id is None
+        user.referrer_id = referrer_id
+        await self.session.flush()
+        return first_time
+
+    async def count_invited(self, referrer_id: int) -> int:
+        """Сколько пользователей приведено по ссылке referrer_id."""
+        return (await self.session.execute(
+            select(func.count()).select_from(User).where(User.referrer_id == referrer_id)
+        )).scalar_one()
+
     # ---- персональные настройки уведомлений ----
     async def notif_settings(self, tg_id: int) -> NotificationSetting:
         ns = await self.session.get(NotificationSetting, tg_id)

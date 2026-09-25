@@ -64,10 +64,32 @@ def detect_media_type(message: Message) -> str | None:
     return None
 
 
+<<<<<<< HEAD
+def _author(message: Message) -> int | None:
+    """Автор засчитываемого сообщения.
+
+    В каналах пост публикует сам канал (from_user=None), а фактический автор —
+    sender_chat. Берём и его, иначе канальная активность «испаряется».
+    """
+    if message.from_user is not None and not message.from_user.is_bot:
+        return message.from_user.id
+    if message.sender_chat is not None and not getattr(message.sender_chat, "is_bot", False):
+        return message.sender_chat.id
+    return None
+
+
+@router.message(F.chat.type.in_({"group", "supergroup", "channel"}))
+=======
 @router.message(F.chat.type.in_({"group", "supergroup"}))
+>>>>>>> origin/main
 async def track_group_message(message: Message, session: AsyncSession) -> None:
-    """Пишет каждое сообщение группы в лог; засчитывает по антифрод-правилам."""
-    if message.from_user is None or message.from_user.is_bot:
+    """Пишет каждое сообщение группы/канала в лог; засчитывает по антифрод-правилам.
+
+    ВАЖНО: раньше фильтр был только {group, supergroup} — сообщения каналов
+    (где бот админ) не трэкались вообще, и «активность в канале» не начислялась.
+    """
+    author = _author(message)
+    if author is None:
         return
     if not _is_tracked(message.chat.id):
         return
@@ -79,9 +101,9 @@ async def track_group_message(message: Message, session: AsyncSession) -> None:
     text = message.text or message.caption
     media_type = detect_media_type(message)
 
-    svc = ActivityService(session)
+    svc = ActivityService(session, bot=message.bot)
     entry = await svc.process_group_message(
-        user_id=message.from_user.id,
+        user_id=author,
         chat_id=message.chat.id,
         message_id=message.message_id,
         text=text,
@@ -131,7 +153,12 @@ async def track_reaction_update(update: MessageReactionUpdated,
     new_reaction, user|actor_chat). Считаем только добавление: если список
     стал длиннее/изменился в плюс — это дарение реакции получателю.
     """
+<<<<<<< HEAD
+    # реакции бывают и в каналах — трэкаем те же чаты, что и сообщения
+    if update.chat.type not in ("group", "supergroup", "channel") or not _is_tracked(update.chat.id):
+=======
     if update.chat.type not in ("group", "supergroup") or not _is_tracked(update.chat.id):
+>>>>>>> origin/main
         return
     # юзер может быть None у анонимных админов — тогда берём actor_chat или выходим
     from_user_id: int | None = None
@@ -162,7 +189,7 @@ async def track_reaction_update(update: MessageReactionUpdated,
     if to_user is None or to_user == from_user_id:
         return  # неясный автор или само-реакция — не накручиваем
 
-    svc = ActivityService(session)
+    svc = ActivityService(session, bot=update.bot)
     await svc.process_reaction(
         from_user=from_user_id, to_user=to_user,
         chat_id=update.chat.id, message_id=update.message_id, emoji=emoji,

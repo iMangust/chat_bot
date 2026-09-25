@@ -46,22 +46,68 @@ def species_picker_text() -> str:
 
 WELCOME_DM = (
     "👋 Привет, <b>{name}</b>!\n\n"
-    "Я — бот-компаньон нашего чата. Здесь я:\n"
-    "• 🐾 слежу за твоей активностью и выдаю достижения;\n"
-    "• 🥚 дарю виртуального питомца, о котором можно заботиться;\n"
-    "• 🏅 показываю топы болтунов и реакций.\n\n"
-    "Правила простые: общайся в чате, не флуди, будь добрым. "
-    "За обычные сообщения капает XP и монеты.\n\n"
+    "Я — бот-компаньон канала. Вот что я умею:\n"
+    "• 🐾 Виртуальный питомец — корми, мой, играй, тренируй; он растёт вместе с тобой;\n"
+    "• 📊 Активность — за сообщения в чате (текст, фото, голосовые, кружки) капают XP и 🪙 монеты;\n"
+    "• 🏆 20+ достижений и уровни — от «Первых слов» до «Легенды чата»;\n"
+    "• 🏅 Топы недели — покажи, кто тут главный болтун;\n"
+    "• 🖼 Карточка профиля — красивый PNG со всеми статами;\n"
+    "• 🛒 Магазин для питомца и 🧢 мерч канала.\n\n"
+    "Правила простые: общайся в чате, не флуди, ставь реакции — это тоже считается.\n"
+    "{channel_line}\n"
     "Нажми «Начать», чтобы завести питомца!"
 )
+
+
+def _channel_line() -> str:
+    ch = get_settings().channel_username
+    return f"📢 Наш канал: t.me/{ch}\n" if ch else ""
+
+
+def invite_link_for(tg_id: int) -> str:
+    """Реферальная ссылка ведёт на КАНАЛ (не в группу): t.me/<channel>?start=invite_<id>.
+
+    Если CHANNEL_USERNAME не задан — честно возвращаем пустую строку, чтобы нигде
+    не появилась битая/групповая ссылка.
+    """
+    ch = get_settings().channel_username
+    if not ch:
+        return ""
+    return f"https://t.me/{ch}?start=invite_{tg_id}"
+
+
+def _main_menu_text(user) -> str:
+    need = xp_needed_for_level(user.level)
+    bar = progress_bar(user.xp, need)
+    ch = get_settings().channel_username
+    lines = [
+        "🏠 <b>Главное меню</b>\n",
+        f"👤 {user.first_name}, уровень {user.level} · {bar} {user.xp}/{need} XP",
+        f"🪙 Монеты: {user.coins} · 🔥 Серия: {user.streak_days} дн.",
+        "",
+        "📌 Что делать:",
+        "• 🐾 Зайди к питомцу — покорми его (голод никуда не делся!)",
+        "• 💬 Напиши в чат — засчитывается текст, фото, голос, кружок, стикер",
+        "• ❤️ Ставь реакции — за них тоже капает XP",
+        "• 🛒 Копи монеты — магазин и мерч уже ждут",
+    ]
+    if ch:
+        lines += ["", f"📢 Новости канала: t.me/{ch}"]
+    return "\n".join(lines)
 
 
 @router.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext, session: AsyncSession,
                     command: CommandObject | None = None) -> None:
-    """Основной вход: регистрация + приглашение к онбордингу.
+    """Основной вход: регистрация + онбординг + информативное главное меню.
 
-    deep-link `tamabot?start=invite_<tg_id>` учтём на этапе 6 (ачивка «Знакомый»).
+    Deep-link `?start=invite_<tg_id>`: новичок регистрируется, связка
+    «пригласивший → новичок» сохраняется в БД (User.referrer_id). Награда
+    пригласившему выдаётся ОДНОКРАТНО в ActivityService._credit_referral —
+    когда новичок проявит первую засчитанную активность в чате (защита от
+    накрутки пустыми регистрациями). Здесь дополнительно показываем новичку,
+    КТО его пригласил, — так связка «ссылка на канал → /start в боте»
+    работает end-to-end.
     """
     users = UserRepository(session)
     user = await users.get_or_create(
@@ -69,18 +115,31 @@ async def cmd_start(message: Message, state: FSMContext, session: AsyncSession,
         first_name=message.from_user.first_name or "",
         username=message.from_user.username,
     )
+    # запоминаем пригласившего из deep-linkа (если пришли по реф-ссылке)
+    payload = (command.args or "") if command else ""
+    if payload.startswith("invite_"):
+        try:
+            inviter_id = int(payload.split("invite_", 1)[1].split()[0])
+        except (ValueError, IndexError):
+            inviter_id = None
+        if inviter_id and inviter_id != user.tg_id:
+            inviter = await users.get(inviter_id)
+            who = inviter.first_name if inviter and inviter.first_name else "друг"
+            await users.set_referrer(user.tg_id, inviter_id)
+            await message.answer(
+                f"🤝 Тебя пригласил <b>{who}</b>! После онбординга он получит "
+                f"+{get_settings().invite_reward_coins} 🪙, как только ты напишешь первое сообщение в чате."
+            )
     if not user.onboarded:
         await message.answer(
-            WELCOME_DM.format(name=user.first_name or "друг"),
+            WELCOME_DM.format(name=user.first_name or "друг", channel_line=_channel_line()),
             reply_markup=welcome_start_button(),
         )
         return
-    invite_link = ""
-    me = await message.bot.get_me()
-    if me.username:
-        invite_link = (f"\n\n🤝 Пригласить друга: t.me/{me.username}"
-                       f"?start=invite_{user.tg_id} (+{get_settings().invite_reward_coins} 🪙)")
-    await message.answer("🏠 Главное меню:" + invite_link, reply_markup=main_menu())
+    link = invite_link_for(user.tg_id)
+    reward = get_settings().invite_reward_coins
+    text = _main_menu_text(user)
+    await message.answer(text, reply_markup=main_menu(link=link, reward=reward))
 
 
 @router.callback_query(F.data == "onb:start")
@@ -217,6 +276,12 @@ async def cb_main_menu(cb: CallbackQuery, session: AsyncSession) -> None:
     users = UserRepository(session)
     user = await users.get_or_create(cb.from_user.id, cb.from_user.first_name or "",
                                      cb.from_user.username)
+<<<<<<< HEAD
+    link = invite_link_for(user.tg_id)
+    reward = get_settings().invite_reward_coins
+    await safe_edit_or_answer(cb.message, _main_menu_text(user),
+                              reply_markup=main_menu(link=link, reward=reward))
+=======
     need = xp_needed_for_level(user.level)
     bar = progress_bar(user.xp, need)
     await safe_edit_or_answer(cb.message, 
@@ -225,4 +290,5 @@ async def cb_main_menu(cb: CallbackQuery, session: AsyncSession) -> None:
         f"🪙 Монеты: {user.coins} · 🔥 Серия: {user.streak_days} дн.",
         reply_markup=main_menu(),
     )
+>>>>>>> origin/main
     await cb.answer()

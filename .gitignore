@@ -1,1 +1,13 @@
+<<<<<<< HEAD
+# Compiled files
+__pycache__/
+*.pyc
+
+# Environment and IDE
+.env
+.env.local
+.vscode/
+.idea/
+=======
 (empty)
+>>>>>>> origin/main

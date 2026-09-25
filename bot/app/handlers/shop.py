@@ -4,8 +4,14 @@
 Цены подобраны так, чтобы «базовая еда» была доступна почти сразу, а вкусняшки —
 целью на несколько дней. Покупки идут в pet_inventory; кормление из инвентаря
 использует реальные эффекты предметов.
+
+Раздел 🧢 Мерч: если настроен MERCH_URL, показываем витрину мерча прямо внутри
+магазина (тип товара "merch", цены-заметки не списывают монеты — покупка ведёт
+по внешней ссылке).
 """
 from __future__ import annotations
+
+import html
 
 from aiogram import F, Router
 from aiogram.types import CallbackQuery
@@ -14,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 
+from app.config import get_settings
 from app.db.models import Item, PetInventory
 from app.db.repositories import PetRepository, UserRepository
 from app.keyboards.inline import back_to_main, pet_hub
@@ -43,30 +50,65 @@ ITEMS_SEED = [
          effect={"health": 15, "energy": 15}, description="Бодрость и здоровье."),
 ]
 
+# Витрина мерча (дефолт; перекрывается строкой MERCH_ITEMS в .env через config)
+MERCH_SEED = [
+    dict(code="merch_tee", name="Футболка канала", icon="👕", type="merch", price=0,
+         effect={}, description="Печатный принт для своих."),
+    dict(code="merch_mug", name="Кружка «Не флуди»", icon="☕", type="merch", price=0,
+         effect={}, description="Для утреннего кофе модератора."),
+    dict(code="merch_stickers", name="Стикерпак", icon="🎨", type="merch", price=0,
+         effect={}, description="10 наклеек с маскотами."),
+]
+
 
 async def seed_items(session: AsyncSession) -> int:
     existing = {r for r in (await session.execute(select(Item.code))).scalars()}
     created = 0
-    for i, spec in enumerate(ITEMS_SEED, start=1):
+    next_id = ((await session.execute(select(Item.id).order_by(Item.id.desc()).limit(1)))
+               .scalars().first() or 0)
+    specs = ITEMS_SEED + _merch_specs()
+    for spec in specs:
         if spec["code"] in existing:
             continue
-        session.add(Item(id=i, **spec))
+        next_id += 1
+        session.add(Item(id=next_id, **spec))
         created += 1
     if created:
         await session.flush()
     return created
 
 
+def _merch_specs() -> list[dict]:
+    """Мерч из конфига (MERCH_ITEMS="Название|цена|описание;…") или дефолтный сид."""
+    raw = get_settings().merch_items
+    if not raw:
+        return [dict(m) for m in MERCH_SEED]
+    out = []
+    for i, chunk in enumerate(raw.split(";")):
+        parts = [p.strip() for p in chunk.split("|")]
+        if len(parts) < 2 or not parts[0]:
+            continue
+        out.append(dict(
+            code=f"merch_custom_{i + 1}", name=parts[0], icon="🧢", type="merch",
+            price=int(parts[1]) if parts[1].isdigit() else 0, effect={},
+            description=parts[2] if len(parts) > 2 else "",
+        ))
+    return out
+
+
 def shop_keyboard(items: list[Item], user_coins: int) -> "InlineKeyboardBuilder | None":
     b = InlineKeyboardBuilder()
     for it in items:
+        if it.type == "merch":
+            continue  # мерч — внешние кнопки-ссылки, не «buy:»
         afford = "🪙" if user_coins >= it.price else "🔒"
-        b.button(text=f"{afford} {it.icon} {it.name} · {it.price}", callback_data=f"buy:{it.id}")
+        b.button(text=f"{afford} {it.icon} {html.escape(it.name)} · {it.price}",
+                 callback_data=f"buy:{it.id}")
     b.adjust(1)
     return b
 
 
-@router.callback_query(F.data == "pet:shop")
+@router.callback_query(F.data.in_({"menu:shop", "pet:shop"}))
 async def shop_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     users = UserRepository(session)
     user = await users.get(cb.from_user.id)
@@ -76,25 +118,39 @@ async def shop_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     if not items:
         await seed_items(session)
         items = list((await session.execute(select(Item).order_by(Item.type, Item.price))).scalars())
+    settings = get_settings()
     lines = [f"🛒 <b>Магазин</b> · у тебя 🪙 {user.coins}\n"]
     groups: dict[str, list[Item]] = {}
     for it in items:
         groups.setdefault(it.type, []).append(it)
-    titles = {"food": "🍎 Еда", "toy": "🎾 Игрушки", "medicine": "💊 Лекарства"}
+    titles = {"food": "🍎 Еда", "toy": "🎾 Игрушки", "medicine": "💊 Лекарства",
+              "merch": "🧢 Мерч канала"}
     for t, lst in groups.items():
-        lines.append(f"<b>{titles.get(t, t)}</b>")
+        lines.append(f"<b>{titles.get(t, html.escape(t))}</b>")
         for it in lst:
-            lines.append(f"  {it.icon} {it.name} — {it.price} 🪙 · {it.description}")
+            price = f" — {it.price} 🪙" if it.type != "merch" and it.price else ""
+            lines.append(f"  {it.icon} {html.escape(it.name)}{price} · {html.escape(it.description)}")
         lines.append("")
+<<<<<<< HEAD
+    kb = shop_keyboard([i for i in items if i.type != "merch"], user.coins)
+    if settings.merch_enabled and settings.merch_url:
+        kb.row()
+        kb.button(text="🧢 Купить мерч", url=settings.merch_url)
+    kb.button(text="⬅️ Назад", callback_data="menu:main")
+=======
     kb = shop_keyboard(items, user.coins)
     kb.button(text="⬅️ Назад", callback_data="menu:pet")
+>>>>>>> origin/main
     await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=kb.as_markup())
     await cb.answer()
 
 
 @router.callback_query(F.data.startswith("buy:"))
 async def buy_item(cb: CallbackQuery, session: AsyncSession) -> None:
-    item_id = int(cb.data.split(":")[1])
+    try:
+        item_id = int(cb.data.split(":")[1])
+    except (IndexError, ValueError):
+        return await cb.answer("Битая кнопка 😅", show_alert=True)
     users = UserRepository(session)
     pets = PetRepository(session)
     user = await users.get(cb.from_user.id)
@@ -104,11 +160,31 @@ async def buy_item(cb: CallbackQuery, session: AsyncSession) -> None:
     item = await session.get(Item, item_id)
     if item is None:
         return await cb.answer("Предмет не найден", show_alert=True)
+    if item.type == "merch":
+        # мерч покупается снаружи — редиректим ссылкой, монеты не трогаем
+        url = get_settings().merch_url
+        if url:
+            from aiogram.types import LinkButton, InlineKeyboardMarkup, InlineKeyboardButton
+            await cb.message.answer(
+                f"🧢 <b>{html.escape(item.name)}</b> можно купить тут 👇",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="Открыть магазин мерча",
+                                          url=url)]]))
+        else:
+            await cb.message.answer("🧢 Мерч ещё не в продаже — следи за каналом!")
+        return await cb.answer()
     if user.coins < item.price:
         await cb.answer(f"Не хватает {item.price - user.coins} монет 🪙", show_alert=True)
         return
 
-    user.coins -= item.price
+    # защита от двойного списания при быстрых дабл-кликах: UPDATE ... WHERE coins>=price
+    from sqlalchemy import update
+    res = await session.execute(
+        update(User).where(User.tg_id == user.tg_id, User.coins >= item.price)
+        .values(coins=User.coins - item.price)
+    )
+    if res.rowcount == 0:
+        return await cb.answer("Недостаточно монет 🪙", show_alert=True)
     inv_row = (await session.execute(
         select(PetInventory).where(PetInventory.pet_id == pet.id,
                                    PetInventory.item_id == item.id)
@@ -119,6 +195,7 @@ async def buy_item(cb: CallbackQuery, session: AsyncSession) -> None:
         session.add(PetInventory(pet_id=pet.id, item_id=item.id, quantity=1))
     await session.flush()
     await pets.log_action(pet.id, "buy", value=item.price, meta={"item": item.code})
+    await session.commit()   # фиксируем списание сразу (res.rowcount уже проверен)
     logger.info("user {} bought {} for {}", user.tg_id, item.code, item.price)
     await cb.answer(f"Куплено: {item.icon} {item.name}!", show_alert=False)
     # перерендерим магазин, чтобы цены-замки обновились
@@ -157,7 +234,10 @@ async def inventory_screen(cb: CallbackQuery, session: AsyncSession) -> None:
 
 @router.callback_query(F.data.startswith("use:"))
 async def use_item(cb: CallbackQuery, session: AsyncSession) -> None:
-    item_id = int(cb.data.split(":")[1])
+    try:
+        item_id = int(cb.data.split(":")[1])
+    except (IndexError, ValueError):
+        return await cb.answer("Битая кнопка 😅", show_alert=True)
     pets = PetRepository(session)
     pet = await pets.get_by_user(cb.from_user.id)
     if pet is None:
@@ -169,6 +249,8 @@ async def use_item(cb: CallbackQuery, session: AsyncSession) -> None:
     if inv is None or inv.quantity <= 0:
         return await cb.answer("Предмета нет в инвентаре", show_alert=True)
     item = await session.get(Item, item_id)
+    if item is None:
+        return await cb.answer("Предмет не найден", show_alert=True)
 
     svc = TamagotchiService(session)
     if item.type == "food":
