@@ -1,17 +1,17 @@
-# --- Core (проверенные версии, на которых запускались тесты) ---
-aiogram>=3.13,<4.0          # long polling, callbacks, FSM
-SQLAlchemy>=2.0.30,<2.1     # async ORM 2.0
-aiomysql>=0.2.0             # MySQL-драйвер (prod)
-aiosqlite>=0.20             # SQLite для тестов/dev
-redis>=5.0                  # кулдауны/FSM (есть in-memory fallback без Redis)
-APScheduler>=3.10,<4.0      # фоновые задачи (деградация, уведомления)
-loguru>=0.7                 # логирование
-pydantic>=2.7               # модели
-pydantic-settings>=2.3      # конфигурация из .env
-python-dotenv>=1.0          # загрузка .env
-Pillow>=10.3                # карточки профиля (этап 5)
-textual>=0.63               # TamaConsole — терминальная оболочка управления (console.bat)
+# --- Core (актуальные проверенные версии, v1.4.4 — обновлены, тесты 80 passed) ---
+aiogram>=3.31,<4.0          # long polling, callbacks, FSM, реакции (Bot API 7+/9.x)
+SQLAlchemy>=2.1,<2.2        # async ORM 2.1 (стабильная ветка; 2.0.x больше не получает фиксы)
+aiomysql>=0.3.2             # MySQL-драйвер (prod)
+aiosqlite>=0.22             # SQLite для тестов/dev
+redis>=8.1                  # кулдауны/FSM (RESP2 protocol=2 — совместимо со старым Redis/Memurai)
+APScheduler>=3.11,<4.0      # фоновые задачи (деградация, уведомления)
+loguru>=0.7.3               # логирование
+pydantic>=2.13              # модели
+pydantic-settings>=2.15     # конфигурация из .env
+python-dotenv>=1.2          # загрузка .env
+Pillow>=12.3                # карточки профиля (этап 5)
+textual>=8.2                # TamaConsole — терминальная оболочка управления (console.bat)
 
 # --- Dev / тесты ---
-pytest>=8.0
-pytest-asyncio>=0.23
+pytest>=9.1
+pytest-asyncio>=1.4

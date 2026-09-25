@@ -1,4 +1,4 @@
-# 🐾 TamaBot v1.4.3 — развлекательный Telegram-бот (тамагочи + достижения + топы)
+# 🐾 TamaBot v1.4.4 — развлекательный Telegram-бот (тамагочи + достижения + топы)
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
 [![aiogram](https://img.shields.io/badge/aiogram-3.x-green.svg)](https://docs.aiogram.dev/)
@@ -76,7 +76,7 @@ console.bat    :: 5. (альтернатива) TamaConsole — полноэкр
     │   │                                 # achievements, stats, top, profile, settings, admin
     │   ├── services/                     # activity, xp, achievements, pet, economy,
     │   │                                 # leaderboard, friends, notifications, card (Pillow)
-    │   ├── db/                           # models.py (SQLAlchemy 2.0 async) + repositories/
+    │   ├── db/                           # models.py (SQLAlchemy 2.1 async) + repositories/
     │   ├── keyboards/                    # inline/reply-клавиатуры
     │   ├── middlewares/                  # throttle, user, session
     │   ├── console/                      # TamaConsole (Textual): логи/дашборд/БД/настройки
