@@ -257,8 +257,8 @@ def top_tabs(active: str = "week", section: str = "talk") -> InlineKeyboardMarku
     return b.as_markup()
 
 
-def settings_keyboard(flags: dict[str, bool], lang: str = "ru") -> InlineKeyboardMarkup:
-    """Экран ⚙️ Настройки: тумблеры уведомлений + язык (i18n)."""
+def settings_keyboard(flags: dict[str, bool]) -> InlineKeyboardMarkup:
+    """Экран ⚙️ Настройки: тумблеры уведомлений."""
     b = InlineKeyboardBuilder()
     labels = {
         "pet_reminders": "🐾 Напомнить покормить",
@@ -270,10 +270,6 @@ def settings_keyboard(flags: dict[str, bool], lang: str = "ru") -> InlineKeyboar
         on = flags.get(key, True)
         b.button(text=f"{'✅' if on else '❌'} {label}", callback_data=f"set:{key}")
     b.adjust(2)
-    b.row()
-    ru = "✅" if lang == "ru" else "🌐"
-    en = "✅" if lang == "en" else "🌐"
-    b.button(text=f"{ru} Русский  |  {en} English", callback_data="lang:toggle")
     b.row()
     b.button(text="⬅️ Назад", callback_data="menu:main")
     return b.as_markup()

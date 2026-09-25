@@ -112,8 +112,6 @@ class BotRuntime:
 
             dp = Dispatcher(storage=storage)
             dp.update.outer_middleware(DbMiddleware())
-            from app.middlewares.user_lang import UserLanguageMiddleware
-            dp.update.outer_middleware(UserLanguageMiddleware())  # i18n
             dp.callback_query.outer_middleware(ThrottleMiddleware())
             # страховка на уровне callback-мидлваров (до/вне хендлеров) —
             # юзер не останется с «висящими часами», а админы увидят сбой в логе

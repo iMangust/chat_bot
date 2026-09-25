@@ -190,7 +190,7 @@ MOOD_I18N_KEY = {
 
 
 def mood_text(mood: str) -> str:
-    """Настроение на текущем языке (контекст выставляет UserLanguageMiddleware)."""
+    """Строка настроения питомца (RU-only словарь строк)."""
     key = MOOD_I18N_KEY.get(mood)
     return t(key) if key else MOOD_TEXT.get(mood, "")
 

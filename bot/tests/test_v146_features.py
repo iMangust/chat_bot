@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import random
+import re
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -17,55 +18,49 @@ def run(coro):
     return asyncio.run(coro)
 
 
-# ---------------------------------------------------------------- i18n ----
+# --------------------------------------------------- строки интерфейса ----
+# v1.5.0: английский каталог и переключение языков удалены — бот RU-only.
 
-def test_i18n_tf_fallback_and_format():
+def test_strings_lookup_and_format():
     s = i18n.tf("ru", "top.title", period="Неделя")
     assert "Неделя" in s and "<b>" in s
     # неизвестный ключ -> сам ключ (UI не падает)
     assert i18n.tf("ru", "no_such_key_xyz") == "no_such_key_xyz"
-    # неизвестный язык -> fallback ru
-    assert i18n.tf("xx", "pet.washed") == i18n.tf("ru", "pet.washed")
-    # битые плейсхолдеры не роняют перевод
+    # любой «язык» теперь даёт русский (переключения больше нет)
+    assert i18n.tf("en", "pet.washed") == i18n.tf("ru", "pet.washed")
+    # битые плейсхолдеры не роняют строку
     assert isinstance(i18n.tf("ru", "shop.bought"), str)
 
 
-def test_i18n_context_roundtrip():
-    i18n.set_current_lang("en")
-    assert i18n.get_current_lang() == "en"
-    assert "Chatters" in i18n.t("top.talkers")
-    i18n.set_current_lang(None)          # дефолт
-    assert i18n.get_current_lang() == "ru"
-    i18n.set_current_lang("de-DE")       # неподдерживаемый -> ru
-    assert i18n.get_current_lang() == "ru"
+def test_english_catalog_and_switching_removed():
+    # EN-каталога и контекста языка больше нет в модуле и в кодовой базе
+    assert not hasattr(i18n, "CATALOGS")
+    assert not hasattr(i18n, "SUPPORTED_LANGS")
+    assert not hasattr(i18n, "set_current_lang")
+    assert not hasattr(i18n, "get_current_lang")
+    import pathlib
+    assert not (pathlib.Path(i18n.__file__).parent / "middlewares" / "user_lang.py").exists()
+    # t() всегда возвращает русскую строку
+    assert "Болтуны" in i18n.t("top.talkers")
+    # все строки словаря — с кириллицей (никаких англ. фраз UI); шаблоны вида
+    # "{name} {reason}" без текста-константы допустимы
+    for key, value in i18n.STRINGS.items():
+        stripped = re.sub(r"\{[a-z_]+\}", "", value)          # плейсхолдеры
+        stripped = re.sub(r"^\s*</?[bi]>\s*", "", stripped)   # HTML-обёртки тегов
+        stripped = re.sub(r"/[a-zа-я]{2,}", "", stripped)     # имена команд (/award)
+        stripped = stripped.replace("UTC", "")                # общепринятая аббревиатура
+        assert not re.search(r"[A-Za-z]{3,}", stripped), key  # англ. фраз в UI нет
 
 
-def test_catalogs_have_same_keys():  # EN не должен отставать от RU
-    assert set(i18n.CATALOGS["en"]) <= set(i18n.CATALOGS["ru"])
+def test_settings_has_no_language_toggle():
+    import inspect
 
-
-def test_user_language_middleware_sets_data():
-    from app.middlewares.user_lang import UserLanguageMiddleware
-    mw = UserLanguageMiddleware()
-    seen = {}
-
-    async def handler(event, data):
-        seen["lang"] = i18n.get_current_lang()
-        return "ok"
-
-    class FakeUser:
-        id = 1
-
-    class FakeEvent:
-        from_user = FakeUser()
-
-    class FakeSession:  # session.get вернёт None -> дефолт, без падения
-        async def get(self, model, pk):
-            return None
-
-    result = run(mw(handler, FakeEvent(), {"session": FakeSession()}))
-    assert result == "ok"
-    assert seen["lang"] == "ru"
+    from app.handlers import settings as settings_mod
+    from app.keyboards import inline as kb_mod
+    src = inspect.getsource(settings_mod)
+    assert "lang:toggle" not in src and "English" not in src
+    kb_src = inspect.getsource(kb_mod.settings_keyboard)
+    assert "lang" not in kb_src and "English" not in kb_src
 
 
 # ------------------------------------------------------------- arena ------
