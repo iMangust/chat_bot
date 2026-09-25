@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.repositories import NotificationRepository, UserRepository
 from app.keyboards.inline import back_to_main, main_menu, settings_keyboard
 from app.services.leaderboard import leaderboard_text, snapshot_weekly
+from app.utils.safe_edit import safe_edit_or_answer
 
 router = Router(name="settings")
 
@@ -27,7 +28,7 @@ async def _render_settings(session: AsyncSession, message: Message, tg_id: int) 
             "Я пишу в ЛС только когда это действительно нужно.\n"
             "Здесь можно всё отключить — нажми на тумблер:\n\n"
             + "\n".join(f"{'✅' if flags[k] else '❌'} {label}" for k, label in _FLAG_LABELS.items()))
-    await message.edit_text(text, reply_markup=settings_keyboard(flags))
+    await safe_edit_or_answer(message, text, reply_markup=settings_keyboard(flags))
 
 
 @router.callback_query(F.data == "menu:settings")
