@@ -8,7 +8,7 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-__version__ = "1.2.6"
+__version__ = "1.2.7"
 
 
 class Settings(BaseSettings):
@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://127.0.0.1:6379/0"
 
     # --- Способ запуска (Windows Server: только long polling) ---
-    polling_timeout: int = 30          # long polling timeout, сек
+    polling_timeout: int = 10          # long polling timeout, сек (getUpdates)
     polling_limit: int = 50            # max updates за один запрос
 
     # --- Антифрод / баланс ---

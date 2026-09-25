@@ -135,6 +135,12 @@ class BotRuntime:
                 BotCommand(command="settings", description="⚙️ Настройки"),
             ])
 
+            # проверка токена/связи с Telegram API до старта поллинга —
+            # иначе при неверном токене или сетевом проблеме getUpdates просто
+            # ретраит молча и выглядит как «завис»
+            me = await self.bot.get_me()
+            logger.info(f"подключено к @{me.username} (id={me.id})")
+
             self._scheduler = build_scheduler(self.bot)
             self._scheduler.start()
             self.dp = dp
@@ -153,6 +159,11 @@ class BotRuntime:
             )
             self._polling_task.add_done_callback(self._on_polling_done)
             logger.info("✅ bot started (управляемый запуск из оболочки)")
+            logger.info("📡 слушаю обновления (long polling)… напишите боту /start в ЛС")
+            # при сетевых проблемах aiogram ретраит getUpdates молча — включаем
+            # DEBUG для aiogram, чтобы такие ситуации было видно в логах
+            import logging as _logging
+            _logging.getLogger("aiogram").setLevel(_logging.DEBUG)
         except Exception as exc:  # noqa: BLE001
             await self._cleanup_partial()
             self.state = "stopped"

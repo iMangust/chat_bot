@@ -83,6 +83,8 @@ async def on_startup(bot: Bot) -> None:
         BotCommand(command="award", description="🎁 Итоги недели"),
         BotCommand(command="settings", description="⚙️ Настройки"),
     ])
+    me = await bot.get_me()
+    logger.info(f"подключено к @{me.username} (id={me.id})")
     logger.info("✅ bot started")
 
 
@@ -146,6 +148,10 @@ async def main() -> None:
     try:
         if settings.is_dev or not settings.webhook_url:
             logger.info("starting long polling…")
+            # aiogram при сетевых проблемах ретраит getUpdates молча —
+            # включаем DEBUG для aiohttp/aiogram, чтобы такие ситуации было видно
+            import logging as _logging
+            _logging.getLogger("aiogram").setLevel(_logging.DEBUG)
             await dp.start_polling(
                 bot,
                 timeout=settings.polling_timeout,

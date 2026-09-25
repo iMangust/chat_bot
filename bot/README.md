@@ -147,6 +147,7 @@ python -m pytest tests -q        # ожидаем: 31 passed (включая п�
   | `RuntimeError: BOT_TOKEN не задан` | нет `.env` или токен пуст |
   | `Can't connect to MySQL server` | MySQL не запущен / неверный `DATABASE_URL` |
   | `Incorrect string value: '\xF0\x9F...' (1366)` | база создана в utf8mb3. С v1.2.6 бот чинит это сам при старте (авто-конвертация в utf8mb4). Вручную: `ALTER DATABASE tamabot CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;` + перезапуск |
+  | Логи остановились на «bot started», окно живёт, но бот молчит | штатно: long polling не пишет ничего до первого апдейта (с v1.2.7 — строка «📡 слушаю обновления» и DEBUG aiogram-ретраев). Если бот реально не отвечает: 1) нет доступа к api.telegram.org с сервера (в РФ — прокси/блокировка, проверьте `curl https://api.telegram.org/bot<TOKEN>/getMe`); 2) второй экземпляр бота уже слушает поллинг (409 Conflict — виден в DEBUG-логах, убейте старый процесс/NSSM-сервис); 3) неверный токен — с v1.2.7 старт падает сразу с явной ошибкой |
   | Бот молчит в группе | не админ / `TRACKED_CHAT_IDS` не совпадает / сообщение короче `MIN_MESSAGE_LENGTH` или в кулдауне |
   | Реакции не считаются | в группе выключен «Выбор реакции» |
   | Предупреждение про Redis | Redis недоступен — ok, работает fallback; для прод-стабильности поставьте Memurai |
