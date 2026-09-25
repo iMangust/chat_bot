@@ -1,23 +1,25 @@
 @echo off
 rem ============================================================
-rem  TamaBot - запуск бота с живыми логами в реальном времени
-rem  Двойной клик => окно консоли с цветными логами, статусом
-rem  и uptime в заголовке. Ctrl+C или закрытие окна = остановка.
-rem  Файл должен лежать рядом с папкой bot\ (в корне проекта).
+rem  TamaBot - чряєёъ сюЄр ё цшт√ьш ыюурьш т Ёхры№эюь тЁхьхэш
+rem  ─тющэющ ъышъ => юъэю ъюэёюыш ё ЎтхЄэ√ьш ыюурьш, ёЄрЄєёюь
+rem  ш uptime т чруюыютъх. Ctrl+C шыш чръЁ√Єшх юъэр = юёЄрэютър.
+rem  ╘рщы фюыцхэ ыхцрЄ№ Ё фюь ё яряъющ bot\ (т ъюЁэх яЁюхъЄр).
 rem ============================================================
-chcp 866 >nul
-title TamaBot - запуск...
+chcp 1251 >nul
+title TamaBot - чряєёъ...
 cd /d "%~dp0bot"
 
 if not exist .env (
     echo.
-    echo  [ОШИБКА] Не найден файл .env
-    echo  Скопируйте .env.example в .env и заполните BOT_TOKEN и DATABASE_URL.
+    echo  [╬╪╚┴╩└] ═х эрщфхэ Їрщы .env
+    echo  ╤ъюяшЁєщЄх .env.example т .env ш чряюыэшЄх BOT_TOKEN ш DATABASE_URL.
     echo.
     pause
     exit /b 1
 )
 
+set PYTHONUTF8=0
+set PYTHONIOENCODING=utf-8
 if exist venv\Scripts\python.exe (
     set PY=venv\Scripts\python.exe
 ) else (
@@ -28,9 +30,9 @@ if exist venv\Scripts\python.exe (
 set EXITCODE=%ERRORLEVEL%
 
 if not "%EXITCODE%"=="0" (
-    title TamaBot - ОСТАНОВЛЕН с ошибкой %EXITCODE%
+    title TamaBot - ╬╤╥└═╬┬╦┼═ ё ю°шсъющ %EXITCODE%
     echo.
-    echo  ^>^> Бот завершился с кодом %EXITCODE%. Полный лог: bot\logs\
+    echo  ^>^> ┴юЄ чртхЁ°шыё  ё ъюфюь %EXITCODE%. ╧юыэ√щ ыюу: bot\logs\
     echo.
     pause
 )

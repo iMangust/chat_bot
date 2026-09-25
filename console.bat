@@ -1,23 +1,25 @@
 @echo off
 rem ============================================================
-rem  TamaConsole - полноэкранный интерфейс управления:
-rem  вкладки Логи / Дашборд / БД / Настройки / Пользователи,
-rem  кнопки Запустить / Остановить / Перезапустить.
-rem  Горячие клавиши: r - пуск/стоп, l - логи, d - БД, q - выход.
+rem  TamaConsole - яюыэю¤ъЁрээ√щ шэЄхЁЇхщё єяЁртыхэш :
+rem  тъырфъш ╦юуш / ─р°сюЁф / ┴─ / ═рёЄЁющъш / ╧юы№чютрЄхыш,
+rem  ъэюяъш ╟ряєёЄшЄ№ / ╬ёЄрэютшЄ№ / ╧хЁхчряєёЄшЄ№.
+rem  ├юЁ ўшх ъыртш°ш: r - яєёъ/ёЄюя, l - ыюуш, d - ┴─, q - т√їюф.
 rem ============================================================
-chcp 866 >nul
-title TamaConsole - интерфейс управления
+chcp 1251 >nul
+title TamaConsole - шэЄхЁЇхщё єяЁртыхэш 
 cd /d "%~dp0bot"
 
 if not exist .env (
     echo.
-    echo  [ОШИБКА] Не найден файл .env
-    echo  Скопируйте .env.example в .env и заполните BOT_TOKEN и DATABASE_URL.
+    echo  [╬╪╚┴╩└] ═х эрщфхэ Їрщы .env
+    echo  ╤ъюяшЁєщЄх .env.example т .env ш чряюыэшЄх BOT_TOKEN ш DATABASE_URL.
     echo.
     pause
     exit /b 1
 )
 
+set PYTHONUTF8=0
+set PYTHONIOENCODING=utf-8
 if exist venv\Scripts\python.exe (
     set PY=venv\Scripts\python.exe
 ) else (
@@ -27,7 +29,7 @@ if exist venv\Scripts\python.exe (
 %PY% -m app.console
 if errorlevel 1 (
     echo.
-    echo  Оболочка завершилась с ошибкой. Установлены ли зависимости? ^(install.bat^)
+    echo  ╬сюыюўър чртхЁ°шырё№ ё ю°шсъющ. ╙ёЄрэютыхэ√ ыш чртшёшьюёЄш? ^(install.bat^)
     echo.
     pause
 )

@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import contextlib
 import signal
 import sys
@@ -39,9 +40,13 @@ def _console_sink(message) -> None:
 def setup_live_logging(level: str) -> None:
     """Консоль (живая) + файл логов. Отдельно от GUI-настройки в runtime."""
     logger.remove()
+    # Логи пишем в кодировку консоли (bat выставляет chcp 1251 + PYTHONIOENCODING).
+    # Принудительный utf-8 здесь ломал кириллицу на русской Windows — эмодзи
+    # заменяются на '?', но текст остаётся читаемым.
+    enc = (os.environ.get("PYTHONIOENCODING") or "cp1251").split(":")[0]
     with contextlib.suppress(Exception):
         if hasattr(sys.stdout, "reconfigure"):
-            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+            sys.stdout.reconfigure(encoding=enc, errors="replace")
     logger.add(_console_sink, level=level)
     from pathlib import Path
     Path("logs").mkdir(exist_ok=True)

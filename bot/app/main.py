@@ -34,6 +34,28 @@ def setup_logging(level: str) -> None:
                level="DEBUG", encoding="utf-8")
 
 
+def _make_fsm_storage(redis_url: str):
+    """FSM-хранилище с совместимостью со старыми Redis (< 6.0).
+
+    redis-py>=5 по умолчанию шлёт команду HELLO (RESP3/протокол 3),
+    которую Memurai для Windows и старый Redis не понимают — падение
+    с ошибкой \"unknown command 'HELLO'\". Фиксим двумя уровнями:
+      1) protocol=2 (RESP2) — стандартный протокол для любого Redis >= 2.6;
+      2) graceful fallback на MemoryStorage, если Redis вообще недоступен.
+    """
+    from aiogram.fsm.storage.memory import MemoryStorage
+    try:
+        from redis.asyncio import ConnectionPool
+        pool = ConnectionPool.from_url(redis_url, protocol=2)
+        storage = RedisStorage(redis=pool)
+        logger.info("FSM: RedisStorage (protocol=2/RESP2 — совместимо со старым Redis/Memurai)")
+        return storage
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"Redis недоступен для FSM ({exc!r}) — использую MemoryStorage "
+                       f"(стейты сбрасываются при рестарте; для dev допустимо)")
+        return MemoryStorage()
+
+
 async def on_startup(bot: Bot) -> None:
     # схемы (в проде — Alembic; create_all оставлен для dev-скорости)
     async with engine.begin() as conn:
@@ -67,12 +89,7 @@ async def main() -> None:
         token=settings.bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
-    try:
-        storage = RedisStorage.from_url(settings.redis_url)
-    except Exception:
-        logger.warning("Redis недоступен для FSM — использую MemoryStorage (только dev!)")
-        from aiogram.fsm.storage.memory import MemoryStorage
-        storage = MemoryStorage()
+    storage = _make_fsm_storage(settings.redis_url)
 
     dp = Dispatcher(storage=storage)
     # мидлвары: сессия БД — глобально, throttle — только на callbacks

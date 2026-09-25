@@ -1,46 +1,46 @@
 @echo off
 rem ============================================================
-rem  TamaBot - первичная установка: Python-venv + зависимости.
-rem  Запустить один раз после копирования проекта на сервер.
-rem  Требуется установленный Python 3.11+ (в PATH как "py").
+rem  TamaBot - яхЁтшўэр  єёЄрэютър: Python-venv + чртшёшьюёЄш.
+rem  ╟ряєёЄшЄ№ юфшэ Ёрч яюёых ъюяшЁютрэш  яЁюхъЄр эр ёхЁтхЁ.
+rem  ╥ЁхсєхЄё  єёЄрэютыхээ√щ Python 3.11+ (т PATH ъръ "py").
 rem ============================================================
-chcp 866 >nul
-title TamaBot - установка
+chcp 1251 >nul
+title TamaBot - єёЄрэютър
 cd /d "%~dp0bot"
 
-echo  [*] Проверка Python...
+echo  [*] ╧ЁютхЁър Python...
 py -3 --version >nul 2>&1
 if errorlevel 1 (
-    echo  [ОШИБКА] Python не найден. Установите Python 3.11+ с python.org
-    echo           (обязательно включите "Add to PATH" при установке).
+    echo  [╬╪╚┴╩└] Python эх эрщфхэ. ╙ёЄрэютшЄх Python 3.11+ ё python.org
+    echo           (юс чрЄхы№эю тъы■ўшЄх "Add to PATH" яЁш єёЄрэютъх).
     pause
     exit /b 1
 )
 
 if not exist venv (
-    echo  [*] Создание виртуального окружения venv...
-    py -3 -m venv venv || (echo  [ОШИБКА] venv не создан & pause & exit /b 1)
+    echo  [*] ╤ючфрэшх тшЁЄєры№эюую юъЁєцхэш  venv...
+    py -3 -m venv venv || (echo  [╬╪╚┴╩└] venv эх ёючфрэ & pause & exit /b 1)
 )
 
-echo  [*] Установка зависимостей (первый запуск - 2-5 минут)...
+echo  [*] ╙ёЄрэютър чртшёшьюёЄхщ (яхЁт√щ чряєёъ - 2-5 ьшэєЄ)...
 venv\Scripts\python.exe -m pip install --upgrade pip >nul
 venv\Scripts\python.exe -m pip install -r requirements.txt
 if errorlevel 1 (
-    echo  [ОШИБКА] pip install завершился с ошибкой - проверьте интернет/антивирус.
+    echo  [╬╪╚┴╩└] pip install чртхЁ°шыё  ё ю°шсъющ - яЁютхЁ№Єх шэЄхЁэхЄ/рэЄштшЁєё.
     pause
     exit /b 1
 )
 
 if not exist .env (
     copy .env.example .env >nul
-    echo  [*] Создан .env из примера - ЗАПОЛНИТЕ его перед запуском:
+    echo  [*] ╤ючфрэ .env шч яЁшьхЁр - ╟└╧╬╦═╚╥┼ хую яхЁхф чряєёъюь:
     echo      BOT_TOKEN, DATABASE_URL, TRACKED_CHAT_IDS, ADMIN_IDS
     notepad .env
 )
 
 echo.
-echo  [OK] Установка завершена.
-echo     Дальше: отредактируйте bot\.env и запустите run.bat
-echo     (или console.bat - если хотите интерфейс с вкладками).
+echo  [OK] ╙ёЄрэютър чртхЁ°хэр.
+echo     ─ры№°х: юЄЁхфръЄшЁєщЄх bot\.env ш чряєёЄшЄх run.bat
+echo     (шыш console.bat - хёыш їюЄшЄх шэЄхЁЇхщё ё тъырфърьш).
 echo.
 pause

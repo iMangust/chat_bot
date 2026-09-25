@@ -33,10 +33,12 @@ console.bat    :: 5. (альтернатива) TamaConsole — полноэкр
 ```
 
 ⚠️ **Важно:** `install.bat`, `run.bat`, `console.bat` сохранены в кодировке
-**cp866 (OEM Russian) с CRLF** — обязательное требование `cmd.exe`. При редактировании
-сохраняйте именно в cp866 (Notepad++ → Кодировки → Кириллица → OEM 866), иначе cmd
+**cp1251 (ANSI Russian) с CRLF** + переключение `chcp 1251` — обязательное требование `cmd.exe`. При редактировании
+сохраняйте именно в cp1251/«Кириллица Windows» (Notepad++ → Кодировки → Кириллица → Windows-1251), иначе cmd
 начнёт «выполнять» русские строки (`'ый' is not recognized...`). Корректность формата
-контролируется тестами `bot/tests/test_bat_files.py`.
+контролируется тестами `bot/tests/test_bat_files.py`. Логи Python пишутся в UTF-8 и
+корректно отображаются в окне chcp 1251 (переменные `PYTHONUTF8=0`, `PYTHONIOENCODING=utf-8`
+выставляются в run.bat/console.bat).
 
 ---
 
@@ -64,7 +66,7 @@ console.bat    :: 5. (альтернатива) TamaConsole — полноэкр
 ## 🗂 Структура репозитория
 
 ```
-├── install.bat / run.bat / console.bat   # BAT-оболочки запуска (cp866+CRLF!)
+├── install.bat / run.bat / console.bat   # BAT-оболочки запуска (cp1251+CRLF!)
 ├── README.md                             # этот файл (быстрый старт)
 └── bot/
     ├── app/
