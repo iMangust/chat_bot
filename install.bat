@@ -16,9 +16,14 @@ if not exist "%~dp0bot\requirements.txt" (
 cd /d "%~dp0bot"
 
 echo  [*] Проверка Python...
+rem --- Python: сначала py-launcher, затем python из PATH
 set PYCMD=
-where py >nul 2>&1 && set PYCMD=py -3
-if not defined PYCMD where python >nul 2>&1 && set PYCMD=python
+where py >nul 2>nul
+if %errorlevel%==0 set PYCMD=py -3
+if not defined PYCMD (
+    where python >nul 2>nul
+    if %errorlevel%==0 set PYCMD=python
+)
 if not defined PYCMD (
     echo  [ОШИБКА] Python не найден. Установите Python 3.11+ с python.org
     echo           (обязательно включите "Add to PATH" при установке).

@@ -1,4 +1,4 @@
-# 🐾 TamaBot v1.2.3 — развлекательный Telegram-бот (тамагочи + достижения + топы)
+# 🐾 TamaBot v1.2.4 — развлекательный Telegram-бот (тамагочи + достижения + топы)
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
 [![aiogram](https://img.shields.io/badge/aiogram-3.x-green.svg)](https://docs.aiogram.dev/)
@@ -50,6 +50,11 @@ cd C:\tamabot && install.bat
 Скрипты проверяют: наличие папки `bot\`, Python (`py` или `python` в PATH —
 подходит и установка без py-launcher), создание venv, установку зависимостей,
 и на каждой ошибке делают `pause`.
+
+🩹 **v1.2.4:** исправлена ошибка «Непредвиденное появление: ..» в `install.bat`
+(конструкция `where ... 2>&1 && set ...` некорректно разбирается cmd.exe; теперь
+используются отдельные строки с проверкой `%errorlevel%`). Добавлен тест,
+запрещающий `&&` во всех bat-скриптах.
 
 ---
 

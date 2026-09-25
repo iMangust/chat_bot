@@ -55,3 +55,24 @@ def test_bat_no_emoji_outside_cp866() -> None:
 def test_all_three_launchers_present() -> None:
     names = {p.name for p in BAT_FILES}
     assert {"install.bat", "run.bat", "console.bat"} <= names
+
+
+def test_bat_no_double_ampersand_after_if() -> None:
+    """cmd.exe не понимает `if <cond> cmd && cmd` — «Непредвиденное появление: ..».
+
+    Конструкция вида `where py >nul 2>&1 && set X=...` в интерпретаторе cmd
+    разбирается так, что после редиректа `2>&1` идёт `&&`, и при определённых
+    условиях (вложенность в if-блок / обработка `&`) cmd выдаёт ошибку
+    «Непредвиденное появление». Надёжный паттерн — отдельные строки с
+    проверкой `%errorlevel%`. Тест запрещает любые `&&` в bat-скриптах.
+    """
+    for bat in BAT_FILES:
+        text = bat.read_bytes().decode("cp866")
+        for num, line in enumerate(text.split("\r\n"), 1):
+            stripped = line.strip()
+            if stripped.lower().startswith("rem"):
+                continue
+            assert "&&" not in line, (
+                f"{bat.name}:{num}: найден '&&' — недопустимо в cmd.exe, "
+                f"используйте отдельные строки с if %errorlevel%==0: {stripped!r}"
+            )
