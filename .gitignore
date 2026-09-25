@@ -1,1 +1,9 @@
-(empty)
+__pycache__/
+*.pyc
+logs/
+.env
+.env.local
+.vscode/
+.idea/
+*.sqlite
+venv/
