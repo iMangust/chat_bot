@@ -98,6 +98,28 @@ def season_for(dt) -> str:
     return "autumn"
 
 
+# ---------------------------------------------------------------------------
+# Праздничные события (Этап 6+): модификаторы наглад за действия в этот день.
+# HOLIDAY_EFFECTS описывает, КАКИЕ механики усиливает праздник; формат —
+# dict по «тегам» действий, значения — множители. Тэги читает TamagotchiService
+# (xp/hunger/play_happy/walk_coins), поэтому новые праздники добавляются
+# без правки кода хендлеров.
+# ---------------------------------------------------------------------------
+HOLIDAY_EFFECTS: dict[tuple[int, int], dict[str, float]] = {
+    (1, 1): {"xp": 1.5},                          # Новый год: все награды XP ×1.5
+    (2, 14): {"play_happy": 1.5},                 # Валентин: игры +50% счастья
+    (10, 31): {"walk_coins": 2.0},                # Хэллоуин: прогулки ×2 монет
+    (12, 31): {"feed_hunger": 1.2},               # Канун НГ: кормления +20% сытости
+}
+
+
+def holiday_effect_mults(dt=None) -> dict[str, float]:
+    """Множителей на сегодня (пустой dict — обычный день)."""
+    from datetime import datetime as _dt, timezone as _tz
+    dt = dt or _dt.now(_tz.utc)
+    return HOLIDAY_EFFECTS.get((dt.month, dt.day), {})
+
+
 def weather_info(dt=None) -> dict:
     """Текущая «погода» для карточки питомца и подсказок."""
     from datetime import datetime as _dt, timezone as _tz

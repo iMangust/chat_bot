@@ -23,12 +23,30 @@ _FLAG_LABELS = {
 
 async def _render_settings(session: AsyncSession, message: Message, tg_id: int) -> None:
     ns = await NotificationRepository(session).get_or_create(tg_id)
+    user = await UserRepository(session).get(tg_id)
+    lang = getattr(user, "lang", None) or "ru"
     flags = {k: bool(getattr(ns, k)) for k in _FLAG_LABELS}
     text = ("⚙️ <b>Настройки уведомлений</b>\n\n"
             "Я пишу в ЛС только когда это действительно нужно.\n"
             "Здесь можно всё отключить — нажми на тумблер:\n\n"
-            + "\n".join(f"{'✅' if flags[k] else '❌'} {label}" for k, label in _FLAG_LABELS.items()))
-    await safe_edit_or_answer(message, text, reply_markup=settings_keyboard(flags))
+            + "\n".join(f"{'✅' if flags[k] else '❌'} {label}" for k, label in _FLAG_LABELS.items())
+            + f"\n\n🌐 Язык интерфейса: <b>{'Русский' if lang == 'ru' else 'English'}</b>")
+    await safe_edit_or_answer(message, text, reply_markup=settings_keyboard(flags, lang))
+
+
+@router.callback_query(F.data == "lang:toggle")
+async def cb_lang_toggle(cb: CallbackQuery, session: AsyncSession) -> None:
+    """Переключение языка профиля (users.lang); эффект — с следующего апдейта."""
+    from app.i18n import SUPPORTED_LANGS, set_current_lang
+    user = await UserRepository(session).get(cb.from_user.id)
+    if user is None:
+        await cb.answer("Сначала /start", show_alert=True)
+        return
+    user.lang = "en" if (user.lang or "ru") == "ru" else "ru"
+    await session.commit()
+    set_current_lang(user.lang)  # чтобы этот же ответ был на новом языке
+    await _render_settings(session, cb.message, cb.from_user.id)
+    await cb.answer("🌐 English UI enabled" if user.lang == "en" else "🌐 Русский интерфейс включён")
 
 
 @router.callback_query(F.data == "menu:settings")

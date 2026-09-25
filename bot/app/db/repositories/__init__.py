@@ -176,6 +176,35 @@ class ActivityRepository:
             stmt = stmt.where(ChatMessageLog.created_at >= since)
         return (await self.session.execute(stmt)).scalar_one()
 
+    async def daily_counts(self, tg_id: int, days: int = 7,
+                           since: datetime | None = None) -> "dict[str, int]":
+        """Сообщения по дням (для графика в карточке профиля).
+
+        Возвращает {'2026-09-19': 12, ...}; пустые дни отсутствуют — рисовальщик
+        сам достраивает нули. Даты нормализуются к UTC-полудню, чтобы bucket
+        был стабильным на SQLite (TEXT) и Postgres (timestamptz).
+        """
+        from datetime import timezone as _tz
+        now = since or datetime.now(_tz.utc)
+        start = now - timedelta(days=days - 1)
+        day_expr = func.date(ChatMessageLog.created_at)
+        stmt = (
+            select(day_expr.label("d"), func.count().label("c"))
+            .select_from(ChatMessageLog)
+            .where(
+                ChatMessageLog.user_id == tg_id,
+                ChatMessageLog.is_counted.is_(True),
+                ChatMessageLog.created_at >= start.replace(hour=0, minute=0, second=0, microsecond=0),
+            )
+            .group_by("d")
+        )
+        rows = (await self.session.execute(stmt)).all()
+        out: dict[str, int] = {}
+        for d, c in rows:
+            key = d if isinstance(d, str) else d.isoformat()
+            out[key] = int(c)
+        return out
+
     async def bump_counters(self, tg_id: int) -> None:
         await self.session.execute(
             update(User).where(User.tg_id == tg_id)

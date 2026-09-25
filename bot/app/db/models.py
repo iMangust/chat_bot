@@ -317,6 +317,31 @@ class LeaderboardSnapshot(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class PetDuel(Base):
+    """Недельные соревнования питомцев (PVP, Этап 6+).
+
+    Питомцы дерутся «на характеристиках» (сила/ловкость/интеллект + уровень),
+    без RNG-рулетки: честный расчёт в services.pet_duels. Счёт побед копится
+    в неделе (week_key = ISO-неделя 'YYYY-Www'); по понедельникам планировщик
+     берёт топ-3 по очам и выдаёт призы, после чего счёт обнуляется новым
+    week_key (старые строки остаются как история — leaderboards_snapshot).
+    """
+    __tablename__ = "pet_duels"
+    __table_args__ = _ta(
+        UniqueConstraint("pet_id", "week_key", name="uq_pet_duel_week"),
+        Index("ix_pd_week_score", "week_key", "score"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    pet_id: Mapped[int] = mapped_column(Integer, ForeignKey("pets.id", ondelete="CASCADE"))
+    week_key: Mapped[str] = mapped_column(String(12))   # '2026-W39'
+    wins: Mapped[int] = mapped_column(Integer, default=0)
+    losses: Mapped[int] = mapped_column(Integer, default=0)
+    score: Mapped[int] = mapped_column(Integer, default=0)  # рейтинг внутри недели
+    fights: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
 class UserStat(Base):
     """Пользовательские счётчики для ачивок (invites и т.п.)."""
     __tablename__ = "user_stats"

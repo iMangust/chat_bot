@@ -25,7 +25,8 @@ from app.db.models import Pet, User
 from app.services.activity import ActivityService
 from app.utils.formatting import xp_needed_for_level
 
-W, H = 900, 460
+W, H = 900, 620
+CHART_H = 130   # зона графика активности (под плитками)
 BG_TOP = (24, 28, 46)
 BG_BOTTOM = (38, 44, 74)
 ACCENT = (120, 160, 255)
@@ -81,7 +82,8 @@ def clean(text: str) -> str:
 class ProfileCardRenderer:
     """Чистая функция рисования: User + Pet -> PNG bytes."""
 
-    def render(self, user: User, pet: Pet | None, stats: dict) -> bytes:
+    def render(self, user: User, pet: Pet | None, stats: dict,
+                 daily: dict[str, int] | None = None) -> bytes:
         img = Image.new("RGB", (W, H), BG_TOP)
         d = ImageDraw.Draw(img)
         # градиент фона
@@ -155,19 +157,65 @@ class ProfileCardRenderer:
             if len(lines) > 2:  # третья строка не влезла — ставим «…» во вторую
                 put((x0 + 14, 284 + 26), fit("…", f_small, inner_w), fill=TEXT, font=f_small)
 
+        # график активности за 7 дней (новое в v1.4.5: экспорт статистики картинкой)
+        self._draw_activity_chart(d, daily or {}, y0=360, f_small=f_small)
+
         # питомец
         if pet is not None:
+            color_tag = ""
+            try:
+                from app.services.tamagotchi import TamagotchiService
+                ckey, worn = TamagotchiService(None).customization(pet)
+                if ckey:
+                    color_tag = f" · {TamagotchiService(None).PET_COLORS[ckey][0]}"
+                if worn:
+                    color_tag += " " + "".join(worn)
+            except Exception:
+                pass
             mood_line = (f"{pet.name}: ур. {pet.level} · сытость {int(pet.hunger)}% · "
-                         f"счастье {int(pet.happiness)}% · энергия {int(pet.energy)}%")
+                         f"счастье {int(pet.happiness)}% · энергия {int(pet.energy)}%{color_tag}")
         else:
             mood_line = "Питомца пока нет — нажми /start"
-        d.rounded_rectangle([24, 356, W - 24, 420], radius=14, fill=(48, 55, 84))
-        put((38, 366), "Питомец", fill=DIM, font=f_small)
-        put((38, 392), fit(mood_line, f_small, W - 38 * 2), fill=TEXT, font=f_small)
+        d.rounded_rectangle([24, 516, W - 24, 580], radius=14, fill=(48, 55, 84))
+        put((38, 526), "Питомец", fill=DIM, font=f_small)
+        put((38, 552), fit(mood_line, f_small, W - 38 * 2), fill=TEXT, font=f_small)
 
         buf = io.BytesIO()
         img.save(buf, format="PNG")
         return buf.getvalue()
+
+
+    @staticmethod
+    def _draw_activity_chart(d, daily: dict[str, int], y0: int, f_small) -> None:
+        """Столбцы сообщений по дням за последние 7 дней (UTC)."""
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc)
+        days = [(now - timedelta(days=i)).date() for i in range(6, -1, -1)]
+        vals = [int(daily.get(dt.isoformat(), 0)) for dt in days]
+        maxv = max(vals) if vals else 0
+        x0, x1 = 24, W - 24
+        d.rounded_rectangle([x0, y0, x1, y0 + CHART_H], radius=14, fill=(48, 55, 84))
+        title = "Активность за 7 дней" + (f" · пик {maxv}/день" if maxv else "")
+        d.text((x0 + 14, y0 + 8), clean(title), fill=DIM, font=f_small)
+        plot_top, plot_bot = y0 + 40, y0 + CHART_H - 26
+        n = len(vals)
+        gap = 18
+        bw = (x1 - x0 - 28 - gap * (n - 1)) // n
+        base = max(maxv, 1)
+        wd = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
+        for i, v in enumerate(vals):
+            bx = x0 + 14 + i * (bw + gap)
+            bh = int((plot_bot - plot_top) * (v / base))
+            col = ACCENT if v else (70, 78, 110)
+            d.rounded_rectangle([bx, plot_bot - max(bh, 3), bx + bw, plot_bot],
+                                radius=4, fill=col)
+            lab = str(v) if v else "·"
+            tw = d.textlength(clean(lab), font=f_small)
+            d.text((bx + bw / 2 - tw / 2, plot_bot - max(bh, 3) - 20), clean(lab),
+                   fill=TEXT, font=f_small)
+            dl = wd[days[i].weekday()]
+            tw2 = d.textlength(clean(dl), font=f_small)
+            d.text((bx + bw / 2 - tw2 / 2, plot_bot + 3), clean(dl), fill=DIM, font=f_small)
 
 
 _renderer = ProfileCardRenderer()
@@ -185,7 +233,9 @@ async def render_profile_card(session: AsyncSession, tg_id: int) -> bytes | None
         select(PetModel).where(PetModel.user_id == tg_id)
     )).scalar_one_or_none()
     stats = await ActivityService(session).personal_stats(tg_id)
-    return _renderer.render(user, pet, stats)
+    from app.db.repositories import ActivityRepository
+    daily = await ActivityRepository(session).daily_counts(tg_id, days=7)
+    return _renderer.render(user, pet, stats, daily=daily)
 
 
 def card_version(png: bytes) -> str:

@@ -26,8 +26,9 @@ from loguru import logger
 from app.config import get_settings
 from app.db.models import Base
 from app.db.session import DbMiddleware, engine, session_factory
-from app.handlers import (errors, games, merch, settings as settings_handlers, shop,
-                          social, start, stats, tamagotchi, tracker, welcome)
+from app.handlers import (arena, errors, games, merch,
+                          settings as settings_handlers, shop, social, start,
+                          stats, tamagotchi, tracker, welcome)
 from app.handlers.shop import seed_items
 from app.middlewares.throttle import ThrottleMiddleware
 from app.services.achievements import seed_achievements
@@ -111,6 +112,8 @@ class BotRuntime:
 
             dp = Dispatcher(storage=storage)
             dp.update.outer_middleware(DbMiddleware())
+            from app.middlewares.user_lang import UserLanguageMiddleware
+            dp.update.outer_middleware(UserLanguageMiddleware())  # i18n
             dp.callback_query.outer_middleware(ThrottleMiddleware())
             # страховка на уровне callback-мидлваров (до/вне хендлеров) —
             # юзер не останется с «висящими часами», а админы увидят сбой в логе
@@ -120,7 +123,8 @@ class BotRuntime:
                 start.router, welcome.router, tracker.router,
                 tamagotchi.router, games.router, shop.router,
                 merch.router,
-                social.router, stats.router, settings_handlers.router,
+                social.router, arena.router, stats.router,
+                settings_handlers.router,
             )
             dp.errors.register(errors.on_error)
 
@@ -138,6 +142,7 @@ class BotRuntime:
                 BotCommand(command="stats", description="📊 Моя статистика"),
                 BotCommand(command="ach", description="🏆 Достижения"),
                 BotCommand(command="top", description="🏅 Топы"),
+                BotCommand(command="arena", description="⚔️ Арена питомцев"),
                 BotCommand(command="card", description="🖼 Карточка профиля"),
                 BotCommand(command="award", description="🎁 Итоги недели"),
                 BotCommand(command="settings", description="⚙️ Настройки"),

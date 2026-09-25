@@ -48,6 +48,9 @@ def pet_hub() -> InlineKeyboardMarkup:
     b.button(text="🏋️ Тренировки", callback_data="pet:train")
     b.row()
     b.button(text="🐾 Друзья", callback_data="pet:friends")
+    b.button(text="🏟 Арена", callback_data="arena:open")
+    b.row()
+    b.button(text="🎨 Стиль", callback_data="pet:style")
     b.button(text="⬅️ Назад", callback_data="menu:main")
     return b.as_markup()
 
@@ -178,8 +181,8 @@ def top_tabs(active: str = "week") -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
-def settings_keyboard(flags: dict[str, bool]) -> InlineKeyboardMarkup:
-    """Экран ⚙️ Настройки: тумблеры уведомлений (Этап 6)."""
+def settings_keyboard(flags: dict[str, bool], lang: str = "ru") -> InlineKeyboardMarkup:
+    """Экран ⚙️ Настройки: тумблеры уведомлений + язык (i18n)."""
     b = InlineKeyboardBuilder()
     labels = {
         "pet_reminders": "🐾 Питомец скучает",
@@ -192,5 +195,48 @@ def settings_keyboard(flags: dict[str, bool]) -> InlineKeyboardMarkup:
         b.button(text=f"{'✅' if on else '❌'} {label}", callback_data=f"set:{key}")
     b.adjust(1)
     b.row()
+    ru = "✅" if lang == "ru" else "🌐"
+    en = "✅" if lang == "en" else "🌐"
+    b.button(text=f"{ru} Русский  |  {en} English", callback_data="lang:toggle")
+    b.row()
     b.button(text="⬅️ Назад", callback_data="menu:main")
+    return b.as_markup()
+
+
+def arena_keyboard(can_fight: bool = True, hint: str = "") -> InlineKeyboardMarkup:
+    """Арена питомцев: кнопка вызова (неактивна при кулдауне/лимите) + топ.
+
+    В aiogram 3 «disabled» — это объект DisabledButton, а не bool; в старых
+    версиях флага нет вовсе, поэтому вместо серой кнопки показываем некликабельную
+    подсказку (callback без обработчика = мёртвая кнопка).
+    """
+    b = InlineKeyboardBuilder()
+    if can_fight:
+        b.button(text="⚔️ Вызов", callback_data="arena:fight")
+    else:
+        b.button(text=(hint[:52] or "⏳ Подожди…"), callback_data="arena:noop")
+    b.row()
+    b.button(text="⬅️ К питомцу", callback_data="menu:pet")
+    b.adjust(1)
+    return b.as_markup()
+
+
+def style_keyboard(colors: dict[str, tuple[str, int]],
+                   accessories: dict[str, tuple[str, int]],
+                   current_color: str | None,
+                   worn: list[str]) -> InlineKeyboardMarkup:
+    """Гардероб питомца: окрасы по 2 в ряд, аксессуары списком."""
+    b = InlineKeyboardBuilder()
+    for key, (title, price) in colors.items():
+        on = (key == "default" and not current_color) or key == current_color
+        label = ("✅ " if on else "") + title + ("" if price == 0 else f" · {price}🪙")
+        b.button(text=label, callback_data=f"style:color:{key}")
+    b.adjust(2)
+    b.row()
+    for emoji, (title, price) in accessories.items():
+        label = ("✅ " if emoji in worn else "") + f"{emoji} {title} · {price}🪙"
+        b.button(text=label, callback_data=f"style:acc:{emoji}")
+    b.adjust(1)
+    b.row()
+    b.button(text="⬅️ К питомцу", callback_data="menu:pet")
     return b.as_markup()

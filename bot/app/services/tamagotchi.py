@@ -15,8 +15,10 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Pet, PetStage
-from app.utils.formatting import clamp, season_for, stat_bar, weather_info
+from app.db.models import Pet, PetStage, User
+from app.i18n import t
+from app.utils.formatting import (clamp, holiday_effect_mults, season_for,
+                                  stat_bar, weather_info)
 from app.utils.html_text import esc
 
 
@@ -174,9 +176,23 @@ MOOD_TEXT = {
     "sleeping": "Спит… не буди 💤", "hungry": "Голодный! Дай поесть 🍎",
 }
 
+# i18n-ключ настроения (для переводимых мест); MOOD_TEXT выше остаётся
+# фолбэком для старого кода/тестов.
+MOOD_I18N_KEY = {
+    "great": "pet.mood_great", "good": "pet.mood_good", "ok": "pet.mood_ok",
+    "sad": "pet.mood_sad", "sick": "pet.mood_sick",
+    "sleeping": "pet.mood_sleeping", "hungry": "pet.mood_hungry",
+}
+
+
+def mood_text(mood: str) -> str:
+    """Настроение на текущем языке (контекст выставляет UserLanguageMiddleware)."""
+    key = MOOD_I18N_KEY.get(mood)
+    return t(key) if key else MOOD_TEXT.get(mood, "")
+
 
 class TamagotchiService:
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession | None = None) -> None:
         self.session = session
 
     # ------------------------------------------------------------------
@@ -269,30 +285,35 @@ class TamagotchiService:
         await self.apply_decay(pet, now)
         ok, wait = self._check_cooldown(pet, "feed", 60, now)
         if not ok:
-            return f"⏳ Питомец только что ел! Подожди {wait} сек."
+            return t("pet.cooldown_feed", sec=wait)
         self._set_cooldown(pet, "feed", now)
+        # праздничный модификатор: сытость от еды ×N (Канун НГ и т.п.)
+        hol = holiday_effect_mults(now)
+        hunger_mult = hol.get("feed_hunger", 1.0)
         # «вкусность» еды = сумма положительных эффектов; любимая еда даёт доп. счастье
-        tastiness = sum(v for k, v in effect.items() if k == "hunger" and v > 0)
+        tastiness = sum(v for k, v in effect.items() if k == "hunger" and v > 0) * hunger_mult
         pref = species_pref_delta(pet, "feed")
         bonus_happy = max(0, pref) + (3 if tastiness >= 40 else 0)
         for stat, delta in effect.items():
             if hasattr(pet, stat):
+                if stat == "hunger":
+                    delta *= hunger_mult
                 setattr(pet, stat, clamp(getattr(pet, stat) + delta))
         if bonus_happy:
             pet.happiness = clamp(pet.happiness + bonus_happy)
-        xp = int(5 * _species(pet)["bonus"]["xp_mult"])
+        xp = int(5 * _species(pet)["bonus"]["xp_mult"] * hol.get("xp", 1.0))
         await self.add_pet_xp(pet, xp)
         tail = " Очень вкусно!" if pref > 0 else (" ...не восторг, но съел." if pref < 0 else "!")
-        return f"🍎 Ням-ням{tail}"
+        return t("pet.eaten", tail=tail)
 
     async def play(self, pet: Pet, won: bool) -> str:
         """Мини-игра завершена; won — результат. Кулдаун 120 сек. Тратит энергию."""
         now = datetime.now(timezone.utc)
         await self.apply_decay(pet, now)
         if pet.is_sleeping:
-            return "😴 Питомец спит — не мешай!"
+            return t("pet.sleeping_deny")
         if pet.energy < 15:
-            return "😩 Питомец слишком устал для игр. Пусть поспит!"
+            return t("pet.too_tired_play")
         ok, wait = self._check_cooldown(pet, "game", 120, now)
         if not ok:
             return f"⏳ Питомец запыхался! Подожди {wait} сек."
@@ -300,18 +321,20 @@ class TamagotchiService:
 
         sp = _species(pet)
         mult = sp["bonus"]["play_happy"]
+        # День св. Валентина: игры приносят +50% счастья
+        mult *= holiday_effect_mults(now).get("play_happy", 1.0)
         pref = species_pref_delta(pet, "play")
         pet.energy = clamp(pet.energy - 10)
         pet.hygiene = clamp(pet.hygiene - 5)
         xp_base = 15 if won else 8
-        xp = int(xp_base * sp["bonus"]["xp_mult"])
+        xp = int(xp_base * sp["bonus"]["xp_mult"] * holiday_effect_mults(now).get("xp", 1.0))
         if won:
             pet.happiness = clamp(pet.happiness + 12 * mult + pref)
             await self.add_pet_xp(pet, xp)
-            return f"🎉 Победа! Питомец в восторге! +{xp} XP"
+            return t("pet.won_game", xp=xp)
         pet.happiness = clamp(pet.happiness + 5 * mult + pref)
         await self.add_pet_xp(pet, xp)
-        return f"🙂 Не повезло, но питомцу всё равно весело. +{xp} XP"
+        return t("pet.lost_game", xp=xp)
 
     # ------------------------------------------------------------------
     # Мини-игры (Этап 3.5): честная игра с характеристиками питомца
@@ -336,11 +359,11 @@ class TamagotchiService:
         now = datetime.now(timezone.utc)
         await self.apply_decay(pet, now)
         if pet.is_sleeping:
-            return "😴 Он уже спит."
+            return t("pet.already_sleeping")
         pet.is_sleeping = True
         pet.sleep_until = now + timedelta(hours=hours)
         self._set_cooldown(pet, "sleep", now)
-        return f"💤 Питомец уснул до {pet.sleep_until:%H:%M} UTC. Энергия восстановится."
+        return t("pet.fell_asleep", time=f"{pet.sleep_until:%H:%M}")
 
     async def wash(self, pet: Pet) -> str:
         now = datetime.now(timezone.utc)
@@ -354,18 +377,18 @@ class TamagotchiService:
         pet.happiness = clamp(pet.happiness - 3 + species_pref_delta(pet, "wash"))
         xp = int(4 * _species(pet)["bonus"]["xp_mult"])
         await self.add_pet_xp(pet, xp)
-        return "🛁 Чистенький и пахучий! Гигиена +40"
+        return t("pet.washed")
 
     async def heal(self, pet: Pet) -> str:
         now = datetime.now(timezone.utc)
         await self.apply_decay(pet, now)
         if pet.sick_since is None and pet.health >= 70:
-            return "😀 Питомец здоров, лекарство не нужно."
+            return t("pet.not_sick")
         pet.health = clamp(pet.health + 35)
         if pet.health >= 60:
             pet.sick_since = None
         await self.add_pet_xp(pet, 5)
-        return "💊 Лечение помогло! Здоровье +35"
+        return t("pet.healed")
 
     async def train(self, pet: Pet, stat: str) -> str:
         """Тренировка strength/agility/intellect. Кулдаун 180 сек, тратит энергию."""
@@ -390,19 +413,20 @@ class TamagotchiService:
         sp = _species(pet)
         xp = int(6 * sp["bonus"]["xp_mult"] * (1.2 if species_pref_delta(pet, "train") > 0 else 1.0))
         await self.add_pet_xp(pet, xp)
-        label = {"strength": "💪 Сила", "agility": "🏃 Ловкость", "intellect": "🧠 Интеллект"}[stat]
-        return f"🏋️ Тренировка завершена! {label} +{gain}"
+        label = {"strength": t("pet.train_stat"), "agility": t("pet.train_agi"),
+                 "intellect": t("pet.train_int")}[stat]
+        return t("pet.train_done", label=label, gain=gain)
 
     async def start_walk(self, pet: Pet, hours: int = 2) -> str:
         now = datetime.now(timezone.utc)
         await self.apply_decay(pet, now)
         if pet.walk_until:
             left = int((_aware(pet.walk_until) - now).total_seconds() // 60)
-            return f"🚶 Питомец уже гуляет, вернётся через ~{left} мин."
+            return t("pet.walk_already", minutes=left)
         if pet.is_sleeping:
             return "😴 Сначала разбуди питомца."
         pet.walk_until = now + timedelta(hours=hours)
-        return f"🚶 Питомец ушёл гулять на {hours} ч. Вернётся с новостями!"
+        return t("pet.walk_started", hours=hours)
 
     def finish_walk_event(self, pet: Pet) -> tuple[str, int, int]:
         """Случайное событие прогулки. Возвращает (текст, delta_coins, delta_xp).
@@ -412,7 +436,10 @@ class TamagotchiService:
         """
         roll = random.random()
         sp = _species(pet)
-        coin_mult = sp["bonus"]["coin_mult"]
+        # Хэллоуин и пр.: прогулки находят ×N монет; xp по празднику тоже множится
+        hol = holiday_effect_mults(now_dt := datetime.now(timezone.utc))
+        coin_mult = sp["bonus"]["coin_mult"] * hol.get("walk_coins", 1.0)
+        xp_hol = hol.get("xp", 1.0)
         xp_mult = sp["bonus"]["xp_mult"]
         pref_bonus = species_pref_delta(pet, "walk")  # собаки обожают гулять
         if roll < 0.35:
@@ -438,6 +465,75 @@ class TamagotchiService:
     # ------------------------------------------------------------------
     # XP и эволюция
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Кастомизация (Этап 6+): окрасы и аксессуары — косметика за монеты.
+    # Хранится в pet.settings_extra = {"color": "aurora", "accessories": ["🎩"]}
+    # — отдельная миграция не нужна, формат расширяемый.
+    # ------------------------------------------------------------------
+    PET_COLORS: dict[str, tuple[str, int]] = {
+        "default": ("Классический", 0),
+        "golden":  ("Золотой", 150),
+        "shadow":  ("Теневой", 200),
+        "candy":   ("Карамельный", 120),
+        "aurora":  ("Полярное сияние", 300),
+    }
+    PET_ACCESSORIES: dict[str, tuple[str, int]] = {
+        "🎩": ("Цилиндр", 80),
+        "🎀": ("Бантик", 60),
+        "🕶️": ("Очки", 70),
+        "👑": ("Корона", 250),
+        "🧣": ("Шарф", 50),
+    }
+
+    def customization(self, pet: Pet) -> tuple[str | None, list[str]]:
+        extra = pet.settings_extra or {}
+        color = extra.get("color")
+        if color not in self.PET_COLORS or color == "default":
+            color = None
+        return color, list(extra.get("accessories") or [])
+
+    async def buy_color(self, session: AsyncSession, pet: Pet,
+                        user: User, key: str) -> str:
+        """Покупка/смена окраса. Возвращает текст-результат для экрана."""
+        if key not in self.PET_COLORS:
+            return "❌ Такой расцветки нет."
+        _title, price = self.PET_COLORS[key]
+        extra = dict(pet.settings_extra or {})
+        if extra.get("color") == key:
+            return "✅ Этот окрас уже надет."
+        if user.coins < price:
+            return f"🪙 Не хватает {price - user.coins} монет (окрас стоит {price})."
+        user.coins -= price
+        extra["color"] = key
+        pet.settings_extra = extra
+        await session.commit()
+        return f"🎨 Новый окрас активирован! −{price} 🪙"
+
+    async def buy_accessory(self, session: AsyncSession, pet: Pet,
+                            user: User, emoji: str) -> str:
+        """Покупка аксессуара; повторное нажатие снимает его (без возврата)."""
+        if emoji not in self.PET_ACCESSORIES:
+            return "❌ Такой штуковины нет в гардеробе."
+        title, price = self.PET_ACCESSORIES[emoji]
+        extra = dict(pet.settings_extra or {})
+        acc = list(extra.get("accessories") or [])
+        if emoji in acc:
+            acc.remove(emoji)
+            extra["accessories"] = acc
+            pet.settings_extra = extra
+            await session.commit()
+            return f"🎒 Снял {emoji} {title}."
+        if len(acc) >= 3:
+            return "🎒 Больше трёх аксессуаров питомцу не надеть — сними лишнее."
+        if user.coins < price:
+            return f"🪙 Не хватает {price - user.coins} монет ({title} стоит {price})."
+        user.coins -= price
+        acc.append(emoji)
+        extra["accessories"] = acc
+        pet.settings_extra = extra
+        await session.commit()
+        return f"✨ {pet.name} примерил {emoji} {title}! −{price} 🪙"
+
     async def add_pet_xp(self, pet: Pet, gained: int) -> list[int]:
         """Начисляет XP питомцу; возвращает список новых уровней (для эволюции)."""
         levels: list[int] = []
@@ -457,13 +553,16 @@ class TamagotchiService:
     def render(self, pet: Pet, owner_first_name: str = "") -> str:
         mood = compute_mood(pet)
         sp = _species(pet)
-        sprite = sp["emoji"] + ("✨" if mood == "great" else "")
+        color_key, accessories = self.customization(pet)
+        color_tag = "" if not color_key else f" · {self.PET_COLORS[color_key][0]}"
+        acc_line = (" ".join(accessories) + " ") if accessories else ""
+        sprite = acc_line + sp["emoji"] + ("✨" if mood == "great" else "")
         stage_icon = {
             PetStage.egg: "🥚", PetStage.baby: "🐣", PetStage.teen: "🐱",
             PetStage.adult: "😼", PetStage.legendary: "🐲",
         }[pet.stage]
         lines = [
-            f"{stage_icon} <b>{esc(pet.name)}</b> · {sp['title']} {sprite}"
+            f"{stage_icon} <b>{esc(pet.name)}</b> · {sp['title']}{color_tag} {sprite}"
             + (f" · хозяин: {esc(owner_first_name)}" if owner_first_name else ""),
             f"Уровень {pet.level} · опыт {pet.xp}/{pet_xp_needed(pet.level)} "
             f"[{stat_bar(pet.xp, 6)}]",  # грубо, но мило

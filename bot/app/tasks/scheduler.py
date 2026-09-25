@@ -220,6 +220,26 @@ async def weekly_leaderboard(bot: Bot) -> None:
         await release_lock("weekly_lb")
 
 
+async def weekly_arena_finish(bot: Bot) -> None:
+    """Понедельник 00:40 UTC: призы топ-3 недельной арены питомцев (Этап 6+).
+
+    Идемпотентно по маркеру в LeaderboardSnapshot — повторный запуск (рестарт
+    процесса, два воркера с Redis-lock) не выдаст призы дважды.
+    """
+    if not await acquire_lock("weekly_arena", ttl_sec=3000):
+        return
+    try:
+        from app.services.pet_duels import finish_week
+        async with session_factory() as session:
+            awarded = await finish_week(session)
+            if awarded:
+                logger.info("🏟 arena week closed, prizes distributed")
+    except Exception as e:  # noqa: BLE001
+        logger.error("weekly arena finish failed: {}", e)
+    finally:
+        await release_lock("weekly_arena")
+
+
 def build_scheduler(bot: Bot) -> AsyncIOScheduler:
     sched = AsyncIOScheduler(timezone="UTC")
     sched.add_job(decay_all_pets, "interval", minutes=30, args=[bot],
@@ -235,4 +255,6 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
                   minute=40, args=[bot], id="streakwarn", max_instances=1, coalesce=True)
     sched.add_job(weekly_leaderboard, "cron", day_of_week="mon", hour=0, minute=30,
                   args=[bot], id="weeklylb", max_instances=1, coalesce=True)
+    sched.add_job(weekly_arena_finish, "cron", day_of_week="mon", hour=0, minute=40,
+                  args=[bot], id="weeklyarena", max_instances=1, coalesce=True)
     return sched

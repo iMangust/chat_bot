@@ -1,9 +1,8 @@
+# Compiled and build artifacts
 __pycache__/
 *.pyc
-logs/
+
+# Environment
 .env
 .env.local
-.vscode/
-.idea/
-*.sqlite
-venv/
+*.env.*

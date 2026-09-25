@@ -16,8 +16,9 @@ from loguru import logger
 from app.config import get_settings
 from app.db.models import Base
 from app.db.session import DbMiddleware, engine, session_factory
-from app.handlers import (errors, games, merch, settings, shop, social, start,
-                          stats, tamagotchi, tracker, welcome)
+from app.handlers import (arena, errors, games, merch, settings, shop, social,
+                          start, stats, tamagotchi, tracker, welcome)
+from app.middlewares.user_lang import UserLanguageMiddleware
 from app.middlewares.throttle import ThrottleMiddleware
 from app.handlers.shop import seed_items
 from app.services.achievements import seed_achievements
@@ -105,6 +106,7 @@ async def on_startup(bot: Bot) -> None:
         BotCommand(command="stats", description="📊 Моя статистика"),
         BotCommand(command="ach", description="🏆 Достижения"),
         BotCommand(command="top", description="🏅 Топы"),
+        BotCommand(command="arena", description="⚔️ Арена питомцев"),
         BotCommand(command="card", description="🖼 Карточка профиля"),
         BotCommand(command="award", description="🎁 Итоги недели"),
         BotCommand(command="settings", description="⚙️ Настройки"),
@@ -131,6 +133,7 @@ async def main() -> None:
     dp = Dispatcher(storage=storage)
     # мидлвары: сессия БД — глобально, throttle — только на callbacks
     dp.update.outer_middleware(DbMiddleware())
+    dp.update.outer_middleware(UserLanguageMiddleware())  # i18n: язык юзера в contextvars
     dp.callback_query.outer_middleware(ThrottleMiddleware())
     # страховка на уровне callback-мидлваров (ошибки до/вне хендлеров:
     # throttle, FSM, БД-сессия) — пользователь получит тост, а не «вечные часы»
@@ -146,6 +149,7 @@ async def main() -> None:
         shop.router,
         merch.router,
         social.router,
+        arena.router,
         stats.router,
         settings.router,
     )
