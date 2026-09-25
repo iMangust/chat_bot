@@ -18,9 +18,11 @@ from app.db.models import Pet
 from app.db.repositories import PetRepository, UserRepository
 from app.keyboards.inline import back_to_main, pet_hub, train_menu
 from app.utils.safe_edit import safe_edit_or_answer
-from app.services.tamagotchi import SPECIES_DATA, TamagotchiService, _species_key
+from app.services.tamagotchi import (SPECIES_DATA, TamagotchiService, _aware,
+                                     _species_key)
 
 router = Router(name="tamagotchi")
+_aware_dt = _aware  # алиас: walk_until из БД может быть naive (SQLite) — нормализуем
 
 
 async def _get_pet(session: AsyncSession, tg_id: int) -> Pet | None:
@@ -28,9 +30,16 @@ async def _get_pet(session: AsyncSession, tg_id: int) -> Pet | None:
 
 
 def _collect_walk_result(svc: TamagotchiService, pet: Pet, session: AsyncSession):
-    """Если прогулка завершилась — возвращаем текст события и начисления."""
+    """Если срок прогулки истёк — возвращаем текст события и начисления.
+
+    ВАЖНО (регресс v1.4.5): раньше walk_until снимал apply_decay, и фоновый
+    тик scheduler'а (каждые 30 мин) «съедал» флаг раньше пользователя —
+    награды за прогулку терялись молча. Теперь флаг доживает до хендлера.
+    """
     if pet.walk_until is None:
         return None
+    if datetime.now(timezone.utc) < _aware_dt(pet.walk_until):
+        return None   # ещё гуляет
     text, coins, xp = svc.finish_walk_event(pet)
     return text, coins, xp
 
@@ -99,7 +108,8 @@ async def pet_screen(cb: CallbackQuery, session: AsyncSession) -> None:
 async def _after_action(cb: CallbackQuery, session: AsyncSession, result_text: str) -> None:
     """Единый постобработчик: перерендер карточки + лог действия.
 
-    Если прогулка завершилась (walk_until снят apply_decay), добираем её награды.
+    Если прогулка завершилась (walk_until ещё висит, но срок истёк),
+    добираем её награды и только затем снимаем флаг.
     """
     svc = TamagotchiService(session)
     pet = await _get_pet(session, cb.from_user.id)
@@ -119,10 +129,16 @@ async def _after_action(cb: CallbackQuery, session: AsyncSession, result_text: s
         await svc.add_pet_xp(pet, xp)
         await PetRepository(session).log_action(pet.id, "walk_done", value=coins)
         prefix = f"{wtext}\n\n"
-    await safe_edit_or_answer(cb.message, 
-        f"{prefix}{result_text}\n\n" + svc.render(pet),
-        reply_markup=pet_hub(),
-    )
+    try:
+        await safe_edit_or_answer(cb.message, 
+            f"{prefix}{result_text}\n\n" + svc.render(pet),
+            reply_markup=pet_hub(),
+        )
+    finally:
+        # ВАЖНО: коммит в finally — Telegram-редактирование не откатить, а без
+        # явного commit'а при сетевом исключении сессия откатится в middleware:
+        # юзер увидел бы награду/новые статы, которых нет в БД (рассинхрон UI).
+        await session.commit()
     await cb.answer()
 
 
@@ -225,20 +241,9 @@ async def act_walk(cb: CallbackQuery, session: AsyncSession) -> None:
     await _after_action(cb, session, result)
 
 
-@router.callback_query(F.data == "pet:shop")
-async def act_shop_stub(cb: CallbackQuery) -> None:
-    await safe_edit_or_answer(cb.message, 
-        "🛒 Магазин откроется на Этапе 4 (еда, игрушки, лекарства, скины).\n"
-        "Твои монеты в безопасности 🪙",
-        reply_markup=back_to_main(),
-    )
-    await cb.answer()
-
-
-@router.callback_query(F.data == "pet:inv")
-async def act_inv_stub(cb: CallbackQuery) -> None:
-    await safe_edit_or_answer(cb.message, 
-        "🎒 Инвентарь появится вместе с магазином (Этап 4).",
-        reply_markup=back_to_main(),
-    )
-    await cb.answer()
+# Экраны «🛒 Магазин» (pet:shop) и «🎒 Инвентарь» (pet:inv) ранее были
+# заглушками «магазин откроется позже». Этап 4 реализован в app/handlers/shop.py
+# (магазин, покупка за монеты, инвентарь, использование предметов), причём
+# shop.router регистрируется ПОСЛЕ tamagotchi.router — из-за чего эти мёртвые
+# заглушки перехватывали колбэки первыми и пользователь никогда не видел
+# настоящий магазин. Заглушки удалены; маршрутизация делегирована в shop.py.

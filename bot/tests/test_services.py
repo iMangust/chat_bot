@@ -194,3 +194,55 @@ async def test_pet_evolution_stage_changes(session):
     levels = await svc.add_pet_xp(pet, need)
     assert pet.level == 4 and levels == [2, 3, 4]
     assert pet.stage == compute_stage(pet.level)
+
+
+# ---------------------------------------------------------------------------
+# v1.4.5: прогулка не должна «самосъедаться» в apply_decay
+# ---------------------------------------------------------------------------
+
+async def test_walk_flag_survives_apply_decay(session):
+    """apply_decay отмечает завершение, но НЕ снимает walk_until — иначе
+    фоновый тик scheduler'а терял награду прогулки до прихода пользователя."""
+    from datetime import datetime, timedelta, timezone as tz
+    u = await _mk_user(session)
+    now = datetime.now(tz.utc)
+    pet = Pet(user_id=u.tg_id, name="Гуляка",
+              walk_until=now - timedelta(minutes=1),
+              last_update=now - timedelta(hours=1))
+    session.add(pet)
+    await session.flush()
+    svc = TamagotchiService(session)
+    changed = await svc.apply_decay(pet, now=now)
+    assert changed is True                 # факт завершения зафиксирован
+    assert pet.walk_until is not None      # НО флаг жив — ждёт хендлера
+
+
+async def test_walk_collect_gated_by_time(session):
+    """_collect_walk_result отдаёт награду только по истечении срока прогулки."""
+    from datetime import datetime, timedelta, timezone as tz
+    from app.handlers.tamagotchi import _collect_walk_result
+    u = await _mk_user(session)
+    now = datetime.now(tz.utc)
+    pet = Pet(user_id=u.tg_id, name="Ранняя пташка",
+              walk_until=now + timedelta(hours=1))   # ещё гуляет
+    session.add(pet)
+    await session.flush()
+    svc = TamagotchiService(session)
+    assert _collect_walk_result(svc, pet, session) is None
+    pet.walk_until = now - timedelta(minutes=5)      # срок вышел
+    res = _collect_walk_result(svc, pet, session)
+    assert res is not None and len(res) == 3
+    text, coins, xp = res
+    assert isinstance(text, str) and coins >= 0 and xp > 0
+
+
+def test_no_shop_inventory_stubs_in_tamagotchi():
+    """Заглушки «Магазин откроется на Этапе 4» удалены: shop.router регистрируется
+    после tamagotchi.router и эти хендлеры перехватывали pet:shop/pet:inv первыми,
+    из-за чего настоящий магазин был недостижим из хаба питомца."""
+    import ast
+    src = open("app/handlers/tamagotchi.py", encoding="utf-8").read()
+    tree = ast.parse(src)
+    names = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)}
+    assert "act_shop_stub" not in names and "act_inv_stub" not in names
+    assert "Этапе 4" not in src

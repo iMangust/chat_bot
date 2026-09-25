@@ -238,11 +238,10 @@ class TamagotchiService:
             # медленное восстановление, если уход хороший
             pet.health = clamp(pet.health + 1.0 * hours)
 
-        # прогулка завершилась?
-        walk_finished = False
-        if pet.walk_until and now >= _aware(pet.walk_until):
-            pet.walk_until = None
-            walk_finished = True
+        # прогулка завершилась? НЕ снимаем walk_until здесь — иначе потеряется
+        # событие и награда (кто первый вызовет apply_decay, тот «съест» флаг).
+        # Снимает хендлер после того, как заберёт результат через finish_walk_event.
+        walk_finished = bool(pet.walk_until) and now >= _aware(pet.walk_until)
 
         pet.last_update = now
         return changed or walk_finished

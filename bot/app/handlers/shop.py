@@ -237,5 +237,11 @@ async def use_item(cb: CallbackQuery, session: AsyncSession) -> None:
         await session.delete(inv)
     await session.flush()
     await pets.log_action(pet.id, "use", meta={"item": item.code})
-    await safe_edit_or_answer(cb.message, f"{result}\n\n" + svc.render(pet), reply_markup=pet_hub())
+    try:
+        await safe_edit_or_answer(cb.message, f"{result}\n\n" + svc.render(pet), reply_markup=pet_hub())
+    finally:
+        # коммит в finally: edit уже неотменить, а без commit'а при сетевом
+        # сбое middleware откатит сессию — предмет исчез бы из UI, но остался
+        # в инвентаре (рассинхрон).
+        await session.commit()
     await cb.answer()
