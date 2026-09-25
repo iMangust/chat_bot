@@ -64,7 +64,6 @@ def detect_media_type(message: Message) -> str | None:
     return None
 
 
-<<<<<<< HEAD
 def _author(message: Message) -> int | None:
     """Автор засчитываемого сообщения.
 
@@ -79,9 +78,6 @@ def _author(message: Message) -> int | None:
 
 
 @router.message(F.chat.type.in_({"group", "supergroup", "channel"}))
-=======
-@router.message(F.chat.type.in_({"group", "supergroup"}))
->>>>>>> origin/main
 async def track_group_message(message: Message, session: AsyncSession) -> None:
     """Пишет каждое сообщение группы/канала в лог; засчитывает по антифрод-правилам.
 
@@ -153,12 +149,8 @@ async def track_reaction_update(update: MessageReactionUpdated,
     new_reaction, user|actor_chat). Считаем только добавление: если список
     стал длиннее/изменился в плюс — это дарение реакции получателю.
     """
-<<<<<<< HEAD
     # реакции бывают и в каналах — трэкаем те же чаты, что и сообщения
     if update.chat.type not in ("group", "supergroup", "channel") or not _is_tracked(update.chat.id):
-=======
-    if update.chat.type not in ("group", "supergroup") or not _is_tracked(update.chat.id):
->>>>>>> origin/main
         return
     # юзер может быть None у анонимных админов — тогда берём actor_chat или выходим
     from_user_id: int | None = None

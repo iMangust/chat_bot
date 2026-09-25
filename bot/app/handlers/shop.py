@@ -131,16 +131,11 @@ async def shop_screen(cb: CallbackQuery, session: AsyncSession) -> None:
             price = f" — {it.price} 🪙" if it.type != "merch" and it.price else ""
             lines.append(f"  {it.icon} {html.escape(it.name)}{price} · {html.escape(it.description)}")
         lines.append("")
-<<<<<<< HEAD
     kb = shop_keyboard([i for i in items if i.type != "merch"], user.coins)
     if settings.merch_enabled and settings.merch_url:
         kb.row()
         kb.button(text="🧢 Купить мерч", url=settings.merch_url)
     kb.button(text="⬅️ Назад", callback_data="menu:main")
-=======
-    kb = shop_keyboard(items, user.coins)
-    kb.button(text="⬅️ Назад", callback_data="menu:pet")
->>>>>>> origin/main
     await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=kb.as_markup())
     await cb.answer()
 
