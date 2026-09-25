@@ -101,6 +101,16 @@ async def track_group_message(message: Message, session: AsyncSession) -> None:
     text = message.text or message.caption
     media_type = detect_media_type(message)
 
+    # v1.5.1: автор написал сообщение в отслеживаемом чате впервые —
+    # вероятно, это новый подписчик канала (если chat_member-событие боту
+    # недоступно). Заносим в очередь приветствий (идемпотентно).
+    if message.from_user is not None and not message.from_user.is_bot:
+        from app.handlers.welcome import add_pending_subscriber
+        await add_pending_subscriber(
+            session, author, message.chat.id,
+            first_name=message.from_user.first_name or "",
+            username=message.from_user.username)
+
     svc = ActivityService(session, bot=message.bot)
     entry = await svc.process_group_message(
         user_id=author,

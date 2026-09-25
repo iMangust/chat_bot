@@ -159,7 +159,7 @@ class BotRuntime:
             self.started_at = time.time()
             self.state = "running"
 
-            allowed = dp.resolve_used_update_types() + ["message_reaction", "message_reaction_count"]
+            allowed = dp.resolve_used_update_types() + ["message_reaction", "message_reaction_count", "chat_member"]
             self._polling_task = asyncio.create_task(
                 dp.start_polling(
                     self.bot,

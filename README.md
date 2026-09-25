@@ -1,4 +1,4 @@
-# 🐾 TamaBot v1.5.0 — развлекательный Telegram-бот (тамагочи + достижения + топы)
+# 🐾 TamaBot v1.5.1 — развлекательный Telegram-бот (тамагочи + достижения + топы)
 
 [![Python](https://img.shields.io/badge/Python-3.11%2B-blue.svg)](https://www.python.org/)
 [![aiogram](https://img.shields.io/badge/aiogram-3.x-green.svg)](https://docs.aiogram.dev/)

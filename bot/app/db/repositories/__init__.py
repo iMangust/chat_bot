@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from app.db.models import (
     ChatMessageLog, NotificationSetting, Pet, PetActionLog, ReactionLog,
-    User, UserAchievement, UserStat,
+    User, UserAchievement, UserStat, utcnow,
 )
 
 
@@ -460,3 +460,53 @@ class AchievementRepository:
                 row.unlocked_at = now
                 return True
         return False
+
+
+# ---------------------------------------------------------------------------
+# Подписчики канала (приветствие новичков, v1.5.1)
+# ---------------------------------------------------------------------------
+class SubscriberRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def add_if_new(self, user_id: int, chat_id: int,
+                         first_name: str = "", username: str | None = None) -> bool:
+        """Заносит подписчика; True — если это новая запись (нужно приветствовать).
+
+        Идемпотентно к повторным доставкам апдейтов: опираемся на PK user_id,
+        конфликт молча пропускаем (already known).
+        """
+        from app.db.models import ChannelSubscriber
+        exists = await self.session.get(ChannelSubscriber, user_id)
+        if exists is not None:
+            return False
+        try:
+            self.session.add(ChannelSubscriber(
+                user_id=user_id, chat_id=chat_id,
+                first_name=first_name or "", username=username,
+            ))
+            await self.session.flush()
+            return True
+        except IntegrityError:  # гонка параллельных апдейтов
+            await self.session.rollback()
+            return False
+
+    async def pending_welcomes(self, limit: int = 20):
+        """Новые подписчики без отправленного приветствия."""
+        from app.db.models import ChannelSubscriber
+        stmt = (select(ChannelSubscriber)
+                .where(ChannelSubscriber.welcomed_at.is_(None))
+                .order_by(ChannelSubscriber.first_seen)
+                .limit(limit))
+        return list((await self.session.execute(stmt)).scalars())
+
+    async def mark_welcomed(self, user_id: int) -> None:
+        from app.db.models import ChannelSubscriber
+        row = await self.session.get(ChannelSubscriber, user_id)
+        if row is not None and row.welcomed_at is None:
+            row.welcomed_at = utcnow()
+
+    async def count(self) -> int:
+        from app.db.models import ChannelSubscriber
+        stmt = select(func.count()).select_from(ChannelSubscriber)
+        return int((await self.session.execute(stmt)).scalar_one())

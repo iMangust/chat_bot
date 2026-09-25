@@ -8,7 +8,7 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-__version__ = "1.5.0"
+__version__ = "1.5.1"
 
 
 class Settings(BaseSettings):
@@ -68,6 +68,13 @@ class Settings(BaseSettings):
     # а не в группу: https://t.me/<channel_username>?start=invite_<tg_id>
     channel_username: str | None = None
     channel_chat_id: int | None = None   # ID канала (-100...), если бот там админ
+
+    # --- Приветствие новичков канала (v1.5.1) ---
+    # События chat_member приходят только если бот — админ канала с правом
+    # «Manage users» и в allowed_updates есть "chat_member".
+    welcome_channel_enabled: bool = True     # слать приветствие новым подписчикам канала
+    channel_welcome_text: str | None = None  # свой текст ({name}, {channel}); пусто = дефолтный
+    channel_scan_minutes: int = 30           # период фонового скана счётчика участников
 
     # --- Мерч канала (отдельный раздел 🧢, не связан с питомцем) ---
     merch_enabled: bool = True           # показывать раздел 🧢 Мерч в главном меню

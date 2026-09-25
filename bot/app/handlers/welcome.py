@@ -98,3 +98,112 @@ async def on_new_members(message: Message, bot: Bot, session: AsyncSession) -> N
 def _channel_line_safe() -> str:
     ch = get_settings().channel_username
     return f"📢 Наш канал: t.me/{ch}\n" if ch else ""
+
+
+# ---------------------------------------------------------------------------
+# Приветствие НОВЫХ ПОДПИСЧИКОВ КАНАЛА (v1.5.1)
+# ---------------------------------------------------------------------------
+# Ограничение Bot API: Telegram НЕ присылает событие «человек подписался на
+# канал». Реальные источники сигнала:
+#   1) chat_member-апдейт канала — если бот там админ с правом «Manage users»
+#      и "chat_member" в allowed_updates (самый точный путь);
+#   2) первое сообщение пользователя в привязанной группе/канале;
+#   3) фоновый скан get_chat_member_count (см. tasks/scheduler.scan_channel_members).
+# Все три ведут в add_pending_subscriber + welcome_pending_subscribers, а
+# welcomed_at в channel_subscribers гарантирует ровно одно приветствие.
+
+CHANNEL_WELCOME_DM_DEFAULT = (
+    "👋 Привет, {name}! Ты подписался на наш канал — добро пожаловать!\n\n"
+    "{channel_line}"
+    "Я местный бот-компаньон 🐾: тут начисляют XP и монеты за активность,\n"
+    "выдают достижения, есть питомец-тамагочи, топы и еженедельная арена.\n\n"
+    "Жми «Начать» — покажу главное меню, это займёт минуту."
+)
+
+
+def channel_welcome_text() -> str:
+    """Текст приветствия подписчика канала (из .env или дефолт)."""
+    st = get_settings()
+    tpl = st.channel_welcome_text or CHANNEL_WELCOME_DM_DEFAULT
+    channel_line = (f"📢 Канал: t.me/{st.channel_username}\n\n"
+                    if st.channel_username else "")
+    try:
+        return tpl.format(name="{name}", channel_line=channel_line,
+                          channel=st.channel_username or "")
+    except (KeyError, IndexError):  # свой шаблон с неизвестными плейсхолдерами
+        return tpl
+
+
+async def add_pending_subscriber(session: AsyncSession, user_id: int,
+                                 chat_id: int, first_name: str = "",
+                                 username: str | None = None) -> bool:
+    """Заносит подписчика в базу; True — если он новый (ждёт приветствия)."""
+    from app.db.repositories import SubscriberRepository
+    added = await SubscriberRepository(session).add_if_new(
+        user_id, chat_id, first_name=first_name, username=username)
+    if added:
+        await session.commit()
+        logger.info("new channel subscriber registered: {} ({})", user_id, username or first_name)
+    return added
+
+
+async def welcome_pending_subscribers(bot: Bot, session: AsyncSession,
+                                      limit: int = 5) -> int:
+    """Шлёт приветствия в ЛС неободрённым подписчикам. Возвращает число отправленных.
+
+    Идемпотентность: welcomed_at выставляется ДО отправки (best-effort «не
+    дублировать при ретраях»), но после успешного ответа помечаем надёжно;
+    TelegramForbiddenError (ЛС закрыты) оставляем запись pending — человек
+    откроет ЛС позже, и скан доприветствует его.
+    """
+    from app.db.repositories import SubscriberRepository, UserRepository
+    st = get_settings()
+    if not st.welcome_channel_enabled:
+        return 0
+    subs = SubscriberRepository(session)
+    users = UserRepository(session)
+    sent = 0
+    for sub in await subs.pending_welcomes(limit=limit):
+        name = html.escape(sub.first_name or sub.username or "друг")
+        text = channel_welcome_text().replace("{name}", name)
+        try:
+            await bot.send_message(sub.user_id, text,
+                                   reply_markup=welcome_start_button())
+        except TelegramForbiddenError:
+            logger.debug("subscriber {} closed DMs — will retry on scan", sub.user_id)
+            continue
+        except TelegramRetryAfter as e:
+            logger.warning("rate limited welcoming subscriber {}; pause {}", sub.user_id, e.retry_after)
+            break
+        except TelegramAPIError as e:
+            logger.error("failed to welcome subscriber {}: {}", sub.user_id, e)
+            continue
+        # регистрируем «заготовку» пользователя, чтобы кнопка «Начать»
+        # и /start подхватили уже знакомую систему анкету
+        await users.get_or_create(sub.user_id, sub.first_name or "друг", sub.username)
+        await subs.mark_welcomed(sub.user_id)
+        await session.commit()
+        sent += 1
+        logger.info("channel welcome DM sent to {}", sub.user_id)
+    return sent
+
+
+@router.chat_member(F.new_chat_member.status.in_(["member", "administrator"]),
+                    F.old_chat_member.status.notin_(["member", "administrator"]))
+async def on_channel_join(update: ChatMemberUpdated, bot: Bot,
+                          session: AsyncSession) -> None:
+    """Новичок пришёл в канал/группу, где бот — админ (chat_member-апдейт).
+
+    Заносим в channel_subscribers и сразу пробуем поприветствовать в ЛС.
+    Боты и сам бот игнорируются; покинувших не трогаем (условие above).
+    """
+    member = update.new_chat_member
+    if member.user.is_bot or member.user.id == bot.id:
+        return
+    is_channel = update.chat.type == "channel"
+    added = await add_pending_subscriber(
+        session, member.user.id, update.chat.id,
+        first_name=member.user.first_name or "", username=member.user.username)
+    if added and is_channel:
+        await welcome_pending_subscribers(bot, session, limit=1)
+

@@ -241,12 +241,56 @@ async def weekly_arena_finish(bot: Bot) -> None:
         await release_lock("weekly_arena")
 
 
+async def scan_channel_members(bot: Bot) -> None:
+    """Фоновый скан подписчиков канала (v1.5.1).
+
+    Bot API не отдаёт список участников канала и события «подписка» без
+    админ-прав, поэтому используем дешёвый get_chat_member_count: если счётчик
+    вырос относительно нашей базы — значит кто-то подписался молча. Точных id
+    новых подписчиков API не даёт, поэтому приветствие доставляется по нашим
+    сигналам: chat_member-апдейт (нужны админ-права) или первое сообщение
+    пользователя. Здесь же чистим «зависшие» pending-приветствия (например,
+    человек сначала закрыл ЛС, а потом открыл).
+    """
+    st = get_settings()
+    if not st.welcome_channel_enabled or not st.channel_chat_id:
+        return
+    if not await acquire_lock("channel_scan", ttl_sec=max(60, st.channel_scan_minutes * 60 - 30)):
+        return
+    try:
+        from app.handlers.welcome import welcome_pending_subscribers
+        from app.db.repositories import SubscriberRepository
+        async with session_factory() as session:
+            # догоняем приветствия, которые не удалось отправить раньше
+            sent = await welcome_pending_subscribers(bot, session, limit=5)
+            known = await SubscriberRepository(session).count()
+            try:
+                total = await bot.get_chat_member_count(st.channel_chat_id)
+            except Exception as e:  # noqa: BLE001 — бот не админ/нет доступа к каналу
+                logger.debug("channel member count unavailable: {}", e)
+                total = None
+            if total is not None and total > known:
+                logger.info("📢 subscribers drift: api={} db={} "
+                            "(новых молчунов можно поймать только через "
+                            "chat_member-апдейты — выдай боту права админа канала)",
+                            total, known)
+            elif sent:
+                logger.info("channel welcome flush: {} DM sent", sent)
+    except Exception as e:  # noqa: BLE001
+        logger.error("channel scan failed: {}", e)
+    finally:
+        await release_lock("channel_scan")
+
+
 def build_scheduler(bot: Bot) -> AsyncIOScheduler:
     sched = AsyncIOScheduler(timezone="UTC")
     sched.add_job(decay_all_pets, "interval", minutes=30, args=[bot],
                   max_instances=1, coalesce=True, id="decay")
     sched.add_job(flush_notifications, "interval", minutes=1, args=[bot],
                   max_instances=1, coalesce=True, id="notify")
+    sched.add_job(scan_channel_members, "interval",
+                  minutes=get_settings().channel_scan_minutes, args=[bot],
+                  max_instances=1, coalesce=True, id="chanscan")
     sched.add_job(check_streak_expiry, "cron", hour=0, minute=15, args=[bot],
                   id="streaks")
     st = get_settings()

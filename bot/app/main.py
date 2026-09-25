@@ -270,7 +270,7 @@ async def main() -> None:
                 timeout=settings.polling_timeout,
                 
                 # реакции приходят только если разрешены явно + бот админ с правом реакций
-                allowed_updates=dp.resolve_used_update_types() + ["message_reaction", "message_reaction_count"],
+                allowed_updates=dp.resolve_used_update_types() + ["message_reaction", "message_reaction_count", "chat_member"],
                 handle_signals=False,
             )
             # polling завершился сам (например, остановлен извне) —
@@ -286,7 +286,7 @@ async def main() -> None:
             await bot.set_webhook(
                 url=f"{settings.webhook_url}/webhook",
                 secret_token=settings.webhook_secret_token,
-                allowed_updates=dp.resolve_used_update_types() + ["message_reaction", "message_reaction_count"],
+                allowed_updates=dp.resolve_used_update_types() + ["message_reaction", "message_reaction_count", "chat_member"],
             )
             app = web.Application()
             app.router.add_route("POST", "/webhook",
