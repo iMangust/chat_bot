@@ -80,6 +80,27 @@ class BotRuntime:
         self.last_error: str | None = None
 
     # ------------------------------------------------------------------ run
+    @staticmethod
+    async def _probe_storage(storage) -> None:
+        """Проверка FSM-хранилища ДО поллинга.
+
+        redis-py соединяется лениво, поэтому 'unknown command HELLO' всплывает
+        только при первом обращении (первое же сообщение пользователя).
+        Делаем тестовый get_state: если Redis несовместим/недоступен —
+        тихо заменяем хранилище на MemoryStorage, чтобы бот не падал на апдейтах.
+        """
+        from aiogram.fsm.storage.base import StorageKey
+        from aiogram.fsm.storage.memory import MemoryStorage
+        try:
+            await storage.get_state(key=StorageKey(bot_id=0, chat_id=0, user_id=0))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                f"FSM-хранилище недоступно ({exc!r}) — переключаюсь на MemoryStorage "
+                f"(стейты сбрасываются при рестарте; для dev допустимо)")
+            # меняем внутреннее хранилище диспетчера нельзя post-hoc,
+            # поэтому пробрасываем сигнал вызывающему — подмена в start()
+            raise RuntimeError("fsm_probe_failed") from exc
+
     async def start(self) -> None:
         """Полный старт: Redis → БД → сиды → роутеры → поллинг."""
         if self.state != "stopped":
@@ -100,11 +121,17 @@ class BotRuntime:
                 token=token,
                 default=DefaultBotProperties(parse_mode=ParseMode.HTML),
             )
+            # ВАЖНО: используем общий конструктор из app.main — он принудительно
+            # ставит protocol=2 (RESP2). RedisStorage.from_url по умолчанию шлёт
+            # HELLO (RESP3), который старый Memurai/Redis (<6.0) не понимает.
+            # Ошибка возникает лениво при первом обращении к FSM, поэтому
+            # дополнительно оборачиваем get_state в безопасную проверку ниже.
+            from app.main import _make_fsm_storage
+            storage = _make_fsm_storage(settings.redis_url)
             try:
-                from aiogram.fsm.storage.redis import RedisStorage
-                storage = RedisStorage.from_url(settings.redis_url)
-            except Exception:  # noqa: BLE001
-                logger.warning("Redis недоступен для FSM — MemoryStorage")
+                await self._probe_storage(storage)
+            except RuntimeError:
+                # Redis несовместим/недоступен — деградируем, а не падаем
                 from aiogram.fsm.storage.memory import MemoryStorage
                 storage = MemoryStorage()
 
