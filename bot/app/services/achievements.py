@@ -163,6 +163,18 @@ class AchievementService:
             await self._grant_rewards(user_id, newly)
         return newly
 
+    async def unlock(self, achievement: Achievement, user_id: int) -> Achievement | None:
+        """Прямая выдача по объекту достижения (админ-команды, секреты).
+
+        Возвращает achievement, если оно открылось сейчас, иначе None.
+        """
+        unlocked_now = await self.repo.upsert_progress(
+            user_id, achievement.id, achievement.condition_value)
+        if unlocked_now:
+            await self._grant_rewards(user_id, [achievement])
+            return achievement
+        return None
+
     async def unlock_by_code(self, user_id: int, code: str) -> Achievement | None:
         """Прямая выдача (секретки, ручные награды админом)."""
         a = (await self.session.execute(
