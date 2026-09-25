@@ -132,7 +132,7 @@ python -m app.main
 ```powershell
 cd C:\tamabot\bot
 venv\Scripts\activate
-python -m pytest tests -q        # ожидаем: 48 passed (включая проверки формата .bat)
+python -m pytest tests -q        # ожидаем: 51 passed (включая проверки формата .bat)
 ```
 Тесты идут на SQLite-in-memory, Redis/MySQL не нужны.
 
@@ -186,7 +186,7 @@ python -m pytest tests -q        # ожидаем: 48 passed (включая п�
 ✅ TamaConsole (Textual 8): вкладки Логи / Дашборд / БД / Настройки / Пользователи,
    кнопки Пуск/Стоп/Рестарт, live-хвост логов, редактор .env из UI (`console.bat`)
 ✅ BAT-оболочки install/run/console в кодировке cp1251+CRLF (тестируются в CI-тестах)
-✅ Тесты бизнес-логики + форматные проверки: 48 passed
+✅ Тесты бизнес-логики + форматные проверки: 51 passed
 
 Команды бота: `/start /top /stats /achievements /shop /award /card /settings /help`
 
@@ -199,6 +199,7 @@ python -m pytest tests -q        # ожидаем: 48 passed (включая п�
 | 1.3.2 | console-runtime использовал `RedisStorage.from_url` (RESP3) — переведён на общий конструктор + probe/PING с fallback на MemoryStorage |
 | 1.3.3 | нормализация TTL (`_norm_ttl`: float→int), активный PING-probe до поллинга |
 | 1.3.4–1.3.6 | **краш live-режима** `BotRuntime.start() missing 'self'` — метод был ошибочно помечен `@staticmethod`; убран, добавлены регресс-тесты связки livelog→runtime и AST-проверка всего пакета app |
+| 1.3.7 | **краш кнопки «🖼 Карточка»**: `getset(..., ex=...)` — GETSET не принимает kwarg ex (TTL через отдельную EXPIRE) + защита от future-поломки: если redis-py>=6 уберёт `ex` из `set()`, кулдауны/локи автоматически переключатся на `setnx`+`expire` |
 
 ## 8. Отложено на v1.4+ (не блокирует запуск)
 

@@ -66,3 +66,76 @@ def test_fsm_storage_uses_redis_instance_not_pool():
     if isinstance(storage, RedisStorage):
         # ключевая проверка: это Redis, а не ConnectionPool
         assert hasattr(storage.redis, "get"), "RedisStorage должен получать Redis, не pool"
+
+
+# ---------------------------------------------------------------------------
+# v1.3.7 регресс: TypeError: BasicKeyCommands.getset() got an unexpected
+# keyword argument 'ex' (краш кнопки «🖼 Карточка» на проде). GETSET в redis-py
+# не принимает kwarg ex — TTL задаётся отдельной командой EXPIRE.
+# ---------------------------------------------------------------------------
+@pytest.mark.asyncio
+async def test_mem_cached_set_no_ex_kwarg_on_getset(monkeypatch):
+    """GETSET вызывается без ex; TTL ставится через expire()."""
+    calls: list[tuple] = []
+
+    class FakeRedis:
+        async def ping(self):
+            return True
+
+        async def getset(self, key, value):
+            calls.append(("getset", key, value))
+            return None  # первый раз предыдущего значения нет
+
+        async def expire(self, key, ttl):
+            calls.append(("expire", key, ttl))
+            return True
+
+    monkeypatch.setattr("app.utils.redis.redis_client", FakeRedis())
+    from app.utils.redis import mem_cached_set
+    prev = await mem_cached_set("card:1", "v1", ttl_sec=3600)
+    assert prev is None
+    assert ("getset", "cache:card:1", "v1") in calls
+    assert ("expire", "cache:card:1", 3600) in calls
+
+
+@pytest.mark.asyncio
+async def test_mem_cached_set_decodes_bytes_prev(monkeypatch):
+    """decode_responses=False-клиент может вернуть bytes — не должны уйти в API."""
+    class FakeRedis:
+        async def ping(self):
+            return True
+
+        async def getset(self, key, value):
+            return b"old-version"
+
+        async def expire(self, key, ttl):
+            return True
+
+    monkeypatch.setattr("app.utils.redis.redis_client", FakeRedis())
+    from app.utils.redis import mem_cached_set
+    assert await mem_cached_set("card:2", "v2") == "old-version"
+
+
+@pytest.mark.asyncio
+async def test_set_cooldown_fallback_when_ex_removed(monkeypatch):
+    """redis-py>=6 уберёт kwarg ex из set() — должен сработать setnx+expire."""
+    calls: list[tuple] = []
+
+    class StrictRedis:
+        async def ping(self):
+            return True
+
+        async def set(self, key, value, nx=False, ex=None):
+            raise TypeError("BasicKeyCommands.set() got an unexpected keyword argument 'ex'")
+
+        async def setnx(self, key, value):
+            calls.append(("setnx", key))
+            return 1
+
+        async def expire(self, key, ttl):
+            calls.append(("expire", key, ttl))
+            return True
+
+    monkeypatch.setattr("app.utils.redis.redis_client", StrictRedis())
+    assert await set_cooldown("cb:strict", 10) is True
+    assert ("setnx", "cd:cb:strict") in calls and ("expire", "cd:cb:strict", 10) in calls
