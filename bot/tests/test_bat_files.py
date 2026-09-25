@@ -14,6 +14,8 @@ cmd.exe читает batch-файлы в OEM-кодовой странице к�
 
 from __future__ import annotations
 
+import re
+
 from pathlib import Path
 
 import pytest
@@ -75,4 +77,87 @@ def test_bat_no_double_ampersand_after_if() -> None:
             assert "&&" not in line, (
                 f"{bat.name}:{num}: найден '&&' — недопустимо в cmd.exe, "
                 f"используйте отдельные строки с if %errorlevel%==0: {stripped!r}"
+            )
+
+
+def test_bat_no_errorlevel_inside_parenthesized_if_blocks() -> None:
+    """Регресс v1.2.5: вложенный `if ( ... if %errorlevel%==0 ... )` ломает разбор.
+
+    На Windows Server 2019 (cmd 10.0.17763) конструкция вида::
+
+        if not defined PYCMD (
+            where python >nul 2>nul
+            if %errorlevel%==0 set PYCMD=python
+        )
+
+    приводила к «Непредвиденное появление: ..» сразу после первой echo-строки,
+    т.к. cmd раскрывает %errorlevel% при парсинге всего блока. Надёжный
+    паттерн — плоские строки + goto-метки. Тест запрещает `%errorlevel%==`
+    внутри многострочных if-блоков (строки блока не должны содержать
+    подстановку errorlevel с оператором сравнения).
+    """
+    for bat in BAT_FILES:
+        text = bat.read_bytes().decode("cp866")
+        inside_block = False
+        depth = 0
+        for num, line in enumerate(text.split("\r\n"), 1):
+            stripped = line.strip()
+            if not stripped or stripped.lower().startswith(("rem", "::")):
+                continue
+            if "%errorlevel%==" in stripped.lower() and depth > 0:
+                pytest.fail(
+                    f"{bat.name}:{num}: %errorlevel%== внутри if-блока "
+                    f"(ломает разбор на cmd 10.0.17763) — перепишите плоскими "
+                    f"строками с goto-меткой: {stripped!r}"
+                )
+            depth += stripped.count("(") - stripped.count(")")
+            if stripped.startswith("if ") and stripped.endswith("("):
+                inside_block = True
+            elif stripped == ")" and inside_block:
+                inside_block = False
+            depth = max(depth, 0)
+
+
+def test_bat_no_parenthesized_if_blocks() -> None:
+    """Регресс v1.2.5: bat-скрипты полностью в goto-стиле, без многострочных блоков `if ... ( )`.
+
+    На cmd.exe 10.0.17763 (Windows Server 2019) многострочные блоки вида::
+
+        if not exist .env (
+            echo ...
+            pause
+        )
+
+    при определённом содержимом строк (кавычки/скобки/кириллица после редиректов)
+    вызывают «Непредвиденное появление: ..». Все скрипты переписаны плоскими
+    строками с goto-метками — тест запрещает открывающие `(` в конце if-строк.
+    """
+    for bat in BAT_FILES:
+        text = bat.read_bytes().decode("cp866")
+        for num, line in enumerate(text.split("\r\n"), 1):
+            stripped = line.strip()
+            if stripped.lower().startswith(("rem", "::")) or not stripped:
+                continue
+            assert not re.match(r"^if\s+.*\($", stripped, re.I), (
+                f"{bat.name}:{num}: найден многострочный if-блок — используйте "
+                f"goto-стиль: {stripped!r}"
+            )
+
+
+def test_bat_python_invocations_are_quoted() -> None:
+    """Команды запуска Python должны быть в кавычках: "%PY%" / "%PYCMD%".
+
+    Без кавычки путь `C:\\Program Files\\...\\python.exe` с пробелом разбирается
+    cmd как два аргумента и падает с непонятными ошибками.
+    """
+    import re
+
+    pat_unquoted = re.compile(r"^%(PY|PYCMD)%\s", re.M)
+    for bat in BAT_FILES:
+        text = bat.read_bytes().decode("cp866")
+        m = pat_unquoted.search(text)
+        if m is not None:
+            pytest.fail(
+                f"{bat.name}: незакавыщенное обращение к переменной Python "
+                f"({m.group(0).strip()!r}) — используйте \"%PY%\" ..."
             )
