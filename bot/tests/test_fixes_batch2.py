@@ -78,14 +78,15 @@ def test_invite_link_points_to_channel(monkeypatch):
 # ---------- магазин: сид без жёстких id + мерч ----------
 
 @pytest.mark.asyncio
-async def test_seed_items_and_merch(session):
+async def test_seed_items_no_merch(session):
+    """Мерч вынесен в отдельный раздел — в таблицу Items он больше не сидится."""
     created = await seed_items(session)
     assert created > 0
     items = list((await session.execute(select(Item))).scalars())
     merch = [i for i in items if i.type == "merch"]
-    assert merch, "витрина мерча должна сидироваться"
+    assert not merch, "мерч больше не часть магазина питомца"
     codes = {i.code for i in items}
-    assert "food_fish" in codes or len(items) >= 5
+    assert "food_bread" in codes and "toy_ball" in codes
 
 
 @pytest.mark.asyncio

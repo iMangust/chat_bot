@@ -20,8 +20,10 @@ def main_menu(link: str | None = None, reward: int = 0) -> InlineKeyboardMarkup:
     b.row()
     b.button(text="⚙️ Настройки", callback_data="menu:settings")
     settings = get_settings()
-    if settings.merch_enabled and settings.merch_url:
-        b.button(text="🧢 Мерч канала", url=settings.merch_url)
+    if settings.merch_enabled:
+        # Мерч канала — отдельный раздел (не связан с питомцем): категории
+        # 👕 Футболки / 🧥 Худи / ☕ Аксессуары внутри бота.
+        b.button(text="🧢 Мерч канала", callback_data="menu:merch")
     b.row()
     if link:
         text = "🤝 Пригласить друга" + (f" (+{reward} 🪙)" if reward else "")

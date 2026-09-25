@@ -16,8 +16,8 @@ from loguru import logger
 from app.config import get_settings
 from app.db.models import Base
 from app.db.session import DbMiddleware, engine, session_factory
-from app.handlers import (errors, games, settings, shop, social, start, stats,
-                         tamagotchi, tracker, welcome)
+from app.handlers import (errors, games, merch, settings, shop, social, start,
+                          stats, tamagotchi, tracker, welcome)
 from app.middlewares.throttle import ThrottleMiddleware
 from app.handlers.shop import seed_items
 from app.services.achievements import seed_achievements
@@ -140,6 +140,7 @@ async def main() -> None:
         tamagotchi.router,
         games.router,
         shop.router,
+        merch.router,
         social.router,
         stats.router,
         settings.router,

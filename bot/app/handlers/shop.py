@@ -5,9 +5,8 @@
 целью на несколько дней. Покупки идут в pet_inventory; кормление из инвентаря
 использует реальные эффекты предметов.
 
-Раздел 🧢 Мерч: если настроен MERCH_URL, показываем витрину мерча прямо внутри
-магазина (тип товара "merch", цены-заметки не списывают монеты — покупка ведёт
-по внешней ссылке).
+🧢 Мерч канала живёт в отдельном разделе (app/handlers/merch.py) — он про канал,
+а не про питомца. Здесь мерча нет; в магазине оставлена только кнопка-переход.
 """
 from __future__ import annotations
 
@@ -21,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 
 from app.config import get_settings
-from app.db.models import Item, PetInventory
+from app.db.models import Item, PetInventory, User
 from app.db.repositories import PetRepository, UserRepository
 from app.keyboards.inline import back_to_main, pet_hub
 from app.services.tamagotchi import TamagotchiService
@@ -50,15 +49,8 @@ ITEMS_SEED = [
          effect={"health": 15, "energy": 15}, description="Бодрость и здоровье."),
 ]
 
-# Витрина мерча (дефолт; перекрывается строкой MERCH_ITEMS в .env через config)
-MERCH_SEED = [
-    dict(code="merch_tee", name="Футболка канала", icon="👕", type="merch", price=0,
-         effect={}, description="Печатный принт для своих."),
-    dict(code="merch_mug", name="Кружка «Не флуди»", icon="☕", type="merch", price=0,
-         effect={}, description="Для утреннего кофе модератора."),
-    dict(code="merch_stickers", name="Стикерпак", icon="🎨", type="merch", price=0,
-         effect={}, description="10 наклеек с маскотами."),
-]
+# Мерч больше не сидится в таблицу Items: он вынесен в отдельный раздел
+# 🧢 Мерч канала (app/handlers/merch.py) и живёт из конфига/дефолтной витрины.
 
 
 async def seed_items(session: AsyncSession) -> int:
@@ -66,8 +58,7 @@ async def seed_items(session: AsyncSession) -> int:
     created = 0
     next_id = ((await session.execute(select(Item.id).order_by(Item.id.desc()).limit(1)))
                .scalars().first() or 0)
-    specs = ITEMS_SEED + _merch_specs()
-    for spec in specs:
+    for spec in ITEMS_SEED:
         if spec["code"] in existing:
             continue
         next_id += 1
@@ -78,29 +69,11 @@ async def seed_items(session: AsyncSession) -> int:
     return created
 
 
-def _merch_specs() -> list[dict]:
-    """Мерч из конфига (MERCH_ITEMS="Название|цена|описание;…") или дефолтный сид."""
-    raw = get_settings().merch_items
-    if not raw:
-        return [dict(m) for m in MERCH_SEED]
-    out = []
-    for i, chunk in enumerate(raw.split(";")):
-        parts = [p.strip() for p in chunk.split("|")]
-        if len(parts) < 2 or not parts[0]:
-            continue
-        out.append(dict(
-            code=f"merch_custom_{i + 1}", name=parts[0], icon="🧢", type="merch",
-            price=int(parts[1]) if parts[1].isdigit() else 0, effect={},
-            description=parts[2] if len(parts) > 2 else "",
-        ))
-    return out
-
-
 def shop_keyboard(items: list[Item], user_coins: int) -> "InlineKeyboardBuilder | None":
     b = InlineKeyboardBuilder()
     for it in items:
         if it.type == "merch":
-            continue  # мерч — внешние кнопки-ссылки, не «buy:»
+            continue  # старый мерч в БД игнорируем — он в отдельном разделе
         afford = "🪙" if user_coins >= it.price else "🔒"
         b.button(text=f"{afford} {it.icon} {html.escape(it.name)} · {it.price}",
                  callback_data=f"buy:{it.id}")
@@ -114,27 +87,31 @@ async def shop_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     user = await users.get(cb.from_user.id)
     if user is None:
         return await cb.answer()
-    items = list((await session.execute(select(Item).order_by(Item.type, Item.price))).scalars())
+    items = list((await session.execute(
+        select(Item).where(Item.type != "merch").order_by(Item.type, Item.price)
+    )).scalars())
     if not items:
         await seed_items(session)
-        items = list((await session.execute(select(Item).order_by(Item.type, Item.price))).scalars())
-    settings = get_settings()
-    lines = [f"🛒 <b>Магазин</b> · у тебя 🪙 {user.coins}\n"]
+        items = list((await session.execute(
+            select(Item).where(Item.type != "merch").order_by(Item.type, Item.price)
+        )).scalars())
+    lines = [f"🛒 <b>Магазин питомца</b> · у тебя 🪙 {user.coins}\n"]
     groups: dict[str, list[Item]] = {}
     for it in items:
         groups.setdefault(it.type, []).append(it)
-    titles = {"food": "🍎 Еда", "toy": "🎾 Игрушки", "medicine": "💊 Лекарства",
-              "merch": "🧢 Мерч канала"}
+    titles = {"food": "🍎 Еда", "toy": "🎾 Игрушки", "medicine": "💊 Лекарства"}
     for t, lst in groups.items():
         lines.append(f"<b>{titles.get(t, html.escape(t))}</b>")
         for it in lst:
-            price = f" — {it.price} 🪙" if it.type != "merch" and it.price else ""
+            price = f" — {it.price} 🪙" if it.price else ""
             lines.append(f"  {it.icon} {html.escape(it.name)}{price} · {html.escape(it.description)}")
         lines.append("")
-    kb = shop_keyboard([i for i in items if i.type != "merch"], user.coins)
-    if settings.merch_enabled and settings.merch_url:
+    kb = shop_keyboard(items, user.coins)
+    settings = get_settings()
+    if settings.merch_enabled:
         kb.row()
-        kb.button(text="🧢 Купить мерч", url=settings.merch_url)
+        kb.button(text="🧢 Мерч канала — в отдельном разделе ➡️",
+                  callback_data="menu:merch")
     kb.button(text="⬅️ Назад", callback_data="menu:main")
     await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=kb.as_markup())
     await cb.answer()
@@ -156,18 +133,10 @@ async def buy_item(cb: CallbackQuery, session: AsyncSession) -> None:
     if item is None:
         return await cb.answer("Предмет не найден", show_alert=True)
     if item.type == "merch":
-        # мерч покупается снаружи — редиректим ссылкой, монеты не трогаем
-        url = get_settings().merch_url
-        if url:
-            from aiogram.types import LinkButton, InlineKeyboardMarkup, InlineKeyboardButton
-            await cb.message.answer(
-                f"🧢 <b>{html.escape(item.name)}</b> можно купить тут 👇",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="Открыть магазин мерча",
-                                          url=url)]]))
-        else:
-            await cb.message.answer("🧢 Мерч ещё не в продаже — следи за каналом!")
-        return await cb.answer()
+        # мерч вынесен в отдельный раздел — показываем витрину, монеты не трогаем
+        from app.handlers.merch import merch_screen
+        await cb.answer()
+        return await merch_screen(cb)
     if user.coins < item.price:
         await cb.answer(f"Не хватает {item.price - user.coins} монет 🪙", show_alert=True)
         return

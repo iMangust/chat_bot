@@ -66,10 +66,12 @@ class Settings(BaseSettings):
     channel_username: str | None = None
     channel_chat_id: int | None = None   # ID канала (-100...), если бот там админ
 
-    # --- Мерч канала ---
-    merch_enabled: bool = True           # показывать раздел 🧢 Мерч в меню/магазине
-    merch_url: str | None = None         # ссылка на магазин мерча (Telegram-бот/сайт)
-    merch_items: str | None = None       # "Название|цена|описание;..." — витрина в магазине (пусто = дефолтный сид)
+    # --- Мерч канала (отдельный раздел 🧢, не связан с питомцем) ---
+    merch_enabled: bool = True           # показывать раздел 🧢 Мерч в главном меню
+    merch_url: str | None = None         # внешняя ссылка на магазин мерча (кнопка «🌐 Открыть»)
+    # Витрина: "Категория|Название|Цена₽|Описание|Размеры(S,M,L);..."
+    # Категории: tshirt (футболки), hoodie (худи), acc (аксессуары). Пусто = дефолтная витрина.
+    merch_items: str | None = None
 
 
 @lru_cache
