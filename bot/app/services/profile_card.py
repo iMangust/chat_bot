@@ -98,6 +98,7 @@ class ProfileCardRenderer:
             """draw.text с вырезанием неподдерживаемых шрифтом символов."""
             d.text(xy, clean(text), **kw)
 
+<<<<<<< HEAD
         def fit(text: str, font, max_w: int) -> str:
             """Обрезаёт строку по пиксельную ширину с «…» — текст не вылезает за рамки."""
             text = clean(text)
@@ -115,6 +116,15 @@ class ProfileCardRenderer:
             fill=TEXT, font=f_big)
         uname = f"@{user.username}" if user.username else ""
         put((168, 92), fit(uname, f_mid, W - 168 - 24), fill=DIM, font=f_mid)
+=======
+        # шапка
+        d.rounded_rectangle([24, 24, 144, 144], radius=60, fill=ACCENT)
+        initial = clean((user.first_name or "?")[:1]).upper() or "?"
+        put((84, 84), initial, fill=(20, 24, 40), font=f_big, anchor="mm")
+        put((168, 40), user.first_name or "Игрок", fill=TEXT, font=f_big)
+        uname = f"@{user.username}" if user.username else ""
+        put((168, 92), uname, fill=DIM, font=f_mid)
+>>>>>>> origin/main
 
         need = xp_needed_for_level(user.level)
         put((24, 176), f"Уровень {user.level}", fill=TEXT, font=f_mid)
@@ -122,11 +132,17 @@ class ProfileCardRenderer:
         d.rounded_rectangle([bar_x0, 184, bar_x0 + bar_w, 208], radius=12, fill=(55, 62, 92))
         frac = max(0.0, min(1.0, user.xp / max(need, 1)))
         d.rounded_rectangle([bar_x0, 184, bar_x0 + int(bar_w * frac), 208], radius=12, fill=ACCENT)
+<<<<<<< HEAD
         put((bar_x0 + bar_w + 16, 182), fit(f"{user.xp}/{need} XP", f_small, W - (bar_x0 + bar_w + 16) - 24),
             fill=DIM, font=f_small)
 
         # плитки статов: значение переносится на 2 строки внутри плитки,
         # каждая строка урезается по ширине — раньше текст вылезал за рамки.
+=======
+        put((bar_x0 + bar_w + 16, 182), f"{user.xp}/{need} XP", fill=DIM, font=f_small)
+
+        # плитки статов (эмодзи в подписях вырезаются — в TTF их нет)
+>>>>>>> origin/main
         tiles = [
             ("Монеты", str(user.coins)),
             ("Серия дней", f"{user.streak_days} дн. (рекорд {user.best_streak})"),
@@ -138,6 +154,7 @@ class ProfileCardRenderer:
         for i, (title, value) in enumerate(tiles):
             x0 = 24 + i * (tw + 16)
             d.rounded_rectangle([x0, 236, x0 + tw, 340], radius=14, fill=(48, 55, 84))
+<<<<<<< HEAD
             put((x0 + 14, 250), fit(title, f_small, inner_w), fill=DIM, font=f_small)
             v = clean(value)
             words, lines, cur = v.split(" "), [], ""
@@ -154,6 +171,10 @@ class ProfileCardRenderer:
                 put((x0 + 14, 284 + li * 26), fit(ln, f_small, inner_w), fill=TEXT, font=f_small)
             if len(lines) > 2:  # третья строка не влезла — ставим «…» во вторую
                 put((x0 + 14, 284 + 26), fit("…", f_small, inner_w), fill=TEXT, font=f_small)
+=======
+            put((x0 + 14, 250), title, fill=DIM, font=f_small)
+            put((x0 + 14, 288), clean(value)[:26], fill=TEXT, font=f_small)
+>>>>>>> origin/main
 
         # питомец
         if pet is not None:
@@ -163,7 +184,11 @@ class ProfileCardRenderer:
             mood_line = "Питомца пока нет — нажми /start"
         d.rounded_rectangle([24, 356, W - 24, 420], radius=14, fill=(48, 55, 84))
         put((38, 366), "Питомец", fill=DIM, font=f_small)
+<<<<<<< HEAD
         put((38, 392), fit(mood_line, f_small, W - 38 * 2), fill=TEXT, font=f_small)
+=======
+        put((38, 392), clean(mood_line)[:70], fill=TEXT, font=f_small)
+>>>>>>> origin/main
 
         buf = io.BytesIO()
         img.save(buf, format="PNG")

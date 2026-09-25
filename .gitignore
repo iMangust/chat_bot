@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Compiled files
 __pycache__/
 *.pyc
@@ -7,3 +8,6 @@ __pycache__/
 .env.local
 .vscode/
 .idea/
+=======
+(empty)
+>>>>>>> origin/main

@@ -100,9 +100,32 @@ def _render_achievements(items, page: int = 0, page_size: int = 8) -> tuple[str,
 async def ach_screen(cb: CallbackQuery, session: AsyncSession, page: int = 0) -> None:
     svc = AchievementService(session)
     items = await svc.list_for_user(cb.from_user.id)
+<<<<<<< HEAD
     text, page, total_pages = _render_achievements(items, page=page)
     await safe_edit_or_answer(cb.message, text,
                               reply_markup=achievements_list(items, page, total_pages))
+=======
+    page_size = 8
+    total_pages = max(1, (len(items) + page_size - 1) // page_size)
+    page = max(0, min(page, total_pages - 1))
+    chunk = items[page * page_size:(page + 1) * page_size]
+
+    lines = ["🏆 <b>Достижения</b>\n"]
+    unlocked_count = sum(1 for a, ur in items if ur and ur.unlocked_at)
+    lines.append(f"Открыто: {unlocked_count}/{len(items)}\n")
+    for a, ur in chunk:
+        progress = ur.progress if ur else 0
+        done = bool(ur and ur.unlocked_at)
+        bar = progress_bar(min(progress, a.condition_value), a.condition_value, 8)
+        mark = "✅" if done else "🔒"
+        hidden = "🎭 " if a.is_hidden and not done else ""
+        lines.append(
+            f"{mark} {a.icon} <b>{hidden}{a.title}</b> — {a.description}\n"
+            f"   {bar} {min(progress, a.condition_value)}/{a.condition_value}"
+        )
+    await safe_edit_or_answer(cb.message, "\n".join(lines),
+                               reply_markup=achievements_list(items, page, page_size))
+>>>>>>> origin/main
     await cb.answer()
 
 
@@ -196,6 +219,7 @@ async def cmd_top(message: Message, session: AsyncSession) -> None:
     await message.answer(text, reply_markup=top_tabs("week"))
 
 
+<<<<<<< HEAD
 @router.message(Command("ach", "achievements"))
 async def cmd_ach(message: Message, session: AsyncSession) -> None:
     """Алиас команды — достижения прямо в ЛС (первая страница)."""
@@ -203,6 +227,18 @@ async def cmd_ach(message: Message, session: AsyncSession) -> None:
     items = await svc.list_for_user(message.from_user.id)
     text, page, total_pages = _render_achievements(items, page=0)
     await message.answer(text, reply_markup=achievements_list(items, page, total_pages))
+=======
+@router.callback_query(F.data == "menu:settings")
+async def settings_stub(cb: CallbackQuery) -> None:
+    await safe_edit_or_answer(cb.message, 
+        "⚙️ Настройки уведомлений появятся на Этапе 6:\n"
+        "• 🔔 напоминания о питомце\n• 🌅 утренний/вечерний дайджест\n"
+        "• 🎄 праздничные события\n\n"
+        "Пока что я всегда на связи 😉",
+        reply_markup=back_to_main(),
+    )
+    await cb.answer()
+>>>>>>> origin/main
 
 
 # ---------- командный алиас статистики ----------
