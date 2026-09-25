@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from sqlalchemy import select
 
 from app.db.models import (ChatMessageLog, LeaderboardSnapshot, NotificationQueue,
                            Pet, User, UserStat)
@@ -84,7 +85,10 @@ async def test_snapshot_weekly_rewards_and_idempotent(session):
     assert champ.coins == 500
     snaps = list((await session.execute(
         __import__("sqlalchemy").select(LeaderboardSnapshot))).scalars())
-    assert len(snaps) == 1
+    # v1.3.8: summary + отдельный маркер-снапшот недели (вместо UserStat user_id=0)
+    assert len([s for s in snaps if s.category == "weekly_summary"]) == 1
+    assert any(s.category.startswith("last_week_award:") for s in snaps)
+    assert not [s for s in snaps if s.category not in ("weekly_summary",) and not s.category.startswith("last_week_award:")]
 
 
 @pytest.mark.asyncio
@@ -206,3 +210,26 @@ async def test_set_cooldown_fallback_without_server(monkeypatch):
     finally:
         await close_redis()
         get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_snapshot_weekly_no_fk_crash_and_idempotent(session):
+    """v1.3.8 регрессия: маркер недели не пишется в UserStat(user_id=0) —
+    на MySQL это падало с IntegrityError 1452 (FK users.tg_id).
+    Плюс повторный вызов должен быть идемпотентным (вернуть payload без краша)."""
+    from app.services.leaderboard import snapshot_weekly
+    from app.db.models import LeaderboardSnapshot, UserStat
+
+    payload = await snapshot_weekly(session)   # пустая неделя — не должно упасть
+    assert payload is not None
+    # ни одной записи user_stats с user_id=0
+    bad = (await session.execute(
+        select(UserStat).where(UserStat.user_id == 0))).scalars().all()
+    assert not bad
+    # маркер лежит в снапшотах
+    snaps = (await session.execute(
+        select(LeaderboardSnapshot))).scalars().all()
+    assert any(s.category.startswith("last_week_award:") for s in snaps)
+    # второй вызов — идемпотентно, тот же payload
+    again = await snapshot_weekly(session)
+    assert again == payload

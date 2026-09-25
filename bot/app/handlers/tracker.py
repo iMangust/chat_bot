@@ -10,7 +10,7 @@ allowed_updates=["message","message_reaction","chat_member"] при поллин
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from aiogram import F, Router
 from aiogram.types import Message, ReactionCount
@@ -62,9 +62,12 @@ async def track_group_message(message: Message, session: AsyncSession) -> None:
         is_command=bool(text and text.startswith("/")),
     )
     if entry and entry.is_counted:
-        # секретка «Сова»: 3–5 ночи по МСК (UTC+3)
-        msk_hour = datetime.now(timezone.utc).hour + 3
-        if 3 <= msk_hour % 24 <= 5:
+        # секретка «Сова»: 3–5 ночи. Время берём С ИСТОЧНИКА СОБЫТИЯ —
+        # message.date это UTC-время, когда сообщение реально отправлено в чате
+        # (а не время обработки апдейта ботом/сервером). Смещение — из конфига.
+        msg_local = message.date.replace(tzinfo=timezone.utc) + timedelta(
+            hours=get_settings().tz_offset_hours)
+        if 3 <= msg_local.hour <= 5:
             from app.services.achievements import AchievementService
             ach = AchievementService(session)
             unlocked = await ach.unlock_by_code(message.from_user.id, "night_owl")

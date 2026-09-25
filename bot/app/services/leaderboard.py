@@ -126,10 +126,15 @@ async def snapshot_weekly(session: AsyncSession,
     week_end = this_monday
 
     marker_key = f"last_week_award:{week_start.date().isoformat()}"
-    already = (await session.execute(
-        select(UserStat.id).where(UserStat.key == marker_key).limit(1)
+    # Идемпотентность: маркер храним в снапшоте (category='weekly_award'),
+    # а НЕ в UserStat(user_id=0) — user_id=0 нарушает FK users.tg_id на MySQL.
+    marker = (await session.execute(
+        select(LeaderboardSnapshot.id).where(
+            LeaderboardSnapshot.period == "week",
+            LeaderboardSnapshot.category == marker_key,
+        ).limit(1)
     )).scalar_one_or_none()
-    if already is not None:
+    if marker is not None:
         snap = (await session.execute(
             select(LeaderboardSnapshot).where(
                 LeaderboardSnapshot.period == "week",
@@ -141,7 +146,8 @@ async def snapshot_weekly(session: AsyncSession,
     payload = await build_weekly_payload(session, week_start)
     session.add(LeaderboardSnapshot(period="week", category="weekly_summary",
                                     data=payload))
-    session.add(UserStat(user_id=0, key=marker_key, value=1))
+    session.add(LeaderboardSnapshot(period="week", category=marker_key,
+                                    data=[]))
 
     # награды топ-3 болтунов недели + счётчик для ачивки «Король дня»
     talkers = await top_messages(session, week_start, 3)

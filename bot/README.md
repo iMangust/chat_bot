@@ -200,6 +200,7 @@ python -m pytest tests -q        # ожидаем: 51 passed (включая п�
 | 1.3.3 | нормализация TTL (`_norm_ttl`: float→int), активный PING-probe до поллинга |
 | 1.3.4–1.3.6 | **краш live-режима** `BotRuntime.start() missing 'self'` — метод был ошибочно помечен `@staticmethod`; убран, добавлены регресс-тесты связки livelog→runtime и AST-проверка всего пакета app |
 | 1.3.7 | **краш кнопки «🖼 Карточка»**: `getset(..., ex=...)` — GETSET не принимает kwarg ex (TTL через отдельную EXPIRE) + защита от future-поломки: если redis-py>=6 уберёт `ex` из `set()`, кулдауны/локи автоматически переключатся на `setnx`+`expire` |
+| 1.3.8 | **IntegrityError 1452 в еженедельном снапшоте** (`/awards`, джоб scheduler): маркер недели писался в `user_stats` с `user_id=0`, нарушая FK к `users.tg_id` — перенесён в `leaderboards_snapshot` (category=`last_week_award:<дата>`); **«Сова» срабатывала вне 3–5 ночи**: время бралось с сервера при обработке апдейта — теперь используется `message.date` (время отправки сообщения в Telegram) + смещение `TZ_OFFSET_HOURS` из `.env` |
 
 ## 8. Отложено на v1.4+ (не блокирует запуск)
 
