@@ -25,6 +25,7 @@ from app.keyboards.inline import (
 )
 from app.services.achievements import AchievementService
 from app.utils.safe_edit import safe_edit_or_answer
+from app.handlers.tamagotchi import set_pet_page
 from app.services.tamagotchi import SPECIES_DATA, TamagotchiService, _species_key
 
 router = Router(name="games")
@@ -48,9 +49,11 @@ async def games_screen(cb: CallbackQuery, state: FSMContext, session: AsyncSessi
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
         await state.clear()
-        await safe_edit_or_answer(cb.message, "🥚 Сначала заведи питомца (/start).", reply_markup=pet_hub())
+        await safe_edit_or_answer(cb.message, "🥚 Сначала заведи питомца (/start).",
+                                  reply_markup=pet_hub(2))
         await cb.answer()
         return
+    set_pet_page(cb.message.chat.id, 2)  # игры — страница «Досуг»
     sp = SPECIES_DATA.get(_species_key(pet), SPECIES_DATA["cat"])
     await state.clear()
     await safe_edit_or_answer(cb.message, 

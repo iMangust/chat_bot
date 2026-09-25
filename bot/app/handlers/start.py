@@ -165,6 +165,42 @@ async def cb_onboard_start(cb: CallbackQuery, state: FSMContext,
     await cb.answer()
 
 
+@router.callback_query(F.data == "onb:skip")
+async def cb_onboard_skip(cb: CallbackQuery, state: FSMContext,
+                          session: AsyncSession) -> None:
+    """Онбординг без питомца (v1.4.7): статистика/топы работают и так.
+
+    Питомец — опция: пользователь может завести его позже кнопкой
+    «🥚 Усыновить» (pet:adopt) или из пикера вида. Ачивку first_steps не
+    выдаём — она про рождение питомца.
+    """
+    users = UserRepository(session)
+    user = await users.get_or_create(cb.from_user.id, cb.from_user.first_name or "",
+                                     cb.from_user.username)
+    if user.onboarded:
+        await safe_edit_or_answer(cb.message, "Ты уже с нами! 🎉", reply_markup=main_menu())
+        await cb.answer()
+        return
+    user.onboarded = True
+    await state.clear()
+    await session.commit()
+    await safe_edit_or_answer(
+        cb.message,
+        "🤝 Понял — наблюдаем со стороны!\n\n"
+        "• 🏅 Топы и 📊 Статы считаются автоматически по активности в чате;\n"
+        "• 🐾 питомца можно завести в любой момент — кнопка ниже;\n"
+        "• 🎁 монеты капают за сообщения, их можно копить даже без игры.\n\n"
+        "Зайди в группу и напиши что-нибудь — это засчитается как активность 👇",
+        reply_markup=_no_pet_menu_kb(),
+    )
+    await cb.answer()
+
+
+def _no_pet_menu_kb():
+    from app.keyboards.inline import adopt_cta_kb
+    return adopt_cta_kb()
+
+
 @router.callback_query(Onboarding.choosing_pet_species, F.data.startswith("onb:species:"))
 async def cb_pick_species(cb: CallbackQuery, state: FSMContext) -> None:
     code = cb.data.split(":")[2]

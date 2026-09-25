@@ -13,6 +13,7 @@ from __future__ import annotations
 import random
 from datetime import datetime, timedelta, timezone
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Pet, PetStage, User
@@ -20,6 +21,9 @@ from app.i18n import t
 from app.utils.formatting import (clamp, holiday_effect_mults, season_for,
                                   stat_bar, weather_info)
 from app.utils.html_text import esc
+
+# ключ i18n-каталога: запрет обычного ухода в критическом состоянии
+CRIT_MSG = "pet.critical_deny"
 
 
 def _aware(dt: datetime) -> datetime:
@@ -283,6 +287,8 @@ class TamagotchiService:
         """Эффект из item.effect, напр. {"hunger": +25, "happiness": +5}. Кулдаун 60 сек."""
         now = datetime.now(timezone.utc)
         await self.apply_decay(pet, now)
+        if self.is_critical(pet):
+            return t(CRIT_MSG)
         ok, wait = self._check_cooldown(pet, "feed", 60, now)
         if not ok:
             return t("pet.cooldown_feed", sec=wait)
@@ -310,6 +316,8 @@ class TamagotchiService:
         """Мини-игра завершена; won — результат. Кулдаун 120 сек. Тратит энергию."""
         now = datetime.now(timezone.utc)
         await self.apply_decay(pet, now)
+        if self.is_critical(pet):
+            return t(CRIT_MSG)
         if pet.is_sleeping:
             return t("pet.sleeping_deny")
         if pet.energy < 15:
@@ -358,6 +366,8 @@ class TamagotchiService:
     async def sleep(self, pet: Pet, hours: int = 8) -> str:
         now = datetime.now(timezone.utc)
         await self.apply_decay(pet, now)
+        if self.is_critical(pet):
+            return t(CRIT_MSG)
         if pet.is_sleeping:
             return t("pet.already_sleeping")
         pet.is_sleeping = True
@@ -368,6 +378,8 @@ class TamagotchiService:
     async def wash(self, pet: Pet) -> str:
         now = datetime.now(timezone.utc)
         await self.apply_decay(pet, now)
+        if self.is_critical(pet):
+            return t(CRIT_MSG)
         ok, wait = self._check_cooldown(pet, "wash", 300, now)
         if not ok:
             return f"⏳ Мыться можно раз в 5 минут (осталось {wait} сек)."
@@ -394,6 +406,8 @@ class TamagotchiService:
         """Тренировка strength/agility/intellect. Кулдаун 180 сек, тратит энергию."""
         now = datetime.now(timezone.utc)
         await self.apply_decay(pet, now)
+        if self.is_critical(pet):
+            return t(CRIT_MSG)
         if stat not in ("strength", "agility", "intellect"):
             return "❓ Неизвестная тренировка."
         if pet.energy < 20:
@@ -420,6 +434,8 @@ class TamagotchiService:
     async def start_walk(self, pet: Pet, hours: int = 2) -> str:
         now = datetime.now(timezone.utc)
         await self.apply_decay(pet, now)
+        if self.is_critical(pet):
+            return t(CRIT_MSG)
         if pet.walk_until:
             left = int((_aware(pet.walk_until) - now).total_seconds() // 60)
             return t("pet.walk_already", minutes=left)
@@ -534,6 +550,118 @@ class TamagotchiService:
         await session.commit()
         return f"✨ {pet.name} примерил {emoji} {title}! −{price} 🪙"
 
+    # ------------------------------------------------------------------
+    # Жизненный цикл (v1.4.7): критическое состояние → реанимация → усыновление
+    # ------------------------------------------------------------------
+    RECRUIT_PRICE = 200  # монет — реанимация/«новая попытка» вместо жёсткого delete
+
+    def is_critical(self, pet: Pet) -> bool:
+        """Питомец «при смерти»: здоровье на нуле И хотя бы один базовый
+        показатель тоже на нуле. Пока просто 0 по одному стату — ещё можно
+        спасти уходом (лечение/еда), и это мотивирует, а не бесит.
+
+        После реанимации действует grace-период (revive_grace_until): питомец
+        не считается критическим, даже если статы снова упали, — иначе игрок
+        попадал бы в цикл «умер → плати» без шанса спасти уход за монеты."""
+        if pet.health > 0 or min(pet.hunger, pet.happiness,
+                                 pet.energy, pet.hygiene) > 0:
+            return False
+        grace = (pet.settings_extra or {}).get("revive_grace_until")
+        if grace:
+            try:
+                if _aware(datetime.fromisoformat(grace)) > datetime.now(timezone.utc):
+                    return False
+            except (TypeError, ValueError):
+                pass  # мусорное значение — считаем, что grace нет
+        return True
+
+    async def revive(self, pet: Pet) -> str:
+        """Реанимация за revive_cost() монет: статы поднимаются с нуля до 30,
+        болезнь снимается. Возвращает текст результата (деньги списывает
+        вызывающий хендлер — он знает баланс владельца)."""
+        self._apply_revive_mechanics(pet)
+        return f"💖 {esc(pet.name)} откаормлен и полон надежды! Дальше — не запускай уход."
+
+    MAX_REVIVES = 3  # жизней у питомца: после — только усыновление нового
+
+    def revive_cost(self, pet: Pet) -> int:
+        """Стоимость реанимации растёт с каждым разом: 200 → 400 → 600.
+        Возвращает -1, если жизни закончились."""
+        used = int((pet.settings_extra or {}).get("revives_used", 0))
+        if used >= self.MAX_REVIVES:
+            return -1
+        return self.RECRUIT_PRICE * (used + 1)
+
+    def _apply_revive_mechanics(self, pet: Pet) -> None:
+        """Общие механики реанимации: grace-период, счётчик жизней, снятие
+        штрафа скуки. Используется и платным revive, и бесплатным onboarding-revive."""
+        for stat in ("hunger", "happiness", "energy", "hygiene"):
+            setattr(pet, stat, clamp(30.0))
+        pet.health = clamp(30.0)
+        pet.sick_since = None
+        extra = dict(pet.settings_extra or {})
+        now = datetime.now(timezone.utc)
+        extra["revived_at"] = now.isoformat()
+        extra["revive_grace_until"] = (now + timedelta(minutes=30)).isoformat()
+        extra["revives_used"] = int(extra.get("revives_used", 0)) + 1
+        extra.pop("bored_penalty", None)  # иначе при следующем тике снова -15
+        pet.settings_extra = extra
+
+    async def free_revive_for_newbie(self, pet: Pet) -> bool:
+        """Первая реанимация новичка бесплатно: если у пользователя нет монет
+        на платную, но он вообще никогда не реанимировал — дарим шанс.
+        Иначе «смерть» для нового игрока = отвал в первую же неделю."""
+        extra = pet.settings_extra or {}
+        if int(extra.get("free_revive_used", 0)) or int(extra.get("revives_used", 0)):
+            return False
+        self._apply_revive_mechanics(pet)
+        extra = dict(pet.settings_extra or {})
+        extra["free_revive_used"] = 1
+        pet.settings_extra = extra
+        return True
+
+    async def archive_pet(self, session: AsyncSession, pet: Pet,
+                          reason: str = "rehomed") -> None:
+        """«Усыновление» питомца: карточка уходит в историю (is_archived),
+        все связанные логи (кормления/прогулки/дуэли) сохраняются."""
+        pet.is_archived = True
+        pet.archived_at = datetime.now(timezone.utc)
+        pet.archive_reason = reason
+        pet.is_sleeping = False
+        pet.sleep_until = None
+        pet.walk_until = None
+        await session.flush()
+
+    async def adopt_new(self, session: AsyncSession, owner_tg_id: int,
+                        name: str, species_code: str) -> Pet:
+        """Создаёт нового питомца поверх архивного (generation+1)."""
+        from app.db.models import PetSpecies
+        prev_max = (await session.execute(
+            select(func.max(Pet.generation)).where(Pet.user_id == owner_tg_id)
+        )).scalar_one_or_none() or 0
+        try:
+            species = PetSpecies(species_code)
+        except ValueError:
+            species = PetSpecies.cat
+        pet = Pet(user_id=owner_tg_id, name=name[:64], species=species,
+                  generation=prev_max + 1)
+        sp = SPECIES_DATA.get(species.value, SPECIES_DATA["cat"])
+        for k, v in sp["start"].items():
+            setattr(pet, k, v)
+        session.add(pet)
+        await session.flush()
+        return pet
+
+    async def history(self, session: AsyncSession,
+                      owner_tg_id: int) -> list[Pet]:
+        """Архивные питомцы пользователя (старые сверху вниз по поколению)."""
+        rows = (await session.execute(
+            select(Pet).where(Pet.user_id == owner_tg_id,
+                              Pet.is_archived.is_(True))
+            .order_by(Pet.generation.desc())
+        )).scalars().all()
+        return list(rows)
+
     async def add_pet_xp(self, pet: Pet, gained: int) -> list[int]:
         """Начисляет XP питомцу; возвращает список новых уровней (для эволюции)."""
         levels: list[int] = []
@@ -585,4 +713,10 @@ class TamagotchiService:
             pass
         if pet.walk_until:
             lines.append("🚶 Сейчас на прогулке…")
+        if self.is_critical(pet):
+            # v1.4.7: критический баннер прямо в шапке — про него нельзя
+            # «случайно не заметить», а кнопки реанимации/усыновления
+            # появляются на странице «Уход» (см. pet_hub(critical=True)).
+            lines.insert(0, t("pet.critical_banner", name=esc(pet.name)))
+            lines.insert(1, "")
         return "\n".join(lines)

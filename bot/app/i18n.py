@@ -54,6 +54,18 @@ _CATALOG_RU: dict[str, str] = {
     "pet.train_stat": "💪 Сила", "pet.train_agi": "🏃 Ловкость", "pet.train_int": "🧠 Интеллект",
     "pet.cooldown_feed": "⏳ Питомец только что ел! Подожди {sec} сек.",
     "pet.cooldown_generic": "⏳ Перерыв между действиями: {sec} сек.",
+    "pet.critical_deny": "🚨 {name} в критическом состоянии! Обычный уход уже не поможет — "
+                         "нужна «💖 Реанимация» на странице «Уход» (200 🪙).",
+    "pet.critical_banner": "🚨 <b>Критическое состояние!</b> Здоровье и один из показателей на нуле. "
+                           "Спасай: «💖 Реанимация» за 200 🪙 или усынови нового питомца.",
+    "pet.no_more_lives": "🥀 У {name} больше не осталось жизней — реанимация недоступна. "
+                         "Можно только усыновить нового питомца (старый уйдёт в историю).",
+    "pet.revive_done": "💖 {name} реанимирован! За это снято ⭐ {stars}.",
+    "pet.revive_no_money": "💰 Не хватает монет: нужно {need}, у тебя {have}. "
+                           "Зарабатывай активностью в чате!",
+    "pet.not_critical": "✅ Питомец в порядке — реанимация не нужна.",
+    "pet.history_empty": "📜 История пуста: это твой первый питомец!",
+    "pet.history_title": "📜 <b>История питомцев</b>",
     "pet.mood_great": "Великолепно!",
     "pet.mood_good": "Хорошее настроение",
     "pet.mood_ok": "Нормально",
@@ -105,6 +117,18 @@ _CATALOG_EN: dict[str, str] = {
     "pet.train_stat": "💪 Strength", "pet.train_agi": "🏃 Agility", "pet.train_int": "🧠 Intellect",
     "pet.cooldown_feed": "⏳ Just ate! Wait {sec} sec.",
     "pet.cooldown_generic": "⏳ Cooldown: {sec} sec.",
+    "pet.critical_deny": "🚨 {name} is in critical condition! Regular care won't help now — "
+                         "use \"💖 Revive\" on the Care page (200 🪙).",
+    "pet.critical_banner": "🚨 <b>Critical condition!</b> Health and one core stat hit zero. "
+                           "Save it: \"💖 Revive\" for 200 🪙 or adopt a new pet.",
+    "pet.no_more_lives": "🥀 {name} has no lives left — revive is unavailable. "
+                         "You can only adopt a new pet (the old one goes to history).",
+    "pet.revive_done": "💖 {name} revived! It cost ⭐ {stars}.",
+    "pet.revive_no_money": "💰 Not enough coins: need {need}, you have {have}. "
+                           "Earn them by being active in chat!",
+    "pet.not_critical": "✅ Your pet is fine — no revive needed.",
+    "pet.history_empty": "📜 History is empty: this is your first pet!",
+    "pet.history_title": "📜 <b>Pet history</b>",
     "pet.mood_great": "Awesome!",
     "pet.mood_good": "In a good mood",
     "pet.mood_ok": "Fine",

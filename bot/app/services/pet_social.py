@@ -72,7 +72,8 @@ async def suggest_friend(session: AsyncSession, pet: Pet) -> Pet | None:
     lo, hi = max(1, pet.level - 2), pet.level + 2
     friends = {f.id for f in await list_friends(session, pet.id)}
     rows = list((await session.execute(
-        select(Pet).where(Pet.level >= lo, Pet.level <= hi, Pet.id != pet.id)
+        select(Pet).where(Pet.level >= lo, Pet.level <= hi, Pet.id != pet.id,
+                      Pet.is_archived.is_(False))
     )).scalars())
     candidates = [p for p in rows if p.id not in friends]
     if not candidates:

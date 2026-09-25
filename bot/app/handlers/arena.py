@@ -14,6 +14,7 @@ from loguru import logger
 from app.db.repositories import PetRepository, UserRepository
 from app.i18n import t
 from app.keyboards.inline import back_to_main, pet_hub, style_keyboard
+from app.handlers.tamagotchi import set_pet_page
 from app.services.pet_duels import arena_screen, fight
 from app.services.tamagotchi import TamagotchiService
 from app.utils.safe_edit import safe_edit_or_answer
@@ -30,6 +31,7 @@ async def _pet_or_alert(cb: CallbackQuery, session: AsyncSession):
 
 @router.callback_query(F.data == "arena:open")
 async def arena_open(cb: CallbackQuery, session: AsyncSession) -> None:
+    set_pet_page(cb.message.chat.id, 2)  # арена — страница «Досуг»
     text, kb = await arena_screen(session, cb.from_user.id)
     await safe_edit_or_answer(cb.message, text, reply_markup=kb)
     await cb.answer()
@@ -107,6 +109,7 @@ async def _style_screen(cb: CallbackQuery, session: AsyncSession,
 
 @router.callback_query(F.data == "pet:style")
 async def style_open(cb: CallbackQuery, session: AsyncSession) -> None:
+    set_pet_page(cb.message.chat.id, 1)  # гардероб — страница «Вещи»
     pet = await _pet_or_alert(cb, session)
     if pet is None:
         return

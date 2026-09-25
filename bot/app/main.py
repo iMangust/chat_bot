@@ -92,10 +92,44 @@ async def probe_fsm_storage(storage):
         return MemoryStorage()
 
 
+async def _light_migrations(conn) -> None:
+    """Лёгкие инкрементальные миграции для колонок, появившихся после v1.4.6.
+
+    create_all умеет только СОЗДАвать недостающие таблицы, но не добавляет
+    колонки в уже существующие — на живой БД pets без generation/is_archived
+    новый код падал бы с OperationalError. Добавляем колонки идемпотентным
+    ALTER TABLE ... IF NOT EXISTS (Postgres/SQLite 3.35+). Для MySQL-совместимых
+    движок-специфичных случаев в проде — Alembic.
+    """
+    from sqlalchemy import text
+
+    stmts = [
+        # v1.4.7: история питомцев — у пользователя может быть несколько строк
+        # (архив + текущий), «текущий» выбирается фильтром is_archived=False.
+        # Снимаем старый UNIQUE(pets.user_id): в sqlite он встроен в таблицу и
+        # не удаляется DROP INDEX — живой БД нужна ручная пересборка таблицы
+        # (или Alembic); на dev/new-БД create_all делает корректную схему.
+        "ALTER TABLE pets ADD COLUMN IF NOT EXISTS generation INTEGER NOT NULL DEFAULT 1",
+        "ALTER TABLE pets ADD COLUMN IF NOT EXISTS is_archived BOOLEAN NOT NULL DEFAULT 0",
+        "ALTER TABLE pets ADD COLUMN IF NOT EXISTS archived_at DATETIME",
+        "ALTER TABLE pets ADD COLUMN IF NOT EXISTS archive_reason VARCHAR(32)",
+        # защита от «двух текущих» на новых/dev БД (sqlite+PG); на живой sqlite
+        # с инлайновым UNIQUE в таблице команда не проходит и логируется debug'ом
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_pets_current_per_user "
+        "ON pets (user_id) WHERE COALESCE(is_archived, 0) = 0",
+    ]
+    for sql in stmts:
+        try:
+            await conn.execute(text(sql))
+        except Exception as exc:  # noqa: BLE001 — best-effort: старый PG без IF NOT EXISTS и т.п.
+            logger.debug("лёгкая миграция пропущена ({}): {}", sql[:60], type(exc).__name__)
+
+
 async def on_startup(bot: Bot) -> None:
     # схемы (в проде — Alembic; create_all оставлен для dev-скорости)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await _light_migrations(conn)
     async with session_factory() as session:
         await seed_achievements(session)
         await seed_items(session)   # справочник магазина (идемпотентно)

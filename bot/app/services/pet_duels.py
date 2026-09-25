@@ -88,7 +88,8 @@ async def pick_opponent(session: AsyncSession, pet: Pet) -> Pet | None:
     lo, hi = max(1, pet.level - 3), pet.level + 3
     rows = list((await session.execute(
         select(Pet).where(Pet.level >= lo, Pet.level <= hi,
-                          Pet.id != pet.id, Pet.is_sleeping.is_(False))
+                          Pet.id != pet.id, Pet.is_sleeping.is_(False),
+                          Pet.is_archived.is_(False))
         .limit(10)
     )).scalars())
     return random.choice(rows) if rows else None
@@ -164,8 +165,8 @@ async def arena_screen(session: AsyncSession, tg_id: int) -> tuple[str, object]:
     wk = week_key()
     rows = await weekly_top(session, wk, 10)
     pet = (await session.execute(
-        select(Pet).where(Pet.user_id == tg_id)
-    )).scalar_one_or_none()
+        select(Pet).where(Pet.user_id == tg_id, Pet.is_archived.is_(False))
+    )).scalars().first()
     me_pet_id = pet.id if pet else None
     text = arena_text(rows, me_pet_id, wk)
     can_fight = True

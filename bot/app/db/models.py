@@ -77,6 +77,7 @@ class ChatMessageLog(Base):
     __table_args__ = _ta(
         Index("ix_cml_user_created", "user_id", "created_at"),
         Index("ix_cml_chat_created", "chat_id", "created_at"),
+        UniqueConstraint("chat_id", "message_id", name="uq_cml_chat_msg"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -203,7 +204,10 @@ class Pet(Base):
     __tablename__ = "pets"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.tg_id", ondelete="CASCADE"), unique=True)
+    # unique=True снимается в v1.4.7: у пользователя может быть архив прошлых
+    # питомцев (generation/is_archived); «текущий» выбирается фильтром
+    # is_archived=False (PetRepository.get_by_user).
+    user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.tg_id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(String(64))
     species: Mapped[PetSpecies] = mapped_column(Enum(PetSpecies, native_enum=False), default=PetSpecies.cat)
 
@@ -229,6 +233,15 @@ class Pet(Base):
     last_update: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     born_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     settings_extra: Mapped[dict] = mapped_column(JSON, default=dict)  # окрас, аксессуары
+
+    # --- история питомца (v1.4.7): «усыновление» нового вместо удаления старого ---
+    # generation=1 — текущий питомец; предыдущие получают is_archived=True и
+    # попадают в pet_history_screen («предыдущие питомцы»). Так статистика и
+    # ачивки старого питомца не теряются при смене вида/имени.
+    generation: Mapped[int] = mapped_column(Integer, default=1)
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    archive_reason: Mapped[str | None] = mapped_column(String(32))  # rehomed/grew_up
 
     owner: Mapped["User"] = relationship(back_populates="pet")
     inventory: Mapped[list["PetInventory"]] = relationship(back_populates="pet", cascade="all, delete-orphan")

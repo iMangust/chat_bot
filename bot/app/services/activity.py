@@ -331,8 +331,8 @@ class ActivityService:
         }
         # питомец: уровень + агрегаты действий из pet_actions_log (для ачивок тамагочи)
         pet = (await self.session.execute(
-            select(Pet).where(Pet.user_id == user.tg_id)
-        )).scalar_one_or_none()
+            select(Pet).where(Pet.user_id == user.tg_id, Pet.is_archived.is_(False))
+        )).scalars().first()
         if pet is not None:
             from app.db.repositories import PetRepository
             pets = PetRepository(self.session)
@@ -342,11 +342,17 @@ class ActivityService:
         return counters
 
     async def personal_stats(self, tg_id: int) -> dict:
-        """Данные для /stats и карточки профиля."""
+        """Данные для /stats и карточки профиля.
+
+        v1.4.7: добавлена разбивка по типам сообщений (breakdown) — статистика
+        теперь различает текст/фото/стикеры/голос/кружки/reply/упоминания.
+        """
         now = datetime.now(timezone.utc)
         repo = ActivityRepository(self.session)
         return {
             "total": await repo.messages_count(tg_id),
             "week": await repo.messages_count(tg_id, since=now - timedelta(days=7)),
             "day": await repo.messages_count(tg_id, since=_day(now)),
+            "breakdown": await repo.media_breakdown(tg_id),
+            "breakdown_week": await repo.media_breakdown(tg_id, since=now - timedelta(days=7)),
         }

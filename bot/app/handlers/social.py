@@ -17,6 +17,7 @@ from app.services.achievements import AchievementService
 from app.services.pet_social import (MAX_FRIENDS, list_friends, make_friends,
                                      render_friend_list, suggest_friend)
 from app.services.profile_card import get_or_render_card
+from app.handlers.tamagotchi import set_pet_page
 from app.services.tamagotchi import SPECIES_DATA
 from app.utils.safe_edit import safe_edit_or_answer
 
@@ -27,11 +28,12 @@ def _friend_kb(pet_name: str, other_id: int) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text=f"🤝 Познакомиться с {pet_name}", callback_data=f"fr:add:{other_id}")
     kb.row()
-    kb.button(text="⬅️ К питомцу", callback_data="menu:pet")
+    kb.button(text="🐾 К питомцу", callback_data="menu:pet")
     return kb.as_markup()
 
 
 async def _friends_screen(cb: CallbackQuery, session: AsyncSession, note: str = "") -> None:
+    set_pet_page(cb.message.chat.id, 2)  # друзья — страница «Досуг»
     pet = await PetRepository(session).get_by_user(cb.from_user.id)
     if pet is None:
         await cb.answer("Сначала заведи питомца!", show_alert=True)

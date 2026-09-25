@@ -32,7 +32,8 @@ async def decay_all_pets(bot: Bot) -> None:
         return
     try:
         async with session_factory() as session:
-            pets = list((await session.execute(select(Pet))).scalars())
+            pets = list((await session.execute(
+                select(Pet).where(Pet.is_archived.is_(False)))).scalars())
             svc = TamagotchiService(session)
             warned = 0
             min_h = get_settings().pet_warning_min_hours
@@ -165,8 +166,8 @@ async def daily_reports(bot: Bot) -> None:
                 if stats_today == 0:
                     continue  # не было активности — не дёргаем лишний раз
                 pet = (await session.execute(
-                    select(Pet).where(Pet.user_id == u.tg_id)
-                )).scalar_one_or_none()
+                    select(Pet).where(Pet.user_id == u.tg_id, Pet.is_archived.is_(False))
+                )).scalars().first()
                 text = await build_daily_report(u, pet, stats_today, rank=None)
                 await queue_notification(session, int(u.tg_id), "daily", text)
                 sent += 1

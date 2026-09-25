@@ -1,8 +1,6 @@
-# Compiled and build artifacts
 __pycache__/
 *.pyc
-
-# Environment
 .env
-.env.local
-*.env.*
+logs/
+venv/
+*.sqlite3

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select, update
+from sqlalchemy import Integer, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -159,8 +159,27 @@ class ActivityRepository:
         self.session = session
 
     async def log_message(self, entry: ChatMessageLog) -> ChatMessageLog:
-        self.session.add(entry)
-        await self.session.flush()
+        """Пишет запись лога, идемпотентно по (chat_id, message_id).
+
+        Telegram может доставить один и тот же апдейт повторно (ретраи
+        long-polling/webhook после таймаута) — без upsert это либо плодило
+        дубли в статистике, либо падало на уникальном индексе.
+        on_conflict_do_nothing есть и в sqlite-, и в postgres-диалектах.
+        """
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+        dialect = self.session.bind.dialect.name if self.session.bind else "sqlite"
+        insert = pg_insert if dialect == "postgresql" else sqlite_insert
+        stmt = insert(ChatMessageLog).values(
+            user_id=entry.user_id, chat_id=entry.chat_id,
+            message_id=entry.message_id, length=entry.length,
+            has_media=entry.has_media, media_type=entry.media_type,
+            is_reply=entry.is_reply, mentions_count=entry.mentions_count,
+            is_counted=entry.is_counted, skip_reason=entry.skip_reason,
+            created_at=entry.created_at,
+        ).on_conflict_do_nothing(index_elements=["chat_id", "message_id"])
+        await self.session.execute(stmt)
         return entry
 
     async def messages_count(self, tg_id: int, since: datetime | None = None) -> int:
@@ -203,6 +222,45 @@ class ActivityRepository:
         for d, c in rows:
             key = d if isinstance(d, str) else d.isoformat()
             out[key] = int(c)
+        return out
+
+    async def media_breakdown(self, tg_id: int,
+                              since: datetime | None = None) -> dict[str, int]:
+        """Разбивка засчитанных сообщений по типам (v1.4.7).
+
+        Ключи: text / photo / video / audio(голос+музыка) / voice / video_note
+        (кружок) / sticker / animation / document / poll / other; отдельно —
+        reply (ответы) и mentions (сумма упоминаний). Специальные флаги
+        is_reply/mentions_count складываются поверх типа, поэтому один и тот
+        же message может попасть и в «photo», и в «reply».
+        """
+        cond = [ChatMessageLog.user_id == tg_id, ChatMessageLog.is_counted.is_(True)]
+        if since is not None:
+            cond.append(ChatMessageLog.created_at >= since)
+        stmt = (
+            select(ChatMessageLog.media_type, func.count(),
+                   func.coalesce(func.sum(ChatMessageLog.is_reply.cast(Integer)), 0),
+                   func.coalesce(func.sum(ChatMessageLog.mentions_count), 0))
+            .where(*cond)
+            .group_by(ChatMessageLog.media_type)
+        )
+        rows = (await self.session.execute(stmt)).all()
+        out: dict[str, int] = {}
+        replies = 0
+        mentions = 0
+        known = {"text", "voice", "audio", "video_note", "video", "animation",
+                 "sticker", "photo", "document", "poll"}
+        for mtype, cnt, rep, men in rows:
+            # None/"" — обычное текстовое сообщение; всё прочее неизвестное → other
+            mt = (mtype or "").lower()
+            key = mt if mt in known else ("text" if not mt else "other")
+            out[key] = out.get(key, 0) + int(cnt)
+            replies += int(rep or 0)
+            mentions += int(men or 0)
+        if replies:
+            out["reply"] = replies
+        if mentions:
+            out["mentions"] = mentions
         return out
 
     async def bump_counters(self, tg_id: int) -> None:
@@ -251,8 +309,15 @@ class PetRepository:
         self.session = session
 
     async def get_by_user(self, user_id: int) -> Pet | None:
-        stmt = select(Pet).where(Pet.user_id == user_id)
-        return (await self.session.execute(stmt)).scalar_one_or_none()
+        """Текущий (неархивный) питомец пользователя.
+
+        v1.4.7: питомцы больше не удаляются при «смене» — старый уходит в
+        архив (is_archived), поэтому без этого фильтра select вернул бы
+        несколько строк и упал с MultipleResultsFound.
+        """
+        stmt = select(Pet).where(Pet.user_id == user_id,
+                                 Pet.is_archived.is_(False))
+        return (await self.session.execute(stmt)).scalars().first()
 
     async def create(self, pet: Pet) -> Pet:
         self.session.add(pet)

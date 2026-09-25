@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import Integer, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (ChatMessageLog, LeaderboardSnapshot, Pet, ReactionLog,
@@ -59,22 +59,105 @@ async def top_reactions(session: AsyncSession, since: datetime | None,
     return [(u, c) for u, c in (await session.execute(q)).all() if c > 0]
 
 
-async def top_levels(session: AsyncSession, limit: int = 10) -> list[User]:
-    return list((await session.execute(
-        select(User).order_by(User.level.desc(), User.xp.desc()).limit(limit)
+async def top_reactions_given(session: AsyncSession, since: datetime | None,
+                              limit: int = 10) -> list[tuple[User, int]]:
+    """Топ по ПОСТАВЛЕННЫМ реакциям (v1.4.7, номинация «Самый эмоциональный»)."""
+    if since is None:
+        rows = list((await session.execute(
+            select(User).order_by(User.reactions_given.desc()).limit(limit)
+        )).scalars())
+        return [(u, u.reactions_given) for u in rows if u.reactions_given > 0]
+    cnt = func.count(ReactionLog.id).label("c")
+    q = (select(User, cnt)
+         .join(ReactionLog, ReactionLog.from_user == User.tg_id)
+         .where(ReactionLog.created_at >= since)
+         .group_by(User.tg_id).order_by(cnt.desc()).limit(limit))
+    return [(u, c) for u, c in (await session.execute(q)).all() if c > 0]
+
+
+async def top_karma(session: AsyncSession, since: datetime | None,
+                    limit: int = 10) -> list[tuple[User, int]]:
+    """«Добрый» топ (v1.4.7): забота об общении — ответы + упоминания."""
+    cond = [ChatMessageLog.is_counted.is_(True)]
+    if since is not None:
+        cond.append(ChatMessageLog.created_at >= since)
+    karma = (func.coalesce(func.sum(ChatMessageLog.is_reply.cast(Integer)), 0)
+             + func.coalesce(func.sum(ChatMessageLog.mentions_count), 0)).label("k")
+    q = (select(User, karma)
+         .join(ChatMessageLog, ChatMessageLog.user_id == User.tg_id)
+         .where(*cond)
+         .group_by(User.tg_id).order_by(karma.desc()).limit(limit))
+    return [(u, int(k)) for u, k in (await session.execute(q)).all() if k and int(k) > 0]
+
+
+async def top_emotional(session: AsyncSession, since: datetime | None,
+                        limit: int = 10) -> list[tuple[User, int]]:
+    """«Самый эмоциональный» (v1.4.7): сумма поставленных + полученных реакций."""
+    given = await top_reactions_given(session, since, 50)
+    received = dict(await top_reactions(session, since, 50))
+    total: dict[int, tuple[User, int]] = {}
+    for u, c in given:
+        total[u.tg_id] = (u, c + received.get(u.tg_id, 0))
+    for u, c in received.items():
+        if u.tg_id not in total:
+            total[u.tg_id] = (u, c)
+    ranked = sorted(total.values(), key=lambda x: -x[1])[:limit]
+    return [(u, c) for u, c in ranked if c > 0]
+
+
+async def overall_top(session: AsyncSession, since: datetime | None,
+                      limit: int = 10) -> list[tuple[User, float, dict[str, int]]]:
+    """Усреднённый топ (v1.4.7): сумма мест по всем номинациям, меньше — лучше.
+
+    Возвращает [(user, avg_place, {section: place})]; в расчёт берутся только
+    участники хотя бы одного локального топа (остальные не ранжированы).
+    """
+    sections: dict[str, list[tuple[User, int]]] = {
+        "talk": await top_messages(session, since, 20),
+        "react": await top_reactions(session, since, 20),
+        "emotional": await top_emotional(session, since, 20),
+        "streak": await top_streaks(session, 20),
+        "levels": await top_levels(session, 20),
+        "karma": await top_karma(session, since, 20),
+    }
+    places: dict[int, dict[str, int]] = {}
+    users: dict[int, User] = {}
+    n = max(len(v) for v in sections.values()) if any(sections.values()) else 0
+    for name, rows in sections.items():
+        for i, (u, _c) in enumerate(rows, start=1):
+            users.setdefault(u.tg_id, u)
+            places.setdefault(u.tg_id, {})[name] = i
+    out: list[tuple[User, float, dict[str, int]]] = []
+    for uid, per in places.items():
+        # среднее по секциям, где пользователь засветился; бонус за широту:
+        # отсутствие в секции = место n+1 (штраф, чтобы «всё понемногу»
+        # выигрывало у «чемпион в одном»)
+        score = sum(per.get(s, n + 1) for s in sections) / len(sections)
+        out.append((users[uid], round(score, 2), per))
+    out.sort(key=lambda x: x[1])
+    return out[:limit]
+
+
+async def top_levels(session: AsyncSession, limit: int = 10) -> list[tuple[User, int]]:
+    users = list((await session.execute(
+        select(User).where(User.level > 0)
+        .order_by(User.level.desc(), User.xp.desc()).limit(limit)
     )).scalars())
+    return [(u, u.level) for u in users]
 
 
-async def top_streaks(session: AsyncSession, limit: int = 10) -> list[User]:
-    return list((await session.execute(
+async def top_streaks(session: AsyncSession, limit: int = 10) -> list[tuple[User, int]]:
+    users = list((await session.execute(
         select(User).where(User.streak_days > 0)
         .order_by(User.streak_days.desc()).limit(limit)
     )).scalars())
+    return [(u, u.streak_days) for u in users]
 
 
 async def top_pets(session: AsyncSession, limit: int = 10) -> list[tuple[Pet, str]]:
     rows = (await session.execute(
         select(Pet, User.first_name).join(User, User.tg_id == Pet.user_id)
+        .where(Pet.is_archived.is_(False))
         .order_by(Pet.level.desc(), Pet.xp.desc()).limit(limit)
     )).all()
     return [(p, name) for p, name in rows]

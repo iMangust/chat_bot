@@ -16,8 +16,12 @@ from loguru import logger
 
 from app.db.models import Pet
 from app.db.repositories import PetRepository, UserRepository
-from app.keyboards.inline import back_to_main, pet_hub, train_menu
+from app.i18n import t
+from app.keyboards.inline import (PET_PAGES, adopt_cta_kb, back_to_main,
+                                   pet_history_kb, pet_hub,
+                                   pet_page_count, train_menu)
 from app.utils.safe_edit import safe_edit_or_answer
+from app.utils.html_text import esc
 from app.services.tamagotchi import (SPECIES_DATA, TamagotchiService, _aware,
                                      _species_key)
 
@@ -27,6 +31,26 @@ _aware_dt = _aware  # алиас: walk_until из БД может быть naive
 
 async def _get_pet(session: AsyncSession, tg_id: int) -> Pet | None:
     return await PetRepository(session).get_by_user(tg_id)
+
+
+# ---------------------------------------------------------------------------
+# UX v1.4.7: страницы хаба питомца. Кнопки «🏠 Меню» / «⬅️ Назад» с подэкранов
+# (магазин, игры, друзья, арена, стиль) возвращают не на «нулевую» страницу,
+# а туда, откуда пользователь пришёл — страница запоминается per-chat.
+# ---------------------------------------------------------------------------
+
+_PET_PAGE_CTX: dict[int, int] = {}
+
+
+def pet_page_for(chat_id: int) -> int:
+    """Последняя открытая страница хаба для этого чата (0 по умолчанию)."""
+    return _PET_PAGE_CTX.get(int(chat_id), 0) % max(1, pet_page_count())
+
+
+def set_pet_page(chat_id: int, page: int) -> int:
+    page %= max(1, pet_page_count())
+    _PET_PAGE_CTX[int(chat_id)] = page
+    return page
 
 
 def _collect_walk_result(svc: TamagotchiService, pet: Pet, session: AsyncSession):
@@ -83,11 +107,13 @@ async def cmd_pet(message: Message, session: AsyncSession) -> None:
     users = UserRepository(session)
     user = await users.get(message.from_user.id)
     await message.answer(svc.render(pet, user.first_name if user else ""),
-                         reply_markup=pet_hub(), parse_mode="HTML")
+                         reply_markup=pet_hub(pet_page_for(message.chat.id)),
+                         parse_mode="HTML")
 
 
 @router.callback_query(F.data == "menu:pet")
 async def pet_screen(cb: CallbackQuery, session: AsyncSession) -> None:
+    """Открыть хаб питомца на последней посещённой странице."""
     svc = TamagotchiService(session)
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
@@ -101,7 +127,171 @@ async def pet_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     users = UserRepository(session)
     user = await users.get(cb.from_user.id)
     text = svc.render(pet, user.first_name if user else "")
-    await safe_edit_or_answer(cb.message, text, reply_markup=pet_hub())
+    await safe_edit_or_answer(cb.message, text,
+                              reply_markup=pet_hub(pet_page_for(cb.message.chat.id)))
+    await cb.answer()
+
+
+@router.callback_query(F.data == "pet:page:0")
+@router.callback_query(F.data.startswith("pet:page:"))
+async def pet_page_screen(cb: CallbackQuery, session: AsyncSession) -> None:
+    """Навигация ◀️/▶️ по страницам хаба (Уход → Вещи → Досуг)."""
+    try:
+        page = int(cb.data.split(":")[-1])
+    except ValueError:
+        page = 0
+    page = set_pet_page(cb.message.chat.id, page)
+    svc = TamagotchiService(session)
+    pet = await _get_pet(session, cb.from_user.id)
+    if pet is None:
+        # v1.4.7: питомец — опция. Без него показываем не «ошибку», а экран
+        # с приглашением завести (или просто вернуться в меню).
+        await safe_edit_or_answer(cb.message,
+            "🥚 У тебя пока нет питомца — но играть всё равно можно!\n\n"
+            "• 🏅 Топы и 📊 Статы работают без питомца;\n"
+            "• питомца можно завести в любой момент кнопкой ниже;\n"
+            "• если передумаешь — в ⚙️ Настройках есть «🐣 Завести питомец».",
+            reply_markup=adopt_cta_kb(),
+        )
+        await cb.answer()
+        return
+    await svc.apply_decay(pet)
+    title = PET_PAGES[page][0]
+    hint = {0: "Здесь базовый уход — делай его каждый день ✨",
+            1: "Предметы, покупки и гардероб питомца 🎒",
+            2: "Развлечения и социалка: игры, прогулки, друзья, бои 🥊"}[page]
+    crit = svc.is_critical(pet)
+    extra = ""
+    if crit:
+        cost = svc.revive_cost(pet)
+        extra = ("\n\n⚠️ Обычный уход заблокирован — спасай реанимацией "
+                 f"за {cost} 🪙 или усыновляй нового." if cost > 0 else
+                 "\n\n⚠️ Жизней больше нет — можно только усыновить нового.")
+    await safe_edit_or_answer(
+        cb.message,
+        f"{svc.render(pet)}\n\n<i>{title} · {hint}</i>{extra}",
+        reply_markup=pet_hub(page, critical=crit),
+    )
+    await cb.answer()
+
+
+@router.callback_query(F.data == "pet:revive")
+async def act_revive(cb: CallbackQuery, session: AsyncSession) -> None:
+    """💖 Реанимация (v1.4.7): платная, цена растёт 200→400→600, максимум 3 раза.
+    Новичку без монет первая реанимация — бесплатно (one-shot), чтобы смерть
+    на первой неделе не убивала мотивацию."""
+    svc = TamagotchiService(session)
+    pet = await _get_pet(session, cb.from_user.id)
+    if pet is None:
+        return await cb.answer()
+    await svc.apply_decay(pet)
+    if not svc.is_critical(pet):
+        await safe_edit_or_answer(
+            cb.message, svc.render(pet),
+            reply_markup=pet_hub(pet_page_for(cb.message.chat.id)))
+        return await cb.answer(t("pet.not_critical"), show_alert=True)
+    users = UserRepository(session)
+    user = await users.get(cb.from_user.id)
+    cost = svc.revive_cost(pet)
+    if cost < 0:
+        # жизни кончились: сразу предлагаем усыновление
+        await safe_edit_or_answer(
+            cb.message,
+            f"{svc.render(pet)}\n\n" + t("pet.no_more_lives", name=esc(pet.name)),
+            reply_markup=pet_hub(0, critical=True))
+        return await cb.answer()
+    have = user.coins if user else 0
+    if have < cost:
+        if user and await svc.free_revive_for_newbie(pet):
+            await PetRepository(session).log_action(pet.id, "revive_free")
+            await session.commit()
+            return await cb.answer("🎁 Первая реанимация — бесплатная! Береги питомца 💖",
+                                   show_alert=True)
+        await session.commit()
+        return await cb.answer(
+            t("pet.revive_no_money", need=cost, have=have), show_alert=True)
+    result = await svc.revive(pet)
+    await users.add_coins(user.tg_id, -cost)
+    await PetRepository(session).log_action(pet.id, "revive", value=cost)
+    await session.commit()
+    await safe_edit_or_answer(
+        cb.message,
+        f"{result}\n\n" + svc.render(pet),
+        reply_markup=pet_hub(pet_page_for(cb.message.chat.id)))
+    await cb.answer(f"⭐ −{cost}")
+
+
+@router.callback_query(F.data == "pet:adopt")
+async def pet_adopt_screen(cb: CallbackQuery, session: AsyncSession) -> None:
+    """🥚 «Усыновить нового»: архивируем текущего (с подтверждением через
+    повторное нажатие) и открываем пикер вида."""
+    svc = TamagotchiService(session)
+    pet = await _get_pet(session, cb.from_user.id)
+    if pet is None:
+        # нет текущего — просто заводим с нуля (тот же флоу, что онбординг)
+        from app.keyboards.inline import species_picker
+        return await safe_edit_or_answer(
+            cb.message,
+            "🐣 Выбери питомца — у каждого свой характер и бонусы:\n\n"
+            + _species_picker_text(),
+            reply_markup=species_picker())
+    state = (_ADOPT_CTX.get(cb.from_user.id) or {}).get("stage")
+    if state != "confirm":
+        _ADOPT_CTX[cb.from_user.id] = {"stage": "confirm", "pet_id": pet.id}
+        return await safe_edit_or_answer(
+            cb.message,
+            f"⚠️ Ты уверен, что хочешь усыновить нового питомца?\n\n"
+            f"Текущий — <b>{esc(pet.name)}</b> (ур. {pet.level}, поколении "
+            f"{pet.generation}) — уйдёт в историю 📜: его уровень, ачивки и логи "
+            "сохранятся, но прогресс не перенесётся.\n\n"
+            "Нажми ещё раз для подтверждения или вернись назад.",
+            reply_markup=back_to_main())
+    # подтверждено: архивируем и показываем пикер
+    repo = PetRepository(session)
+    current = await repo.get_by_user(cb.from_user.id)
+    if current and current.id == _ADOPT_CTX[cb.from_user.id].get("pet_id"):
+        await svc.archive_pet(session, current, reason="rehomed")
+        await session.commit()
+    _ADOPT_CTX.pop(cb.from_user.id, None)
+    from app.keyboards.inline import species_picker
+    await safe_edit_or_answer(
+        cb.message,
+        "🐣 Прежний питомец пристроен в историю. Выбери нового:\n\n"
+        + _species_picker_text(),
+        reply_markup=species_picker())
+    await cb.answer()
+
+
+def _species_picker_text() -> str:
+    from app.services.tamagotchi import SPECIES_DATA
+    lines = []
+    for code, sp in SPECIES_DATA.items():
+        bonus = ", ".join(f"{k}: {v}" for k, v in sp.get("bonus", {}).items()) \
+            if sp.get("bonus") else "без особых бонусов"
+        lines.append(f"{sp['emoji']} <b>{sp['title']}</b> — {bonus}")
+    return "\n".join(lines)
+
+
+@router.callback_query(F.data == "pet:history")
+async def pet_history_screen(cb: CallbackQuery, session: AsyncSession) -> None:
+    """📜 Экран истории питомцев (v1.4.7): все архивные поколения владельца."""
+    svc = TamagotchiService(session)
+    pets = await svc.history(session, cb.from_user.id)
+    current = await _get_pet(session, cb.from_user.id)
+    if not pets:
+        text = ("📜 <b>История питомцев</b>\n\n" + t("pet.history_empty"))
+    else:
+        lines = [t("pet.history_title"), ""]
+        for p in pets:
+            when = _aware(p.archived_at).strftime("%d.%m.%Y") if p.archived_at else "?"
+            reason = {"rehomed": "усыновлён (смена питомца)",
+                      "grew_up": "вырос и улетел 🕊"}.get(p.archive_reason or "", "в архиве")
+            lines.append(f"🐾 Поколение {p.generation}: <b>{esc(p.name)}</b> "
+                         f"· ур. {p.level} · {p.species.value if hasattr(p.species, 'value') else p.species}"
+                         f"\n   ↳ {reason}, {when}")
+        text = "\n".join(lines)
+    await safe_edit_or_answer(cb.message, text,
+                              reply_markup=pet_history_kb(has_current=current is not None))
     await cb.answer()
 
 
@@ -132,7 +322,7 @@ async def _after_action(cb: CallbackQuery, session: AsyncSession, result_text: s
     try:
         await safe_edit_or_answer(cb.message, 
             f"{prefix}{result_text}\n\n" + svc.render(pet),
-            reply_markup=pet_hub(),
+            reply_markup=pet_hub(pet_page_for(cb.message.chat.id)),
         )
     finally:
         # ВАЖНО: коммит в finally — Telegram-редактирование не откатить, а без
@@ -205,6 +395,7 @@ async def train_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
         return await cb.answer()
+    set_pet_page(cb.message.chat.id, 0)  # тренировки — страница «Уход»
     sp = SPECIES_DATA.get(_species_key(pet), SPECIES_DATA["cat"])
     lines = [
         f"🏋️ <b>Тренировки {pet.name}</b>\n",

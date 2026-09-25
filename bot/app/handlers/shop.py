@@ -23,6 +23,7 @@ from app.config import get_settings
 from app.db.models import Item, PetInventory, User
 from app.db.repositories import PetRepository, UserRepository
 from app.keyboards.inline import back_to_main, pet_hub
+from app.handlers.tamagotchi import set_pet_page
 from app.services.tamagotchi import TamagotchiService
 from app.utils.safe_edit import safe_edit_or_answer
 
@@ -83,6 +84,7 @@ def shop_keyboard(items: list[Item], user_coins: int) -> "InlineKeyboardBuilder 
 
 @router.callback_query(F.data.in_({"menu:shop", "pet:shop"}))
 async def shop_screen(cb: CallbackQuery, session: AsyncSession) -> None:
+    set_pet_page(cb.message.chat.id, 1)  # «Назад» из магазина вернёт на стр. «Вещи»
     users = UserRepository(session)
     user = await users.get(cb.from_user.id)
     if user is None:
@@ -179,7 +181,7 @@ async def inventory_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     if not rows:
         await safe_edit_or_answer(cb.message, 
             "🎒 Инвентарь пуст. Загляни в 🛒 Магазин!",
-            reply_markup=pet_hub(),
+            reply_markup=pet_hub(1),
         )
         await cb.answer()
         return
@@ -238,7 +240,8 @@ async def use_item(cb: CallbackQuery, session: AsyncSession) -> None:
     await session.flush()
     await pets.log_action(pet.id, "use", meta={"item": item.code})
     try:
-        await safe_edit_or_answer(cb.message, f"{result}\n\n" + svc.render(pet), reply_markup=pet_hub())
+        await safe_edit_or_answer(cb.message, f"{result}\n\n" + svc.render(pet),
+                                  reply_markup=pet_hub(1))
     finally:
         # коммит в finally: edit уже неотменить, а без commit'а при сетевом
         # сбое middleware откатит сессию — предмет исчез бы из UI, но остался

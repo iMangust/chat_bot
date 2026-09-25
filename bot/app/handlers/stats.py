@@ -15,7 +15,8 @@ from sqlalchemy import select
 from app.db.models import ChatMessageLog
 from app.keyboards.inline import (achievements_list, back_to_main, main_menu,
                                   top_tabs)
-from app.services.leaderboard import (top_levels, top_messages, top_pets,
+from app.services.leaderboard import (overall_top, top_emotional, top_karma,
+                                      top_levels, top_messages, top_pets,
                                       top_reactions, top_streaks)
 from app.services.activity import ActivityService
 from app.services.achievements import AchievementService
@@ -65,8 +66,41 @@ async def stats_screen(cb: CallbackQuery, session: AsyncSession) -> None:
         f"🔥 Серия: {user.streak_days} дн. (рекорд {user.best_streak})\n"
         f"🐣 Питомец: {user.pet_name or 'ещё не заведён'}"
     )
+    breakdown = _breakdown_text(st.get("breakdown") or {})
+    if breakdown:
+        text += f"\n\n🧩 Из чего состоят сообщения:\n{breakdown}"
     await safe_edit_or_answer(cb.message, text, reply_markup=back_to_main())
     await cb.answer()
+
+
+# порядок и подписи типов в разбивке статистики (v1.4.7)
+MEDIA_LABELS: list[tuple[str, str]] = [
+    ("text", "💬 текст"), ("photo", "🖼 фото"), ("sticker", "🎴 стикеры"),
+    ("voice", "🎤 голосовые"), ("video_note", "⭕️ кружки"), ("video", "🎬 видео"),
+    ("animation", "✨ анимации"), ("audio", "🎵 музыка"), ("document", "📎 файлы"),
+    ("poll", "📊 опросы"), ("other", "📦 прочее"),
+    ("reply", "↩️ ответы"), ("mentions", "@ упоминания"),
+]
+
+
+def _breakdown_text(breakdown: dict[str, int], top: int = 8) -> str:
+    """ Компактные строки «тип — кол-во» с долей от всех сообщений."""
+    total_msgs = sum(v for k, v in breakdown.items() if k not in ("reply", "mentions"))
+    if not total_msgs:
+        return ""
+    lines = []
+    for key, label in MEDIA_LABELS:
+        cnt = breakdown.get(key)
+        if not cnt:
+            continue
+        if key in ("reply", "mentions"):
+            lines.append(f"   {label}: {cnt}")
+        else:
+            share = round(cnt * 100 / total_msgs)
+            lines.append(f"   {label}: {cnt} ({share}%)")
+        if len(lines) >= top:
+            break
+    return "\n".join(lines)
 
 
 def _render_achievements(items, page: int = 0, page_size: int = 8) -> tuple[str, int, int]:
@@ -127,75 +161,140 @@ def _since_for(period: str, now) -> datetime | None:
     return None
 
 
-async def _top_screen_text(session: AsyncSession, period: str) -> tuple[str, int | None]:
-    """Возвращает (текст топа, место текущего юзера в 💬-топе или None)."""
+async def _top_section(session: AsyncSession, period: str, section: str) -> str:
+    """Один раздел топа (UX v1.4.7): раньше все пять топов были в одном
+    длинном сообщении — теперь по одному на страницу навигации."""
     now = datetime.now(timezone.utc)
     since = _since_for(period, now)
-    lines = [f"🏅 <b>Топы чата · {PERIODS[period]}</b>\n"]
-
-    talkers = await top_messages(session, since, 10)
+    lines = [f"🏅 <b>Топы чата · {PERIODS[period]} · {section_label(section)[0]} {section_label(section)[1]}</b>\n"]
     my_rank = None
-    lines.append("💬 <b>Болтуны</b>")
-    if not talkers:
-        lines.append("   пока пусто — будь первым! 💬")
-    for i, (u, c) in enumerate(talkers, start=1):
-        m = _medal(i)
-        name = html.escape(u.first_name or "")
-        me = " 👈 <i>это ты</i>" if u.tg_id == _TOP_CTX.get("me") else ""
-        if u.tg_id == _TOP_CTX.get("me"):
-            my_rank = i
-        lines.append(f"{m} {name} — {c} сообщ. (ур. {u.level}){me}")
 
-    reactors = await top_reactions(session, since, 5)
-    if reactors:
-        lines.append("\n💖 <b>По полученным реакциям</b>")
+    if section == "talk":
+        talkers = await top_messages(session, since, 10)
+        lines.append("💬 <b>Болтуны (сообщения)</b>")
+        if not talkers:
+            lines.append("   пока пусто — будь первым! 💬")
+        for i, (u, c) in enumerate(talkers, start=1):
+            me = " 👈 <i>это ты</i>" if u.tg_id == _TOP_CTX.get("me") else ""
+            if u.tg_id == _TOP_CTX.get("me"):
+                my_rank = i
+            lines.append(f"{_medal(i)} {html.escape(u.first_name or '')} — {c} сообщ. (ур. {u.level}){me}")
+    elif section == "react":
+        reactors = await top_reactions(session, since, 10)
+        lines.append("💖 <b>По полученным реакциям</b>")
+        if not reactors:
+            lines.append("   пока пусто 💖")
         for i, (u, c) in enumerate(reactors, start=1):
-            lines.append(f"{_medal(i)} {html.escape(u.first_name or '')} — {c}")
-
-    streaks = await top_streaks(session, 5)
-    if streaks:
-        lines.append("\n🔥 <b>Серии дней</b>")
-        for i, u in enumerate(streaks, start=1):
-            lines.append(f"{_medal(i)} {html.escape(u.first_name or '')} — {u.streak_days} дн.")
-
-    pets = await top_pets(session, 5)
-    if pets:
-        lines.append("\n🐾 <b>Питомцы</b>")
+            me = " 👈 <i>это ты</i>" if u.tg_id == _TOP_CTX.get("me") else ""
+            lines.append(f"{_medal(i)} {html.escape(u.first_name or '')} — {c}{me}")
+    elif section == "emotional":
+        emo = await top_emotional(session, since, 10)
+        lines.append("🎭 <b>Самые эмоциональные (поставил + получил)</b>")
+        if not emo:
+            lines.append("   пока пусто 🎭")
+        for i, (u, c) in enumerate(emo, start=1):
+            me = " 👈 <i>это ты</i>" if u.tg_id == _TOP_CTX.get("me") else ""
+            lines.append(f"{_medal(i)} {html.escape(u.first_name or '')} — {c} р. {progress_bar(c, emo[0][1], 6)}{me}")
+    elif section == "karma":
+        karma = await top_karma(session, since, 10)
+        lines.append("💚 <b>Добряки (ответы + упоминания)</b>")
+        if not karma:
+            lines.append("   пока пусто 💚")
+        for i, (u, c) in enumerate(karma, start=1):
+            me = " 👈 <i>это ты</i>" if u.tg_id == _TOP_CTX.get("me") else ""
+            lines.append(f"{_medal(i)} {html.escape(u.first_name or '')} — {c} взаим. {progress_bar(c, karma[0][1], 6)}{me}")
+    elif section == "overall":
+        overall = await overall_top(session, since, 10)
+        lines.append("👑 <b>Общий топ (среднее место по всем номинациям)</b>")
+        if not overall:
+            lines.append("   пока пусто 👑")
+        marks = {"talk": "💬", "react": "💖", "emotional": "🎭",
+                 "streak": "🔥", "levels": "⭐", "karma": "💚"}
+        for i, (u, score, per) in enumerate(overall, start=1):
+            me = " 👈 <i>это ты</i>" if u.tg_id == _TOP_CTX.get("me") else ""
+            detail = " ".join(f"{marks.get(s, '?')}{p}" for s, p in
+                              sorted(per.items(), key=lambda kv: kv[1])[:4])
+            lines.append(f"{_medal(i)} {html.escape(u.first_name or '')} — "
+                         f"рейтинг {score:.1f} ({detail}){me}")
+    elif section == "streak":
+        streaks = await top_streaks(session, 10)
+        lines.append("🔥 <b>Серии дней подряд</b>")
+        if not streaks:
+            lines.append("   пока пусто 🔥")
+        for i, (u, days) in enumerate(streaks, start=1):
+            me = " 👈 <i>это ты</i>" if u.tg_id == _TOP_CTX.get("me") else ""
+            lines.append(f"{_medal(i)} {html.escape(u.first_name or '')} — {days} дн.{me}")
+    elif section == "pets":
+        pets = await top_pets(session, 10)
+        lines.append("🐾 <b>Питомцы (по уровню)</b>")
+        if not pets:
+            lines.append("   пока пусто 🐾")
         for i, (p, owner) in enumerate(pets, start=1):
             lines.append(f"{_medal(i)} {html.escape(p.name)} (ур. {p.level}) · {html.escape(owner or '')}")
-
-    levels = await top_levels(session, 5)
-    if levels:
-        lines.append("\n🏅 <b>Уровни игроков</b>")
-        for i, u in enumerate(levels, start=1):
-            lines.append(f"{_medal(i)} {html.escape(u.first_name or '')} — ур. {u.level}")
+    else:  # levels
+        levels = await top_levels(session, 10)
+        lines.append("⭐ <b>Уровни игроков</b>")
+        if not levels:
+            lines.append("   пока пусто ⭐")
+        for i, (u, lvl) in enumerate(levels, start=1):
+            me = " 👈 <i>это ты</i>" if u.tg_id == _TOP_CTX.get("me") else ""
+            lines.append(f"{_medal(i)} {html.escape(u.first_name or '')} — ур. {lvl}{me}")
 
     lines.append("\n<i>/award — итоги прошлой недели с призами 🎁</i>")
-    return "\n".join(lines), my_rank
+    return "\n".join(lines)
+
+
+TOP_SECTIONS: list[tuple[str, str]] = [
+    ("overall", "👑 Общий"), ("talk", "💬 Болтуны"), ("react", "💖 Реакции"),
+    ("emotional", "🎭 Эмоциональные"), ("karma", "💚 Добряки"),
+    ("streak", "🔥 Серии"), ("pets", "🐾 Питомцы"), ("levels", "⭐ Уровни"),
+]
+
+
+def section_label(section: str) -> tuple[str, str]:
+    """(эмодзи, название) раздела топа."""
+    for key, label in TOP_SECTIONS:
+        if key == section:
+            emoji, _, title = label.partition(" ")
+            return emoji, title
+    return "🏅", "Топы"
 
 
 # контекст «кто смотрит топ» (для подсветки своей строки)
 _TOP_CTX: dict[str, int] = {}
 
 
+def _parse_top_cb(data: str) -> tuple[str, str]:
+    """Колбэк топов: 'top:<period>:<section>' -> (period, section).
+
+    Старые форматы ('menu:top', 'top:week') совместимо мапятся на
+    (week, talk) — чтобы кнопки из уже разосланных сообщений не ломались.
+    """
+    parts = data.split(":")
+    period, section = "week", "talk"
+    if len(parts) >= 2 and parts[1] in PERIODS:
+        period = parts[1]
+    if len(parts) >= 3 and any(k == parts[2] for k, _ in TOP_SECTIONS):
+        section = parts[2]
+    return period, section
+
+
 @router.callback_query(F.data == "menu:top")
 @router.callback_query(F.data.startswith("top:"))
 async def top_screen(cb: CallbackQuery, session: AsyncSession) -> None:
-    period = cb.data.split(":")[1] if ":" in cb.data and cb.data != "menu:top" else "week"
-    if period not in PERIODS:
-        period = "week"
+    period, section = _parse_top_cb(cb.data)
     _TOP_CTX["me"] = cb.from_user.id
-    text, _rank = await _top_screen_text(session, period)
-    await safe_edit_or_answer(cb.message, text, reply_markup=top_tabs(period))
+    text = await _top_section(session, period, section)
+    await safe_edit_or_answer(cb.message, text, reply_markup=top_tabs(period, section))
     await cb.answer()
 
 
 @router.message(Command("top"))
 async def cmd_top(message: Message, session: AsyncSession) -> None:
-    """Алиас команды — показывает недельный топ прямо в ЛС."""
+    """Алиас команды — недельный топ болтунов прямо в ЛС (листай разделы кнопками)."""
     _TOP_CTX["me"] = message.from_user.id
-    text, _ = await _top_screen_text(session, "week")
-    await message.answer(text, reply_markup=top_tabs("week"), parse_mode="HTML")
+    text = await _top_section(session, "week", "talk")
+    await message.answer(text, reply_markup=top_tabs("week", "talk"), parse_mode="HTML")
 
 
 @router.message(Command("ach", "achievements"))
