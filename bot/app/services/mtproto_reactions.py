@@ -42,6 +42,7 @@ import contextlib
 from loguru import logger
 
 from app.config import get_settings
+from app.services.mtproto_client import resolve_channel_entity
 
 # Сырые TL-типы импортируются лениво (telethon опционален).
 _LISTENER_TASK: asyncio.Task | None = None
@@ -239,6 +240,68 @@ async def _on_raw_update(event) -> None:
             await handle_bot_reaction(update)
 
 
+_REACTION_TYPES: tuple[type, ...] | None = None
+
+
+def _reaction_types() -> tuple[type, ...]:
+    """TL-типы реакций для фильтра events.Raw(types=...).
+
+    ВАЖНО (баг v1.5.19): без types Telethon вызывает обработчик на КАЖДЫЙ
+    сырой апдейт (сотни на минуту), а падение импорта типов молча глушило
+    всю обработку через suppress(Exception). Здесь типы резолвятся явно и
+    ошибка видна в логе.
+    """
+    global _REACTION_TYPES
+    if _REACTION_TYPES is None:
+        from telethon.tl.types import (UpdateBotMessageReaction,
+                                       UpdateMessageReactions)
+        _REACTION_TYPES = (UpdateMessageReactions, UpdateBotMessageReaction)
+    return _REACTION_TYPES
+
+
+async def warm_snapshots(client, hours: int = 24) -> int:
+    """Prime снапшотов реакций на свежих сообщениях отслеживаемых чатов.
+
+    Иначе первый же UpdateMessageReactions после рестарта бота — это
+    «первый sighting» (prev=None), и реакции, поставленные ДО перезапуска,
+    задним числом не засчитываются (правило anti-backfill). Но и новые
+    реакции на таких сообщениях терялись до второго события. Prime решает:
+    читаем последние сообщения, берём их current_reactions и запоминаем как
+    baseline. Возвращает число сообщений со снапшотом.
+    """
+    from datetime import datetime, timedelta, timezone
+    tracked = _tracked_ids()
+    if not tracked:
+        return 0
+    primed = 0
+    for cid in sorted(tracked):
+        try:
+            entity = await resolve_channel_entity(cid)
+            since = datetime.now(timezone.utc) - timedelta(hours=hours)
+            async for m in client.iter_messages(entity, offset_date=since,
+                                                reverse=True):
+                key = (cid, int(m.id))
+                if key in _SNAPSHOTS:
+                    continue
+                snap: set[tuple[int, str]] = set()
+                for cr in (getattr(m, "reactions", None) or []):
+                    # MessageReactions/ChatReactions: по одному author_id
+                    # (last_viewers — не авторы, их игнорируем)
+                    uid = getattr(cr, "sender_id", None) or getattr(cr, "user_id", None)
+                    emoji = _emoji_key(getattr(cr, "emotion", None)
+                                       or getattr(cr, "emoticon", None)) \
+                        if hasattr(cr, "emotion") else getattr(cr, "emoticon", None)
+                    if uid is not None and emoji:
+                        snap.add((int(uid), emoji))
+                _SNAPSHOTS[key] = snap
+                primed += 1
+        except Exception as exc:  # noqa: BLE001 — один чат не валит prime
+            logger.debug("MTProto reactions prime {} failed: {}", cid,
+                         type(exc).__name__)
+    _snapshot_size()
+    return primed
+
+
 async def start_reaction_listener() -> asyncio.Task | None:
     """Подписаться на raw-события реакций. None — если MTProto не настроен."""
     global _LISTENER_TASK
@@ -254,13 +317,24 @@ async def start_reaction_listener() -> asyncio.Task | None:
         return None
     from telethon import events
 
-    @client.on(events.Raw)
-    async def _on_raw(update) -> None:  # Raw отдаёт сам TL-update
-        with contextlib.suppress(Exception):
+    @client.on(events.Raw(types=_reaction_types()))
+    async def _on_raw(update) -> None:  # Raw.build возвращает сам TL-update
+        try:
             await _on_raw_update(update)
+        except Exception as exc:  # noqa: BLE001 — логируем, не глотаем молча
+            logger.debug("MTProto reaction event error: {}: {}",
+                         type(exc).__name__, str(exc)[:200])
 
+    _LISTENER_TASK = asyncio.current_task()
     logger.info("😀 MTProto reaction listener активен (реакции на любые "
                 "сообщения в отслеживаемых чатах засчитываются)")
+    # baseline снапшотов: не потерянные новые реакции и без backfill
+    try:
+        n = await warm_snapshots(client)
+        logger.info("😀 MTProto reactions: baseline снапшотов на {} сообщ.", n)
+    except Exception as exc:  # noqa: BLE001 — prime не должен валить листенер
+        logger.debug("MTProto reactions prime failed: {}: {}",
+                     type(exc).__name__, str(exc)[:160])
     return _LISTENER_TASK
 
 
