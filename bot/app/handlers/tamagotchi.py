@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 
 from aiogram import F, Router
 from aiogram.filters import Command
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -27,9 +29,14 @@ from app.services.tamagotchi import (SPECIES_DATA, TamagotchiService, _aware,
 router = Router(name="tamagotchi")
 _aware_dt = _aware  # алиас: walk_until из БД может быть naive (SQLite) — нормализуем
 
-# Контекст двухшагового подтверждения «усыновить нового» (u_id -> {stage, pet_id}).
-# In-memory по дизайну: состояние живёт между двумя нажатиями одной кнопки.
-_ADOPT_CTX: dict[int, dict] = {}
+class AdoptConfirm(StatesGroup):
+    """Двухшаговое подтверждение «усыновить нового» (v1.5.22).
+
+    Раньше контекст жил в модульном dict (_ADOPT_CTX): текли память без TTL,
+    терялся при рестарте и ломался при нескольких воркерах. FSM-стейт хранится
+    в Redis (в dev — в памяти процесса) и очищается вместе с диалогом.
+    """
+    confirm = State()
 
 
 async def _get_pet(session: AsyncSession, tg_id: int) -> Pet | None:
@@ -222,11 +229,32 @@ async def act_revive(cb: CallbackQuery, session: AsyncSession) -> None:
     await cb.answer(f"⭐ −{cost}")
 
 
+@router.callback_query(F.data == "pet:adopt", AdoptConfirm.confirm)
+async def pet_adopt_confirm(cb: CallbackQuery, session: AsyncSession,
+                            state: FSMContext) -> None:
+    """Подтверждение усыновления (2-й клик): архивируем текущего, открываем пикер."""
+    svc = TamagotchiService(session)
+    data = await state.get_data()
+    await state.clear()
+    repo = PetRepository(session)
+    current = await repo.get_by_user(cb.from_user.id)
+    if current and current.id == data.get("pet_id"):
+        await svc.archive_pet(session, current, reason="rehomed")
+        await session.commit()
+    from app.keyboards.inline import species_picker
+    await safe_edit_or_answer(
+        cb.message,
+        "🐣 Прежний питомец пристроен в историю. Выбери нового:\n\n"
+        + _species_picker_text(),
+        reply_markup=species_picker())
+    await cb.answer()
+
+
 @router.callback_query(F.data == "pet:adopt")
-async def pet_adopt_screen(cb: CallbackQuery, session: AsyncSession) -> None:
+async def pet_adopt_screen(cb: CallbackQuery, session: AsyncSession,
+                           state: FSMContext) -> None:
     """🥚 «Усыновить нового»: архивируем текущего (с подтверждением через
     повторное нажатие) и открываем пикер вида."""
-    svc = TamagotchiService(session)
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
         # нет текущего — просто заводим с нуля (тот же флоу, что онбординг)
@@ -236,30 +264,16 @@ async def pet_adopt_screen(cb: CallbackQuery, session: AsyncSession) -> None:
             "🐣 Выбери питомца — у каждого свой характер и бонусы:\n\n"
             + _species_picker_text(),
             reply_markup=species_picker())
-    state = (_ADOPT_CTX.get(cb.from_user.id) or {}).get("stage")
-    if state != "confirm":
-        _ADOPT_CTX[cb.from_user.id] = {"stage": "confirm", "pet_id": pet.id}
-        return await safe_edit_or_answer(
-            cb.message,
-            f"⚠️ Ты уверен, что хочешь усыновить нового питомца?\n\n"
-            f"Текущий — <b>{esc(pet.name)}</b> (ур. {pet.level}, поколении "
-            f"{pet.generation}) — уйдёт в историю 📜: его уровень, ачивки и логи "
-            "сохранятся, но прогресс не перенесётся.\n\n"
-            "Нажми ещё раз для подтверждения или вернись назад.",
-            reply_markup=back_to_main())
-    # подтверждено: архивируем и показываем пикер
-    repo = PetRepository(session)
-    current = await repo.get_by_user(cb.from_user.id)
-    if current and current.id == _ADOPT_CTX[cb.from_user.id].get("pet_id"):
-        await svc.archive_pet(session, current, reason="rehomed")
-        await session.commit()
-    _ADOPT_CTX.pop(cb.from_user.id, None)
-    from app.keyboards.inline import species_picker
+    await state.set_state(AdoptConfirm.confirm)
+    await state.update_data(pet_id=pet.id)
     await safe_edit_or_answer(
         cb.message,
-        "🐣 Прежний питомец пристроен в историю. Выбери нового:\n\n"
-        + _species_picker_text(),
-        reply_markup=species_picker())
+        f"⚠️ Ты уверен, что хочешь усыновить нового питомца?\n\n"
+        f"Текущий — <b>{esc(pet.name)}</b> (ур. {pet.level}, поколении "
+        f"{pet.generation}) — уйдёт в историю 📜: его уровень, ачивки и логи "
+        "сохранятся, но прогресс не перенесётся.\n\n"
+        "Нажми ещё раз для подтверждения или вернись назад.",
+        reply_markup=back_to_main())
     await cb.answer()
 
 

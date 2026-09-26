@@ -353,13 +353,22 @@ async def _finish_onboarding(cb: CallbackQuery, state: FSMContext,
 
 
 @router.callback_query(F.data == "menu:main")
-async def cb_main_menu(cb: CallbackQuery, session: AsyncSession) -> None:
+async def cb_main_menu(cb: CallbackQuery, session: AsyncSession,
+                       state: FSMContext) -> None:
+    # v1.5.22: выход из меню отменяет ожидание подтверждения (напр. pet:adopt) —
+    # иначе пользователь остался бы в AdoptConfirm.confirm и второй клик по
+    # «🥚 Усыновить» сработал бы без подтверждения.
+    if await state.get_state() is not None:
+        await state.clear()
     await _render_main_menu(cb, session, page=0)
 
 
 @router.callback_query(F.data.startswith("menu:page:"))
-async def cb_main_menu_page(cb: CallbackQuery, session: AsyncSession) -> None:
+async def cb_main_menu_page(cb: CallbackQuery, session: AsyncSession,
+                            state: FSMContext) -> None:
     """◀️/▶️ главного меню (v1.5.2): страницы «Игра» и «Профиль»."""
+    if await state.get_state() is not None:
+        await state.clear()  # смена экрана = отмена ожидания подтверждения
     try:
         page = int(cb.data.split(":")[-1])
     except ValueError:

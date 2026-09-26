@@ -1,0 +1,67 @@
+# Деплой TamaBot:  cp bot/.env.example .env && редактировать .env && docker compose up -d --build
+# Секреты (BOT_TOKEN и т.д.) берутся из .env в корне — НЕ коммитить .env!
+services:
+  bot:
+    build: .
+    image: tamabot:latest
+    container_name: tamabot
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # внутри сети compose перекрываем хосты на сервисные имена
+      DATABASE_URL: ${DATABASE_URL:-mysql+aiomysql://tamabot:tamabot@db:3306/tamabot?charset=utf8mb4}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+    volumes:
+      - ./data:/app/data          # sqlite-файлы, mtproto-сессии, логи
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "app.main"]
+      interval: 60s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  db:
+    image: mysql:8.4
+    container_name: tamabot-db
+    restart: unless-stopped
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?задайте MYSQL_ROOT_PASSWORD в .env}
+      MYSQL_DATABASE: tamabot
+      MYSQL_USER: tamabot
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?задайте MYSQL_PASSWORD в .env}
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-utamabot", "-p${MYSQL_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: tamabot-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  db_data:
+  redis_data:

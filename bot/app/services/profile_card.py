@@ -18,6 +18,7 @@ import os
 import re
 from functools import lru_cache
 
+from loguru import logger
 from PIL import Image, ImageDraw, ImageFont
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -163,15 +164,16 @@ class ProfileCardRenderer:
         # питомец
         if pet is not None:
             color_tag = ""
+            from app.services.tamagotchi import TamagotchiService
+            svc = TamagotchiService(None)  # только словари каталога, БД не трогаем
             try:
-                from app.services.tamagotchi import TamagotchiService
-                ckey, worn = TamagotchiService(None).customization(pet)
+                ckey, worn = svc.customization(pet)
                 if ckey:
-                    color_tag = f" · {TamagotchiService(None).PET_COLORS[ckey][0]}"
+                    color_tag = f" · {svc.PET_COLORS[ckey][0]}"
                 if worn:
                     color_tag += " " + "".join(worn)
-            except Exception:
-                pass
+            except (KeyError, TypeError, AttributeError) as exc:  # кастомизация не должна ронять карточку
+                logger.debug("pet customization tag skipped: {}: {}", type(exc).__name__, exc)
             mood_line = (f"{pet.name}: ур. {pet.level} · сытость {int(pet.hunger)}% · "
                          f"счастье {int(pet.happiness)}% · энергия {int(pet.energy)}%{color_tag}")
         else:

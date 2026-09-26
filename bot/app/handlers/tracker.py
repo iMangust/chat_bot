@@ -21,6 +21,7 @@ import contextlib
 from datetime import timedelta, timezone
 
 from aiogram import Bot, F, Router
+from aiogram.exceptions import TelegramAPIError
 from aiogram.types import (Message, MessageReactionUpdated,
                            MessageReactionCountUpdated, ReactionTypeEmoji)
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -164,7 +165,7 @@ async def _fetch_author_via_forward(bot: Bot, chat_id: int, message_id: int) -> 
     me = await bot.get_me()
     try:
         fwd = await bot.forward_message(chat_id=me.id, from_chat_id=chat_id, message_id=message_id)
-    except Exception as exc:  # Forbidden / MessageCan'tBeForwarded / удалено
+    except TelegramAPIError as exc:  # Forbidden / MessageCan'tBeForwarded / удалено
         logger.debug("reaction fetch failed (forward): {}", exc)
         return None
     author = fwd.sender_chat or None

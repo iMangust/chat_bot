@@ -122,7 +122,8 @@ class ActivityService:
             try:
                 from app.handlers.tracker import MEDIA_XP_BONUS
                 xp_gain += MEDIA_XP_BONUS.get(media_type or "", 1)
-            except Exception:
+            except ImportError as exc:  # трекер не импортируется — дефолтный бонус
+                logger.debug("MEDIA_XP_BONUS import failed, fallback +1: {}", exc)
                 xp_gain += 1
         if is_reply:
             xp_gain += 1

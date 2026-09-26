@@ -1,0 +1,27 @@
+# Не попадает в образ — ускоряет сборку и не даёт утечке секретов
+.git
+.github
+*.md
+console.bat
+install.bat
+run.bat
+
+# Секреты и локальные данные — никогда в образ
+.env
+.env.*
+!.env.example
+*.session
+*.session-journal
+*.sent
+*.db
+*.sqlite3
+
+# Кэш / артефакты
+__pycache__/
+*.py[cod]
+.pytest_cache/
+venv/
+.venv/
+bot/logs/
+bot/tests/
+data/

@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  lint-test:
+    name: Линтер + тесты (Python 3.12)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: bot/requirements.txt
+
+      - name: Install dependencies
+        working-directory: bot
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyflakes
+
+      # Падает на undefined names / переопределениях (ловит NameError-регрессии);
+      # «imported but unused» и «unable to detect undefined names» — не блокируют.
+      - name: Lint (pyflakes)
+        working-directory: bot
+        run: |
+          set -o pipefail
+          if pyflakes app tests alembic 2>&1 \
+             | grep -vE "unable to detect undefined names|imported but unused" \
+             | grep -E "undefined name|redefinition of unused"; then
+            echo "::error::Найдены undefined names / переопределения — чините перед merge"
+            exit 1
+          fi
+          echo "pyflakes: критических ошибок нет"
+
+      # Тесты идут на in-memory sqlite (см. tests/conftest.py), БД/Redis не нужны
+      - name: Tests (pytest)
+        working-directory: bot
+        run: python -m pytest tests -v --tb=short
+
+      # Смоук: приложение должно импорироваться целиком
+      - name: Import smoke test
+        working-directory: bot
+        env:
+          BOT_TOKEN: "42:TEST"
+          DATABASE_URL: "sqlite+aiosqlite:///:memory:"
+        run: python -c "import app.main; print('app.main imported OK')"

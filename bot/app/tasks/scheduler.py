@@ -9,6 +9,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 
 from aiogram import Bot
+from aiogram.exceptions import TelegramAPIError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy import select
 from loguru import logger
@@ -90,8 +91,13 @@ async def flush_notifications(bot: Bot) -> None:
                     await bot.send_message(n.user_id, n.text, parse_mode="HTML")
                     n.sent = True
                     sent += 1
-                except Exception:
-                    # юзер заблокировал бота — помечаем отправленным, чтобы не копить мусор
+                except TelegramAPIError as exc:
+                    # юзер заблокировал бота / ЛС закрыты — помечаем отправленным,
+                    # чтобы не копить мусор (RuntimeWarning: бот выключен и т.п.
+                    # наследуются от OSError/ValueError и НЕ ловятся здесь —
+                    # такое уведомление останется в очереди и дошлёт позже)
+                    logger.debug("notification {} to {} dropped: {}",
+                                 n.id, n.user_id, str(exc)[:120])
                     n.sent = True
             await session.commit()
             if rows:

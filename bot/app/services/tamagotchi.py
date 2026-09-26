@@ -13,6 +13,7 @@ from __future__ import annotations
 import random
 from datetime import datetime, timedelta, timezone
 
+from loguru import logger
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -219,7 +220,8 @@ class TamagotchiService:
         try:
             from app.config import get_settings
             season = season_for(now) if get_settings().weather_enabled else ""
-        except Exception:
+        except (ImportError, AttributeError) as exc:  # конфиг/сезоны недоступны — без сезонности
+            logger.debug("season lookup failed, decay without seasonality: {}", exc)
             season = ""
         decay_hunger = DECAY_PER_HOUR["hunger"] * d.get("hunger", 1.0) * season_decay_mult(season, "hunger")
         decay_happy = DECAY_PER_HOUR["happiness"] * d.get("happiness", 1.0) * season_decay_mult(season, "happy")
@@ -707,8 +709,8 @@ class TamagotchiService:
             lines.append(f"🌦️ Погода: {w['icon']} {w['name']} — {w['note']}")
             if "holiday_icon" in w:
                 lines.append(f"{w['holiday_icon']} {w['holiday_note']}")
-        except Exception:
-            pass
+        except (ImportError, KeyError, TypeError) as exc:  # рендер погоды не должен ломать карточку
+            logger.debug("weather line skipped: {}: {}", type(exc).__name__, exc)
         if pet.walk_until:
             lines.append("🚶 Сейчас на прогулке…")
         if self.is_critical(pet):
