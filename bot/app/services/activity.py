@@ -197,6 +197,42 @@ class ActivityService:
             logger.debug("referral notify failed for {}: {}", inviter.tg_id, exc)
         logger.info("referral credited: inviter={} invitee={}", inviter.tg_id, user.tg_id)
 
+    async def log_message_only(
+        self,
+        *,
+        user_id: int,
+        chat_id: int,
+        message_id: int,
+        text: str | None,
+        has_media: bool,
+        media_type: str | None,
+        is_reply: bool = False,
+        mentions_count: int = 0,
+    ) -> ChatMessageLog | None:
+        """Записать сообщение в чат-лог БЕЗ начисления XP (v1.5.19).
+
+        Нужно для событий, которые Bot API не отдаёт боту, но видит
+        MTProto-аккаунт: посты канала (бот не получает published-сообщения
+        каналов) и реакции на них. Без записи в лог реакция на пост канала
+        не зачтётся — автор сообщения будет неизвестен.
+
+        Идемпотентно по (chat_id, message_id); незаархивированных/незарегистрированных
+        юзеров пропускаем (не плодим записи с внешними id).
+        """
+        user = await self.users.get(user_id)
+        if user is None:
+            return None
+        now = datetime.now(timezone.utc)
+        entry = ChatMessageLog(
+            user_id=user_id, chat_id=chat_id, message_id=message_id,
+            length=len(text or ""), has_media=has_media, media_type=media_type,
+            is_reply=is_reply, mentions_count=mentions_count,
+            is_counted=False, skip_reason="mtproto_backfill",
+            created_at=now,
+        )
+        await self.activity.log_message(entry)
+        return entry
+
     async def process_reaction(
         self, *, from_user: int, to_user: int, chat_id: int,
         message_id: int, emoji: str,

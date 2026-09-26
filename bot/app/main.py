@@ -392,10 +392,20 @@ async def main() -> None:
         with contextlib.suppress(Exception):
             from app.services.userbot import start_userbot
             await start_userbot(bot)
+        # v1.5.19: MTProto reaction listener — Bot API НЕ отдаёт боту реакции
+        # на чужие сообщения (посты канала, сообщения других юзеров). User-
+        # аккаунт в тех же чатах видит их сырыми TL-update'ами и засчитывает
+        # через общую логику process_reaction. Без ключей MTProto — no-op.
+        with contextlib.suppress(Exception):
+            from app.services.mtproto_reactions import start_reaction_listener
+            await start_reaction_listener()
 
     @dp.shutdown()
     async def _shutdown() -> None:
         scheduler.shutdown(wait=False)
+        with contextlib.suppress(Exception):
+            from app.services.mtproto_reactions import stop_reaction_listener
+            await stop_reaction_listener()
         with contextlib.suppress(Exception):
             from app.services.userbot import stop_userbot
             await stop_userbot()

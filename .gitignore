@@ -1,23 +1,20 @@
-# Python compiled files
+# Python
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+venv/
+.venv/
 
-# Environment and secrets
+# Секреты и локальные конфиги — никогда в git
 .env
 .env.*
 !.env.example
-
-# Telethon session files (contain account access!)
 *.session
 *.session-journal
-*.session-wal
+*.sent
 
-# Local databases / caches
+# Локальные БД и логи
 *.db
 *.sqlite3
-
-# Tooling
-.pytest_cache/
-.venv/
-venv/
+bot/logs/
