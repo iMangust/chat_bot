@@ -116,6 +116,6 @@ async def cb_noop(cb: CallbackQuery) -> None:
     await cb.answer()
 
 
-@router.message(Command("card", "profile"))
+@router.message(Command("card", "profile"), F.chat.type == "private")
 async def cmd_card(message: Message, session: AsyncSession) -> None:
     await _send_card(message, session, message.from_user.id)

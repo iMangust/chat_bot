@@ -25,6 +25,11 @@ def _button_width(btn: InlineKeyboardButton) -> int:
     return visual
 
 
+def _two_per_row(buttons: list[InlineKeyboardButton]) -> list[list[InlineKeyboardButton]]:
+    """Раскладывает кнопки рядами ровно по две (стандарт навигации v1.5.3+)."""
+    return [list(buttons[i:i + 2]) for i in range(0, len(buttons), 2)]
+
+
 def _chunk(rows: list[list[InlineKeyboardButton]], size: int) -> list[list[list[InlineKeyboardButton]]]:
     """Режет плоский список рядов на страницы по ~size кнопок, не разрывая ряды."""
     pages: list[list[list[InlineKeyboardButton]]] = []
@@ -58,32 +63,21 @@ def paged_keyboard(
     ``[0, total_pages-1]``, чтобы вызывающий код мог синхронизировать свой
     рендер текста с фактической страницей кнопок.
     """
-    buttons = [
-        btn if btn.callback_data is not None or btn.url is not None
-        else InlineKeyboardButton(text=btn.text, callback_data=None)
-        for btn in buttons
-    ]
-    rows: list[list[InlineKeyboardButton]] = []
-    line: list[InlineKeyboardButton] = []
-    line_width = 0
-    for btn in buttons:
-        w = _button_width(btn)
-        if w >= 24:                       # длинная подпись — всегда своя строка
-            if line:
-                rows.append(line)
-                line, line_width = [], 0
-            rows.append([btn])
-            continue
-        if line and line_width + w > 38:  # две длинные кнопки в ряд не влезут
-            rows.append(line)
-            line, line_width = [], 0
-        line.append(btn)
-        line_width += w
-    if line:
-        rows.append(line)
+    # служебные ряды (навигация/выход/url) добавляются после нарезки на
+    # страницы — из подсчёта кнопок на страницу исключаем только их;
+    # кнопки без callback_data/url некликабельны и в навигацию не попадают
+    def _is_service(btn: InlineKeyboardButton) -> bool:
+        cb = btn.callback_data or ""
+        return (btn.url is not None or ":page:" in cb or ":noop" in cb
+                or cb in ("menu:main", "menu:home") or btn.text == "🏠 Меню")
+
+    content_buttons = [b for b in buttons if not _is_service(b)]
+    rows = _two_per_row(content_buttons)
 
     pages = _chunk(rows, page_size)
     total = len(pages)
+    if page < 0:                          # зацикливание: «предыдущая» с первой
+        page %= total
     page = max(0, min(page, total - 1))   # clamp вместо молчаливого «пусто»
 
     kb_rows: list[list[InlineKeyboardButton]] = [list(r) for r in pages[page]]

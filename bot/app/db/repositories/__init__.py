@@ -500,6 +500,18 @@ class SubscriberRepository:
                 .limit(limit))
         return list((await self.session.execute(stmt)).scalars())
 
+    async def get(self, user_id: int):
+        from app.db.models import ChannelSubscriber
+        return await self.session.get(ChannelSubscriber, user_id)
+
+    async def reset_welcome(self, user_id: int) -> None:
+        """Снимает отметку приветствия (повторный вход в другой чат)."""
+        from app.db.models import ChannelSubscriber
+        row = await self.session.get(ChannelSubscriber, user_id)
+        if row is not None:
+            row.welcomed_at = None
+            await self.session.commit()
+
     async def mark_welcomed(self, user_id: int) -> None:
         from app.db.models import ChannelSubscriber
         row = await self.session.get(ChannelSubscriber, user_id)

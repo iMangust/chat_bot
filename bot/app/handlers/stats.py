@@ -289,7 +289,7 @@ async def top_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     await cb.answer()
 
 
-@router.message(Command("top"))
+@router.message(Command("top"), F.chat.type == "private")
 async def cmd_top(message: Message, session: AsyncSession) -> None:
     """Алиас команды — недельный топ болтунов прямо в ЛС (листай разделы кнопками)."""
     _TOP_CTX["me"] = message.from_user.id
@@ -297,7 +297,7 @@ async def cmd_top(message: Message, session: AsyncSession) -> None:
     await message.answer(text, reply_markup=top_tabs("week", "talk"), parse_mode="HTML")
 
 
-@router.message(Command("ach", "achievements"))
+@router.message(Command("ach", "achievements"), F.chat.type == "private")
 async def cmd_ach(message: Message, session: AsyncSession) -> None:
     """Алиас команды — достижения прямо в ЛС (первая страница)."""
     svc = AchievementService(session)
@@ -308,6 +308,6 @@ async def cmd_ach(message: Message, session: AsyncSession) -> None:
 
 
 # ---------- командный алиас статистики ----------
-@router.message(Command("stats"))
+@router.message(Command("stats"), F.chat.type == "private")
 async def cmd_stats(message: Message, session: AsyncSession) -> None:
     await message.answer("👇 Воспользуйся меню:", reply_markup=main_menu())

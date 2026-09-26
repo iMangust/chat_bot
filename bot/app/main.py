@@ -198,6 +198,15 @@ async def on_startup(bot: Bot) -> None:
         BotCommand(command="help", description="❓ Справка"),
     ])
     logger.info("✅ bot started")
+    # после рестарта догоняем неотправленные приветствия подписчикам канала
+    try:
+        from app.handlers.welcome import welcome_pending_subscribers
+        async with session_factory() as session:
+            sent = await welcome_pending_subscribers(bot, session, limit=10)
+        if sent:
+            logger.info("👋 startup catch-up welcomed {} subscriber(s)", sent)
+    except Exception as exc:  # noqa: BLE001 — старт не должен падать из-за приветствий
+        logger.warning("startup welcome catch-up failed: {}", exc)
 
 
 async def main() -> None:

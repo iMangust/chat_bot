@@ -88,12 +88,12 @@ HELP_TEXT = (
 )
 
 
-@router.message(Command("help"))
+@router.message(Command("help"), F.chat.type == "private")
 async def cmd_help(message: Message) -> None:
     await message.answer(HELP_TEXT, parse_mode="HTML")
 
 
-@router.message(Command("pet"))
+@router.message(Command("pet"), F.chat.type == "private")
 async def cmd_pet(message: Message, session: AsyncSession) -> None:
     """Текстовый дубликат кнопки «🐾 Питомец» (команда есть в меню Telegram)."""
     svc = TamagotchiService(session)

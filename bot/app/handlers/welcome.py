@@ -50,6 +50,12 @@ def parse_invite_marker(text: str | None) -> int | None:
 
 @router.message(F.new_chat_members)
 async def on_new_members(message: Message, bot: Bot, session: AsyncSession) -> None:
+    """Приветствие новичков группы — лично каждому в ЛС (в чат — ни слова).
+
+    Параллельно каждый новичок заносится в channel_subscribers как pending:
+    если он уже подписан на канал (частый случай — пришёл из канала),
+    скан/следующее событие доставит ему и канальное приветствие.
+    """
     if message.chat.type not in ("group", "supergroup") or not _is_tracked(message.chat.id):
         return
 
@@ -62,6 +68,11 @@ async def on_new_members(message: Message, bot: Bot, session: AsyncSession) -> N
             continue
         # регистрируем «заготовку» — onboarded=False до нажатия «Начать»
         await users.get_or_create(member.id, member.first_name, member.username)
+        # фолбэк-сигнал подписки: человек в отслеживаемом чате — вероятно,
+        # он и в канале; welcome_pending_subscribers сам сверит с API
+        await add_pending_subscriber(
+            session, member.id, message.chat.id,
+            first_name=member.first_name or "", username=member.username)
         # реферал: если новичок пришёл по deep-link `start=invite_<tg_id>` —
         # сохраняем связку; сама награда выдаётся после первой активности
         if inviter and inviter != member.id:
@@ -145,19 +156,27 @@ async def welcome_pending_subscribers(bot: Bot, session: AsyncSession,
                                       limit: int = 5) -> int:
     """Шлёт приветствия в ЛС неободрённым подписчикам. Возвращает число отправленных.
 
-    Идемпотентность: welcomed_at выставляется ДО отправки (best-effort «не
-    дублировать при ретраях»), но после успешного ответа помечаем надёжно;
-    TelegramForbiddenError (ЛС закрыты) оставляем запись pending — человек
-    откроет ЛС позже, и скан доприветствует его.
+    Перед отправкой статус проверяется через Telegram (getChatMember):
+    pending-записи появляются из разных сигналов (первое сообщение в группе,
+    вступление, скан), и только подтверждённое членство в канале является
+    основанием для приветствия. Отправленное приветствие помечается
+    welcomed_at — дублей не будет. TelegramForbiddenError (ЛС закрыты)
+    оставляет запись pending: скан доприветствует, когда ЛС откроются.
     """
     from app.db.repositories import SubscriberRepository, UserRepository
+    from app.middlewares.gate import is_channel_subscribed
     st = get_settings()
-    if not st.welcome_channel_enabled:
+    if not st.welcome_channel_enabled or not st.channel_username:
         return 0
     subs = SubscriberRepository(session)
     users = UserRepository(session)
     sent = 0
-    for sub in await subs.pending_welcomes(limit=limit):
+    for sub in await subs.pending_welcomes(limit=max(limit * 4, 20)):
+        if sent >= limit:
+            break
+        # приветствуем только реально подписанных на канал
+        if not await is_channel_subscribed(bot, sub.user_id):
+            continue
         name = html.escape(sub.first_name or sub.username or "друг")
         text = channel_welcome_text().replace("{name}", name)
         try:
@@ -182,22 +201,31 @@ async def welcome_pending_subscribers(bot: Bot, session: AsyncSession,
     return sent
 
 
-@router.chat_member(F.new_chat_member.status.in_(["member", "administrator"]),
-                    F.old_chat_member.status.notin_(["member", "administrator"]))
+@router.chat_member(F.new_chat_member.status.in_(["member", "administrator"]))
 async def on_channel_join(update: ChatMemberUpdated, bot: Bot,
                           session: AsyncSession) -> None:
     """Новичок пришёл в канал/группу, где бот — админ (chat_member-апдейт).
 
     Заносим в channel_subscribers и сразу пробуем поприветствовать в ЛС.
-    Боты и сам бот игнорируются; покинувших не трогаем (условие above).
+    Боты и сам бот игнорируются; condition по old status не ставим — при
+    перезапуске/пропуске апдейтов старый статус бывает «устаревшим», и жёсткий
+    фильтр молча съедал приветствия. Идемпотентность гарантирует welcomed_at
+    (ровно одно приветствие), а welcome_pending_subscribers дополнительно
+    сверяет членство в канале через API.
     """
     member = update.new_chat_member
     if member.user.is_bot or member.user.id == bot.id:
         return
-    is_channel = update.chat.type == "channel"
-    added = await add_pending_subscriber(
-        session, member.user.id, update.chat.id,
-        first_name=member.user.first_name or "", username=member.user.username)
-    if added and is_channel:
-        await welcome_pending_subscribers(bot, session, limit=1)
+    from app.db.repositories import SubscriberRepository
+    row = await SubscriberRepository(session).get(member.user.id)
+    if row is None:
+        await add_pending_subscriber(
+            session, member.user.id, update.chat.id,
+            first_name=member.user.first_name or "", username=member.user.username)
+    elif row.welcomed_at is not None and row.chat_id != update.chat.id:
+        # присоединился к другому отслеживаемому чату — разрешаем ещё одно
+        # приветствие (для одного канала повторного DM не будет)
+        await SubscriberRepository(session).reset_welcome(member.user.id)
+    if update.chat.type == "channel":
+        await welcome_pending_subscribers(bot, session, limit=5)
 

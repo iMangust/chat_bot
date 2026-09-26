@@ -53,7 +53,7 @@ async def cb_toggle(cb: CallbackQuery, session: AsyncSession) -> None:
 
 
 # ---------- командные алиасы ----------
-@router.message(Command("award", "awards"))
+@router.message(Command("award", "awards"), F.chat.type == "private")
 async def cmd_awards(message: Message, session: AsyncSession) -> None:
     """Итоги прошлой недели + выданные призы."""
     payload = await snapshot_weekly(session)
@@ -64,6 +64,6 @@ async def cmd_awards(message: Message, session: AsyncSession) -> None:
                          parse_mode="HTML")
 
 
-@router.message(Command("settings"))
+@router.message(Command("settings"), F.chat.type == "private")
 async def cmd_settings(message: Message) -> None:
     await message.answer("👇 Воспользуйся меню:", reply_markup=main_menu())

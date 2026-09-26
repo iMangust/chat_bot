@@ -43,7 +43,7 @@ async def arena_noop(cb: CallbackQuery) -> None:
     await cb.answer("Питомец пока не готов к бою ⏳", show_alert=True)
 
 
-@router.message(Command("arena"))
+@router.message(Command("arena"), F.chat.type == "private")
 async def cmd_arena(message: Message, session: AsyncSession) -> None:
     text, kb = await arena_screen(session, message.from_user.id)
     await message.answer(text, reply_markup=kb, parse_mode="HTML")

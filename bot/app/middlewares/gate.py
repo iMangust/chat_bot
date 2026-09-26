@@ -14,6 +14,8 @@
 """
 from __future__ import annotations
 
+import contextlib
+
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
@@ -25,16 +27,11 @@ from aiogram.types import CallbackQuery, Message, TelegramObject, User
 from loguru import logger
 
 from app.config import get_settings
-from app.utils.redis import set_cooldown
 
-SUBSCRIBE_CACHE_SEC = 300        # TTL кэша проверки подписки
+SUBSCRIBE_CACHE_SEC = 300        # TTL положительного кэша проверки подписки
 _GRANTED_KEY = "sub_granted"     # ключ в context данных хендлера
 
-# Подписчики со стажем: кулдаун-ключ живёт 5 минут, продлеваем его при каждом
-# успешном запросе — повторная проверка API тогда вовсе не нужна.
-_EXTEND_EVERY_SEC = 60
-
-_pos_cache: dict[Any, float] = {}  # in-memory fallback: user_id/extend-ключ -> срок жизни
+_pos_cache: dict[Any, float] = {}  # user_id -> monotonic-срок жизни «подписан»
 
 
 def subscribe_kb() -> "Any":
@@ -51,20 +48,19 @@ def subscribe_kb() -> "Any":
 
 
 async def is_channel_subscribed(bot, user_id: int) -> bool:
-    """True — пользователь подписан на канал (или проверка недоступна)."""
+    """True — пользователь подписан на канал (или проверка недоступна).
+
+    Кэш только положительный и короткий (SUBSCRIBE_CACHE_SEC): отписка
+    обнаруживается максимум через столько же секунд. Отрицательный результат
+    не кэшируется вовсе — чтобы «Я подписался» / повторный /start сработали
+    сразу, без ожидания протухания кеша.
+    """
     st = get_settings()
     if not st.channel_username:
         return True
     now = time.monotonic()
     exp = _pos_cache.get(user_id)
     if exp is not None and exp > now:
-        return True
-    fresh = await set_cooldown(f"sub:{user_id}", SUBSCRIBE_CACHE_SEC)
-    if not fresh:
-        # свежий положительный кэш уже есть — продлеваем не чаще раза в минуту
-        if now >= _pos_cache.get(f"extend:{user_id}", 0.0):
-            _pos_cache[f"extend:{user_id}"] = now + _EXTEND_EVERY_SEC
-            await set_cooldown(f"sub:{user_id}", SUBSCRIBE_CACHE_SEC)
         return True
     try:
         member = await bot.get_chat_member(f"@{st.channel_username}", user_id)
@@ -76,6 +72,36 @@ async def is_channel_subscribed(bot, user_id: int) -> bool:
         _pos_cache[user_id] = time.monotonic() + SUBSCRIBE_CACHE_SEC
         return True
     return False
+
+
+_ENTRY_COMMANDS = {"start", "help"}
+
+
+def _is_entry_command(message: Message) -> bool:
+    """Команда входа (/start, /help) — работает и для неподписанных."""
+    text = message.text or ""
+    if not text.startswith("/"):
+        return False
+    cmd = text[1:].split()[0].split("@")[0].lower()
+    return cmd in _ENTRY_COMMANDS
+
+
+def _is_serviceable_group_message(event) -> bool:
+    """Групповое сообщение, которое ведут служебные (безмолвные) хендлеры.
+
+    Пропускаем к диспетчеру только служебные события: приход/уход участника
+    (учёт подписчиков + приветствие уходит им в ЛС) и обычные текстовые/
+    медиа-сообщения (пассивный трекер активности ничего не пишет в чат).
+    Команды (/start и т.п.) в группах глотаются целиком — бот на них молчит.
+    """
+    if not isinstance(event, Message):
+        return False
+    if event.new_chat_members or event.left_chat_member:
+        return True
+    if event.text and event.text.startswith("/"):
+        return False
+    return not (event.pinned_message or event.new_chat_title
+                or event.new_chat_photo or event.delete_chat_photo)
 
 
 def _target_user(event) -> User | None:
@@ -98,21 +124,40 @@ class AccessGateMiddleware(BaseMiddleware):
         if not isinstance(event, (Message, CallbackQuery)):
             return await handler(event, data)
 
-        chat = getattr(event, "chat", None)
+        # у callback-запросов чат лежит на исходном сообщении — проверяем его,
+        # иначе кнопка из группы просочилась бы к хендлерам
+        chat = getattr(event, "chat", None) or getattr(
+            getattr(event, "message", None), "chat", None)
         if chat is None:
             return await handler(event, data)
 
-        # Правило 1: бот общается только в ЛС. В группах/каналах — полная тишина
-        # (трекинг активности идёт через отдельный хендлер tracker.py напрямую).
         if chat.type != ChatType.PRIVATE:
+            # Правило 1: бот отвечает строго в ЛС, в группах/каналах молчит.
+            # В диспетчер пропускаются только служебные хендлеры, которые
+            # НИЧЕГО не пишут в чат: пассивный трекер активности и учёт
+            # новых участников (приветствие уходит им в ЛС). Все текстовые
+            # сообщения, команды и callback'и в группах глотаются здесь —
+            # так «/start» или кнопка в группе не вызывают никакого ответа.
+            if not isinstance(event, Message):
+                with contextlib.suppress(Exception):
+                    await event.answer()
+                return None
+            if _is_serviceable_group_message(event):
+                return await handler(event, data)
             return None
 
         user = _target_user(event)
-        if user is None or user.is_bot:
-            return None
+        if user is None:
+            return await handler(event, data)   # служебные ЛС-апдейты без автора
+        if user.is_bot:
+            return None                          # боты не взаимодействуют с ботом
 
-        # Правило 2: без подписки на канал взаимодействие запрещено.
-        if not await is_channel_subscribed(data["bot"], user.id):
+        # Правило 2: без подписки на канал взаимодействие запрещено. Команды
+        # /start и /help работают всегда — иначе неподписанный не сможет
+        # начать (сценарий «только что установил бота»). Остальные кнопки и
+        # текст — только после подтверждения подписки.
+        exempt = isinstance(event, Message) and _is_entry_command(event)
+        if not exempt and not await is_channel_subscribed(data["bot"], user.id):
             text = ("🔒 Бот доступен только подписчикам канала.\n\n"
                     f"📢 Подпишись — и возвращайся, я жду!\n"
                     "После подписки нажми «Проверить» или отправь /start.")
