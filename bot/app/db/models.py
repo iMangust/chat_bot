@@ -144,7 +144,7 @@ class ConditionType(str, enum.Enum):
     top1_day = "top1_day"
     level = "level"          # глобальный уровень пользователя
     coins_earned = "coins_earned"
-    games_won = "games_won"  # победы в мини-играх (Этап 3.5)
+    games_won = "games_won"  # победы в мини-играх
 
 
 class Achievement(Base):
@@ -204,8 +204,8 @@ class Pet(Base):
     __tablename__ = "pets"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    # unique=True снимается в v1.4.7: у пользователя может быть архив прошлых
-    # питомцев (generation/is_archived); «текущий» выбирается фильтром
+    # unique=True снят: у пользователя может быть архив прошлых питомцев
+    # (generation/is_archived); «текущий» выбирается фильтром
     # is_archived=False (PetRepository.get_by_user).
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.tg_id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(String(64))
@@ -234,7 +234,7 @@ class Pet(Base):
     born_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     settings_extra: Mapped[dict] = mapped_column(JSON, default=dict)  # окрас, аксессуары
 
-    # --- история питомца (v1.4.7): «усыновление» нового вместо удаления старого ---
+    # --- история питомца: «усыновление» нового вместо удаления старого ---
     # generation=1 — текущий питомец; предыдущие получают is_archived=True и
     # попадают в pet_history_screen («предыдущие питомцы»). Так статистика и
     # ачивки старого питомца не теряются при смене вида/имени.
@@ -352,7 +352,7 @@ class LeaderboardSnapshot(Base):
 
 
 class PetDuel(Base):
-    """Недельные соревнования питомцев (PVP, Этап 6+).
+    """Недельные соревнования питомцев (PVP).
 
     Питомцы дерутся «на характеристиках» (сила/ловкость/интеллект + уровень),
     без RNG-рулетки: честный расчёт в services.pet_duels. Счёт побед копится
@@ -389,7 +389,7 @@ class UserStat(Base):
 
 
 class NotificationSetting(Base):
-    """Персональные настройки уведомлений (Этап 6, экран ⚙️ Настройки)."""
+    """Персональные настройки уведомлений (экран ⚙️ Настройки)."""
     __tablename__ = "notification_settings"
 
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.tg_id", ondelete="CASCADE"),

@@ -222,7 +222,7 @@ async def weekly_leaderboard(bot: Bot) -> None:
 
 
 async def weekly_arena_finish(bot: Bot) -> None:
-    """Понедельник 00:40 UTC: призы топ-3 недельной арены питомцев (Этап 6+).
+    """Понедельник 00:40 UTC: призы топ-3 недельной арены питомцев.
 
     Идемпотентно по маркеру в LeaderboardSnapshot — повторный запуск (рестарт
     процесса, два воркера с Redis-lock) не выдаст призы дважды.

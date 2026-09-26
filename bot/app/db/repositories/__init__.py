@@ -340,9 +340,9 @@ class PetRepository:
     async def get_by_user(self, user_id: int) -> Pet | None:
         """Текущий (неархивный) питомец пользователя.
 
-        v1.4.7: питомцы больше не удаляются при «смене» — старый уходит в
-        архив (is_archived), поэтому без этого фильтра select вернул бы
-        несколько строк и упал с MultipleResultsFound.
+        Без фильтра is_archived select вернул бы несколько строк (архив +
+        текущий) и упал с MultipleResultsFound: при «смене» питомец не
+        удаляется, а уходит в архив.
         """
         stmt = select(Pet).where(Pet.user_id == user_id,
                                  Pet.is_archived.is_(False))
@@ -371,7 +371,7 @@ class PetRepository:
                                       value=value, meta=meta or {}))
         await self.session.flush()
 
-    # ---- друзья и соревнование питомцев (Этап 6) ----
+    # ---- друзья и соревнование питомцев ----
     async def friends(self, pet_id: int) -> list["PetFriend"]:
         from app.db.models import PetFriend
         stmt = select(PetFriend).where(PetFriend.pet_id == pet_id)
@@ -463,7 +463,7 @@ class AchievementRepository:
 
 
 # ---------------------------------------------------------------------------
-# Подписчики канала (приветствие новичков, v1.5.1)
+# Подписчики канала (приветствие новичков)
 # ---------------------------------------------------------------------------
 class SubscriberRepository:
     def __init__(self, session: AsyncSession) -> None:

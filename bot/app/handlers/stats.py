@@ -73,7 +73,7 @@ async def stats_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     await cb.answer()
 
 
-# порядок и подписи типов в разбивке статистики (v1.4.7)
+# порядок и подписи типов в разбивке статистики
 MEDIA_LABELS: list[tuple[str, str]] = [
     ("text", "💬 текст"), ("photo", "🖼 фото"), ("sticker", "🎴 стикеры"),
     ("voice", "🎤 голосовые"), ("video_note", "⭕️ кружки"), ("video", "🎬 видео"),
@@ -162,8 +162,8 @@ def _since_for(period: str, now) -> datetime | None:
 
 
 async def _top_section(session: AsyncSession, period: str, section: str) -> str:
-    """Один раздел топа (UX v1.4.7): раньше все пять топов были в одном
-    длинном сообщении — теперь по одному на страницу навигации."""
+    """Один раздел топа: все номинации выводятся по одной на страницу
+    навигации (топ был единым длинным сообщением)."""
     now = datetime.now(timezone.utc)
     since = _since_for(period, now)
     lines = [f"🏅 <b>Топы чата · {PERIODS[period]} · {section_label(section)[0]} {section_label(section)[1]}</b>\n"]

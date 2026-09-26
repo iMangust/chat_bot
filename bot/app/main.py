@@ -118,7 +118,7 @@ async def _index_exists(conn, index_name: str) -> bool:
 
 # описание лёгких миграций: таблица → [(колонка, DDL-тип)]
 _LIGHT_COLUMNS: dict[str, list[tuple[str, str]]] = {
-    # v1.4.7: история питомцев — у пользователя может быть несколько строк
+    # история питомцев: у пользователя может быть несколько строк
     # (архив + текущий), «текущий» выбирается фильтром is_archived=False.
     "pets": [
         ("generation", "INTEGER NOT NULL DEFAULT 1"),
@@ -238,7 +238,7 @@ async def main() -> None:
     )
     # Глобальная страховка уровня диспетчера: даже если ошибка возникнет вне
     # error_router (например, в другом мидлваре), обработчик на месте —
-    # aiogram больше не будет логировать её как «Unhandled exceptions».
+    # aiogram не будет логировать её как «Unhandled exceptions».
     dp.errors.register(errors.on_error)
 
     scheduler = build_scheduler(bot)
@@ -278,8 +278,6 @@ async def main() -> None:
             stop.set()
         else:
             # aiogram 3.x: обработчик называется SimpleRequestHandler
-            # (имени SimpleRequestAiohttpHandler в библиотеке нет — старый код
-            # падал с ImportError при первом же включении вебхука).
             from aiogram.webhook.aiohttp_server import SimpleRequestHandler
             from aiohttp import web
 
@@ -300,8 +298,7 @@ async def main() -> None:
         await stop.wait()  # ждём сигнал завершения
     finally:
         # Штатный graceful shutdown: эмитим событие shutdown — хендлер _shutdown
-        # закроет scheduler/Redis/engine/session. Условие `not dp.frozen` и
-        # конструктора-заглушки aiohttp_webserver раньше были мёртвым/битым кодом.
+        # закроет scheduler/Redis/engine/session.
         if not dp.frozen:
             with contextlib.suppress(Exception):
                 await dp.emit_shutdown()

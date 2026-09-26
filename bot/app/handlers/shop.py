@@ -1,4 +1,4 @@
-"""Магазин и инвентарь (Этап 4, ранняя версия).
+"""Магазин и инвентарь.
 
 Экономика: монеты капают за активность (1/сообщение с кулдауном) и прогулки.
 Цены подобраны так, чтобы «базовая еда» была доступна почти сразу, а вкусняшки —
@@ -53,7 +53,7 @@ ITEMS_SEED = [
          effect={"health": 15, "energy": 15}, description="Бодрость и здоровье."),
 ]
 
-# Мерч больше не сидится в таблицу Items: он вынесен в отдельный раздел
+# Мерч не хранится в таблице Items: он вынесен в отдельный раздел
 # 🧢 Мерч канала (app/handlers/merch.py) и живёт из конфига/дефолтной витрины.
 
 
@@ -101,9 +101,9 @@ async def shop_screen(cb: CallbackQuery, session: AsyncSession) -> None:
         items = list((await session.execute(
             select(Item).where(Item.type != "merch").order_by(Item.type, Item.price)
         )).scalars())
-    # UX v1.4.9: магазин листается постранично (≤6 товаров на страницу),
-    # текст показывает только товары текущей страницы — кнопки и список всегда
-    # синхронны. Страница берётся из callback_data (shop:page:<n>).
+    # магазин листается постранично (≤6 товаров на страницу), текст показывает
+    # только товары текущей страницы — кнопки и список всегда синхронны.
+    # Страница берётся из callback_data (shop:page:<n>).
     try:
         page = int(cb.data.split(":")[2]) if cb.data.startswith("shop:page:") else 0
     except (IndexError, ValueError):
@@ -176,7 +176,7 @@ async def buy_item(cb: CallbackQuery, session: AsyncSession) -> None:
         await cb.answer(f"Не хватает {item.price - user.coins} монет 🪙", show_alert=True)
         return
 
-    # UX v1.4.9: возврат к списку с сохранением страницы (было: всегда 0)
+    # возврат к списку с сохранением страницы (было: всегда 0)
     cb.data = "shop:page:0"
     # защита от двойного списания при быстрых дабл-кликах: UPDATE ... WHERE coins>=price
     from sqlalchemy import update
@@ -222,7 +222,7 @@ async def inventory_screen(cb: CallbackQuery, session: AsyncSession) -> None:
         await cb.answer()
         return
 
-    # UX v1.4.9: предметы с количеством >1 получают подписи «Использовать ×N» —
+    # предметы с количеством >1 получают подписи «Использовать ×N» —
     # раньше кнопки были идентичны до исчерпания стопки (непонятно, что нажимаешь).
     try:
         page = int(cb.data.split(":")[2]) if cb.data.startswith("inv:page:") else 0

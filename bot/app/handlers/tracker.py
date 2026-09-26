@@ -85,8 +85,8 @@ def _author(message: Message) -> int | None:
 async def track_group_message(message: Message, session: AsyncSession) -> None:
     """Пишет каждое сообщение группы/канала в лог; засчитывает по антифрод-правилам.
 
-    ВАЖНО: раньше фильтр был только {group, supergroup} — сообщения каналов
-    (где бот админ) не трэкались вообще, и «активность в канале» не начислялась.
+    ВАЖНО: каналы (где бот админ) тоже трэкаются — иначе «активность в
+    канале» не начислялась бы вовсе.
     """
     author = _author(message)
     if author is None:
@@ -101,9 +101,9 @@ async def track_group_message(message: Message, session: AsyncSession) -> None:
     text = message.text or message.caption
     media_type = detect_media_type(message)
 
-    # v1.5.1: автор написал сообщение в отслеживаемом чате впервые —
-    # вероятно, это новый подписчик канала (если chat_member-событие боту
-    # недоступно). Заносим в очередь приветствий (идемпотентно).
+    # автор написал сообщение в отслеживаемом чате впервые — вероятно, это
+    # новый подписчик канала (если chat_member-событие боту недоступно).
+    # Заносим в очередь приветствий (идемпотентно).
     if message.from_user is not None and not message.from_user.is_bot:
         from app.handlers.welcome import add_pending_subscriber
         await add_pending_subscriber(

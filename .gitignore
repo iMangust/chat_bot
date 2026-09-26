@@ -1,6 +1,8 @@
-# Python bytecode and caches
+# Python compiled files
 __pycache__/
 *.pyc
 
-# Environment files (common for bot projects)
+# Environment and secrets
 .env
+.env.local
+.env.*.local

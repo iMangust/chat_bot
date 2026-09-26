@@ -15,14 +15,9 @@ from app.config import get_settings
 from app.keyboards.paged import paged_keyboard
 
 
-# ---------------------------------------------------------------------------
-# Пагинированное главное меню (v1.5.2)
-# Раньше на одном экране было до 9 кнопок — теперь, как в хабе питомца,
-# разделы разбиты на страницы «Игра / Профиль / Ссылки» с навигацией
-# ◀️ · «🏠 Название 📖 i/n» · ▶️ и нижним рядом ⬅️ Назад + 🏠 Меню.
-# Кнопка-счётчик страниц принудительно ставится своей строкой: paged_keyboard
-# режет ряды по ширине и иначе разорвал бы навигацию.
-# ---------------------------------------------------------------------------
+# Пагинированное главное меню: страницы задаются списком MENU_PAGES,
+# ряд навигации ◀️ · «🏠 Название 📖 i/n» · ▶️ собирается вручную,
+# чтобы счётчик страниц не разрывался при раскладке.
 
 MENU_PAGES: list[tuple[str, list[tuple[str, str]]]] = [
     ("🎮 Игра", [("🐾 Питомец", "menu:pet"),
@@ -35,27 +30,10 @@ MENU_PAGES: list[tuple[str, list[tuple[str, str]]]] = [
 ]
 
 
-def _forced_nav_pages(rows: list[list[InlineKeyboardButton]],
-                      size: int) -> list[list[list[InlineKeyboardButton]]]:
-    """Постраничная разбивка как в paged._chunk, но метка-счётчик страниц
-    всегда занимает отдельную строку (ряд ◀️ · метка · ▶️ не рвётся)."""
-    from app.keyboards.paged import _chunk
-    marked: list[list[InlineKeyboardButton]] = []
-    for row in rows:
-        if any((b.callback_data or "") == "menu:noop" for b in row):
-            marked.append([row[0]])      # метка — solo
-            marked.extend([[b] for b in row[1:]])  # ◀️/▶️ — по своим строкам
-        else:
-            marked.append(list(row))
-    return _chunk(marked, size)
-
-
 def _menu_extra_buttons() -> list[InlineKeyboardButton]:
     """Дополнительные кнопки главного меню: мерч (если включён)."""
     buttons: list[InlineKeyboardButton] = []
     if get_settings().merch_enabled:
-        # Мерч канала — отдельный раздел (не связан с питомцем): категории
-        # 👕 Футболки / 🧥 Худи / ☕ Аксессуары внутри бота.
         buttons.append(InlineKeyboardButton(text="🧢 Мерч канала",
                                             callback_data="menu:merch"))
     return buttons
@@ -92,10 +70,6 @@ def main_menu(link: str | None = None, reward: int = 0,
                  InlineKeyboardButton(text="Вперёд ▶️", callback_data=next_cb)],
                 [InlineKeyboardButton(text="⬅️ Назад", callback_data="menu:main"),
                  InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main")]]
-    b = InlineKeyboardBuilder()
-    # содержательные кнопки — стандартной раскладкой paged_keyboard (2 в ряд,
-    # длинные подписи solo), но без собственной пагинации: страницы задаются
-    # списком MENU_PAGES, а не чанкингом по ширине
     content_rows: list[list[InlineKeyboardButton]] = []
     line: list[InlineKeyboardButton] = []
     line_width = 0
@@ -114,6 +88,7 @@ def main_menu(link: str | None = None, reward: int = 0,
         line_width += w
     if line:
         content_rows.append(line)
+    b = InlineKeyboardBuilder()
     for row in content_rows + nav_rows:
         b.row(*row)
     return b.as_markup()
@@ -131,11 +106,7 @@ def main_menu_flat(link: str | None = None, reward: int = 0) -> InlineKeyboardMa
     return b.as_markup()
 
 
-# ---------------------------------------------------------------------------
-# Пагинированный хаб тамагочи (UX v1.4.7)
-# Раньше на одном экране было 13 кнопок — легко запутаться. Теперь действия
-# разбиты по страницам «уход → вещи → досуг», навигация ◀️/▶️ внизу.
-# ---------------------------------------------------------------------------
+# Пагинированный хаб тамагочи: страницы «уход → вещи → досуг» (PET_PAGES).
 
 PET_PAGES: list[tuple[str, list[tuple[str, str]]]] = [
     ("🧴 Уход", [("🍎 Покормить", "pet:feed"), ("🛁 Помыть", "pet:wash"),
@@ -174,7 +145,6 @@ def pet_hub(page: int = 0, critical: bool = False) -> InlineKeyboardMarkup:
     b.button(text="📜 История питомцев", callback_data="pet:history")
     b.adjust(2)
     b.row()
-    # единый стандарт строки страниц (v1.5.2): ◀️ · «Название 📖 i/n» · ▶️
     b.button(text="◀️ Назад", callback_data=f"pet:page:{(page - 1) % n}")
     b.button(text=f"{title} 📖 {page + 1}/{n}", callback_data="pet:noop")
     b.button(text="Вперёд ▶️", callback_data=f"pet:page:{(page + 1) % n}")
@@ -186,7 +156,7 @@ def pet_hub(page: int = 0, critical: bool = False) -> InlineKeyboardMarkup:
 
 
 def games_menu() -> InlineKeyboardMarkup:
-    """Экран выбора мини-игры (Этап 3.5). Подписи объясняют механику."""
+    """Экран выбора мини-игры. Подписи объясняют механику."""
     b = InlineKeyboardBuilder()
     b.button(text="🔢 Угадай число · 🧠 помогает", callback_data="game:guess")
     b.row()
@@ -321,7 +291,6 @@ def achievements_list(pairs: list, page: int = 0,
     if total_pages is None:
         total_pages = max(1, (len(pairs) + 8 - 1) // 8)
     b = InlineKeyboardBuilder()
-    # обе стрелки всегда (зацикление): положение кнопок не прыгает между страницами
     b.button(text="◀️ Новее", callback_data=f"ach:page:{(page - 1) % total_pages}")
     b.button(text=f"🏆 Достижения 📖 {page + 1}/{total_pages}", callback_data="ach:noop")
     b.button(text="Старше ▶️", callback_data=f"ach:page:{(page + 1) % total_pages}")
@@ -335,7 +304,6 @@ def achievements_list(pairs: list, page: int = 0,
 TOP_SECTION_LABELS = {"talk": "💬 Болтуны", "react": "💖 Реакции",
                       "streak": "🔥 Серии", "pets": "🐾 Питомцы",
                       "levels": "⭐ Уровни",
-                      # v1.4.7 — новые номинации общего топа:
                       "overall": "👑 Общий", "emotional": "🎭 Эмоциональные",
                       "karma": "💚 Добряки"}
 

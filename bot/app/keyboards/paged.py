@@ -15,7 +15,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 PAGE_SIZE = 6          # максимум действий на страницу
-NAV_ROW = "◀️"         # константы для тестов/документации
+NAV_ROW = "◀️"         # символ строки навигации
 
 
 def _button_width(btn: InlineKeyboardButton) -> int:

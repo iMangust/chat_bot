@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     # Администраторы бота (tg_id), через запятую в env: ADMIN_IDS=1,2
     admin_ids: list[int] = []
 
-    # --- Уведомления / вовлечение (Этап 6) ---
+    # --- Уведомления / вовлечение ---
     tz_offset_hours: int = 3             # смещение МСК для «ночной совы» и праздников
     daily_report_hour_utc: int = 17      # ежедневный отчёт (17 UTC ≈ 20 МСК)
     morning_reminder_hour_utc: int = 7   # утреннее напоминание (7 UTC ≈ 10 МСК)
@@ -69,7 +69,7 @@ class Settings(BaseSettings):
     channel_username: str | None = None
     channel_chat_id: int | None = None   # ID канала (-100...), если бот там админ
 
-    # --- Приветствие новичков канала (v1.5.1) ---
+    # --- Приветствие новичков канала ---
     # События chat_member приходят только если бот — админ канала с правом
     # «Manage users» и в allowed_updates есть "chat_member".
     welcome_channel_enabled: bool = True     # слать приветствие новым подписчикам канала

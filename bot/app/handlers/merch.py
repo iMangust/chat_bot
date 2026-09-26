@@ -172,7 +172,7 @@ async def merch_category(cb: CallbackQuery) -> None:
             cb.message, f"{icon} <b>{html.escape(title)}</b>\n\nПока пусто — скоро новинки!",
             reply_markup=_back_kb("menu:merch", f"⬅️ К категориям").as_markup())
         return await cb.answer()
-    # UX v1.4.9: витрина категории листается (≤6 товаров на страницу);
+    # витрина категории листается (≤6 товаров на страницу);
     # страница зашита в callback: merch:page:<n>:<code>.
     try:
         page = int(parts[2]) if cb.data.startswith("merch:page:") else 0
