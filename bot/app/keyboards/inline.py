@@ -1,32 +1,129 @@
-"""Inline-клавиатуры бота. Все экраны — редактирование одного сообщения."""
+"""Inline-клавиатуры бота. Все экраны — редактирование одного сообщения.
+
+Единая стилистика навигации (v1.5.2):
+* любой экран с большим числом кнопок листается постранично;
+* строка страниц: ``◀️ Назад · Название 📖 i/n · Вперёд ▶️`` (зацикливание);
+* фиксированный нижний ряд: ``⬅️ Назад`` (на главный экран) + ``🏠 Меню``;
+* все подписи кнопок — с эмодзи; заголовки экранов тоже (в т.ч. «🏠 Главное меню»).
+"""
 from __future__ import annotations
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.config import get_settings
+from app.keyboards.paged import paged_keyboard
 
 
-def main_menu(link: str | None = None, reward: int = 0) -> InlineKeyboardMarkup:
-    """Главное меню. Подписи кнопок самодокументируемы (UX v1.4.7):
-    коротко поясняем, что внутри, чтобы не было «котов в мешке»."""
-    b = InlineKeyboardBuilder()
-    b.button(text="🐾 Питомец · уход и игры", callback_data="menu:pet")
-    b.row()
-    b.button(text="📊 Мои статистика", callback_data="menu:stats")
-    b.button(text="🏆 Мои награды", callback_data="menu:ach")
-    b.row()
-    b.button(text="🏅 Топы чата", callback_data="menu:top")
-    b.button(text="🖼 Карточка профиля", callback_data="menu:card")
-    b.row()
-    b.button(text="🛒 Магазин · за монеты", callback_data="menu:shop")
-    b.button(text="⚙️ Уведомления · язык", callback_data="menu:settings")
-    settings = get_settings()
-    if settings.merch_enabled:
+# ---------------------------------------------------------------------------
+# Пагинированное главное меню (v1.5.2)
+# Раньше на одном экране было до 9 кнопок — теперь, как в хабе питомца,
+# разделы разбиты на страницы «Игра / Профиль / Ссылки» с навигацией
+# ◀️ · «🏠 Название 📖 i/n» · ▶️ и нижним рядом ⬅️ Назад + 🏠 Меню.
+# Кнопка-счётчик страниц принудительно ставится своей строкой: paged_keyboard
+# режет ряды по ширине и иначе разорвал бы навигацию.
+# ---------------------------------------------------------------------------
+
+MENU_PAGES: list[tuple[str, list[tuple[str, str]]]] = [
+    ("🎮 Игра", [("🐾 Питомец", "menu:pet"),
+                 ("🛒 Магазин", "menu:shop")]),
+    ("👤 Профиль", [("📊 Моя статистика", "menu:stats"),
+                    ("🏆 Мои награды", "menu:ach"),
+                    ("🏅 Топы чата", "menu:top"),
+                    ("🖼 Карточка профиля", "menu:card"),
+                    ("⚙️ Уведомления", "menu:settings")]),
+]
+
+
+def _forced_nav_pages(rows: list[list[InlineKeyboardButton]],
+                      size: int) -> list[list[list[InlineKeyboardButton]]]:
+    """Постраничная разбивка как в paged._chunk, но метка-счётчик страниц
+    всегда занимает отдельную строку (ряд ◀️ · метка · ▶️ не рвётся)."""
+    from app.keyboards.paged import _chunk
+    marked: list[list[InlineKeyboardButton]] = []
+    for row in rows:
+        if any((b.callback_data or "") == "menu:noop" for b in row):
+            marked.append([row[0]])      # метка — solo
+            marked.extend([[b] for b in row[1:]])  # ◀️/▶️ — по своим строкам
+        else:
+            marked.append(list(row))
+    return _chunk(marked, size)
+
+
+def _menu_extra_buttons() -> list[InlineKeyboardButton]:
+    """Дополнительные кнопки главного меню: мерч (если включён)."""
+    buttons: list[InlineKeyboardButton] = []
+    if get_settings().merch_enabled:
         # Мерч канала — отдельный раздел (не связан с питомцем): категории
         # 👕 Футболки / 🧥 Худи / ☕ Аксессуары внутри бота.
-        b.row()
-        b.button(text="🧢 Мерч канала", callback_data="menu:merch")
+        buttons.append(InlineKeyboardButton(text="🧢 Мерч канала",
+                                            callback_data="menu:merch"))
+    return buttons
+
+
+def menu_page_count() -> int:
+    return len(MENU_PAGES)
+
+
+def main_menu(link: str | None = None, reward: int = 0,
+              page: int = 0) -> InlineKeyboardMarkup:
+    """Главное меню — пагинированный хаб (как pet_hub), ≤6 кнопок на страницу.
+
+    Страница 0 — «🎮 Игра» (питомец, магазин, мерч), страница 1 — «👤 Профиль»
+    (статистика, награды, топы, карточка, уведомления). Внизу — навигация
+    ◀️ · «🏠 Название 📖 i/n» · ▶️ и фиксированный ряд ⬅️ Назад + 🏠 Меню
+    (единая стилистика со всеми экранами бота). Реферальная ссылка (если есть)
+    прикреплена на странице «Игра».
+    """
+    n = len(MENU_PAGES)
+    page %= n
+    title, actions = MENU_PAGES[page]
+    buttons = [InlineKeyboardButton(text=t, callback_data=cb) for t, cb in actions]
+    if page == 0:
+        buttons += _menu_extra_buttons()
+        if link:
+            text = "🤝 Пригласить друга" + (f" (+{reward} 🪙)" if reward else "")
+            buttons.append(InlineKeyboardButton(text=text, url=link))
+    label = f"🏠 {title} 📖 {page + 1}/{n}"
+    prev_cb = f"menu:page:{(page - 1) % n}"
+    next_cb = f"menu:page:{(page + 1) % n}"
+    nav_rows = [[InlineKeyboardButton(text="◀️ Назад", callback_data=prev_cb),
+                 InlineKeyboardButton(text=label, callback_data="menu:noop"),
+                 InlineKeyboardButton(text="Вперёд ▶️", callback_data=next_cb)],
+                [InlineKeyboardButton(text="⬅️ Назад", callback_data="menu:main"),
+                 InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main")]]
+    b = InlineKeyboardBuilder()
+    # содержательные кнопки — стандартной раскладкой paged_keyboard (2 в ряд,
+    # длинные подписи solo), но без собственной пагинации: страницы задаются
+    # списком MENU_PAGES, а не чанкингом по ширине
+    content_rows: list[list[InlineKeyboardButton]] = []
+    line: list[InlineKeyboardButton] = []
+    line_width = 0
+    for btn in buttons:
+        w = sum(2 if ord(ch) > 0x2190 else 1 for ch in btn.text)
+        if w >= 24:
+            if line:
+                content_rows.append(line)
+            content_rows.append([btn])
+            line, line_width = [], 0
+            continue
+        if line and line_width + w > 38:
+            content_rows.append(line)
+            line, line_width = [], 0
+        line.append(btn)
+        line_width += w
+    if line:
+        content_rows.append(line)
+    for row in content_rows + nav_rows:
+        b.row(*row)
+    return b.as_markup()
+
+
+def main_menu_flat(link: str | None = None, reward: int = 0) -> InlineKeyboardMarkup:
+    """Одностраничное меню: ⬅️ Назад + 🏠 Меню (для финальных экранов)."""
+    b = InlineKeyboardBuilder()
+    b.button(text="⬅️ Назад", callback_data="menu:main")
+    b.button(text="🏠 Меню", callback_data="menu:main")
     if link:
         b.row()
         text = "🤝 Пригласить друга" + (f" (+{reward} 🪙)" if reward else "")
@@ -77,12 +174,14 @@ def pet_hub(page: int = 0, critical: bool = False) -> InlineKeyboardMarkup:
     b.button(text="📜 История питомцев", callback_data="pet:history")
     b.adjust(2)
     b.row()
+    # единый стандарт строки страниц (v1.5.2): ◀️ · «Название 📖 i/n» · ▶️
     b.button(text="◀️ Назад", callback_data=f"pet:page:{(page - 1) % n}")
-    b.button(text=f"📖 {title} {page + 1}/{n}", callback_data="noop")
+    b.button(text=f"{title} 📖 {page + 1}/{n}", callback_data="pet:noop")
     b.button(text="Вперёд ▶️", callback_data=f"pet:page:{(page + 1) % n}")
     b.row()
     b.button(text="⬅️ Назад", callback_data="menu:main")
-    b.adjust(3, 1)
+    b.button(text="🏠 Меню", callback_data="menu:main")
+    b.adjust(3, 2)
     return b.as_markup()
 
 
@@ -133,8 +232,14 @@ def guess_hint_keyboard(secret_lo: int, secret_hi: int) -> InlineKeyboardMarkup:
 
 
 def back_to_main() -> InlineKeyboardMarkup:
+    """Единый нижний ряд «⬅️ Назад + 🏠 Меню» (v1.5.2).
+
+    Используется на финальных экранах без собственной навигации; оба ведёт
+    в главное меню (menu:main — пагинированный хаб).
+    """
     b = InlineKeyboardBuilder()
     b.button(text="⬅️ Назад", callback_data="menu:main")
+    b.button(text="🏠 Меню", callback_data="menu:main")
     return b.as_markup()
 
 
@@ -161,7 +266,7 @@ def start_pet_name_suggestions(names: list[str]) -> InlineKeyboardMarkup:
 
 def onboard_done() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
-    b.button(text="🚀 В главное меню", callback_data="menu:main")
+    b.button(text="🏠 В главное меню", callback_data="menu:main")
     return b.as_markup()
 
 
@@ -188,7 +293,7 @@ def adopt_cta_kb() -> InlineKeyboardMarkup:
     """Экран «питомца нет» (v1.4.7): завести или вернуться в меню."""
     b = InlineKeyboardBuilder()
     b.button(text="🥚 Усыновить питомца", callback_data="pet:adopt")
-    b.button(text="⬅️ В меню", callback_data="menu:main")
+    b.button(text="🏠 Меню", callback_data="menu:main")
     b.adjust(1)
     return b.as_markup()
 
@@ -201,7 +306,8 @@ def pet_history_kb(has_current: bool = True) -> InlineKeyboardMarkup:
     b.button(text="🥚 Усыновить нового", callback_data="pet:adopt")
     b.row()
     b.button(text="⬅️ Назад", callback_data="menu:main")
-    b.adjust(2, 1)
+    b.button(text="🏠 Меню", callback_data="menu:main")
+    b.adjust(2, 2)
     return b.as_markup()
 
 
@@ -217,10 +323,12 @@ def achievements_list(pairs: list, page: int = 0,
     b = InlineKeyboardBuilder()
     # обе стрелки всегда (зацикление): положение кнопок не прыгает между страницами
     b.button(text="◀️ Новее", callback_data=f"ach:page:{(page - 1) % total_pages}")
-    b.button(text=f"🏆 {page + 1}/{total_pages}", callback_data="noop")
+    b.button(text=f"🏆 Достижения 📖 {page + 1}/{total_pages}", callback_data="ach:noop")
     b.button(text="Старше ▶️", callback_data=f"ach:page:{(page + 1) % total_pages}")
     b.row()
     b.button(text="⬅️ Назад", callback_data="menu:main")
+    b.button(text="🏠 Меню", callback_data="menu:main")
+    b.adjust(3, 2)
     return b.as_markup()
 
 
@@ -248,12 +356,13 @@ def top_tabs(active: str = "week", section: str = "talk") -> InlineKeyboardMarku
         b.button(text=f"{mark}{label}", callback_data=f"top:{key}:{keys[idx]}")
     b.row()
     b.button(text="◀️ Раздел", callback_data=f"top:{active}:{keys[(idx - 1) % n]}")
-    b.button(text=f"{TOP_SECTION_LABELS.get(keys[idx], '🏅')} {idx + 1}/{n}",
-             callback_data="noop")
+    b.button(text=f"{TOP_SECTION_LABELS.get(keys[idx], '🏅')} 📖 {idx + 1}/{n}",
+             callback_data="top:noop")
     b.button(text="Раздел ▶️", callback_data=f"top:{active}:{keys[(idx + 1) % n]}")
     b.row()
     b.button(text="⬅️ Назад", callback_data="menu:main")
-    b.adjust(3, 3, 1)
+    b.button(text="🏠 Меню", callback_data="menu:main")
+    b.adjust(3, 3, 2)
     return b.as_markup()
 
 
@@ -272,6 +381,8 @@ def settings_keyboard(flags: dict[str, bool]) -> InlineKeyboardMarkup:
     b.adjust(2)
     b.row()
     b.button(text="⬅️ Назад", callback_data="menu:main")
+    b.button(text="🏠 Меню", callback_data="menu:main")
+    b.adjust(2)
     return b.as_markup()
 
 
@@ -289,7 +400,8 @@ def arena_keyboard(can_fight: bool = True, hint: str = "") -> InlineKeyboardMark
         b.button(text=(hint[:52] or "⏳ Подожди…"), callback_data="arena:noop")
     b.row()
     b.button(text="⬅️ К питомцу", callback_data="menu:pet")
-    b.adjust(1)
+    b.button(text="🏠 Меню", callback_data="menu:main")
+    b.adjust(2)
     return b.as_markup()
 
 
@@ -311,4 +423,5 @@ def style_keyboard(colors: dict[str, tuple[str, int]],
     b.adjust(1)
     b.row()
     b.button(text="⬅️ К питомцу", callback_data="menu:pet")
+    b.button(text="🏠 Меню", callback_data="menu:main")
     return b.as_markup()

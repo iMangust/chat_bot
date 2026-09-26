@@ -12,8 +12,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import Pet, PetSpecies
 from app.db.repositories import PetRepository, UserRepository
 from app.keyboards.inline import (
-    main_menu, onboard_done, species_picker, start_pet_name_suggestions,
-    welcome_start_button,
+    MENU_PAGES, main_menu, onboard_done, species_picker,
+    start_pet_name_suggestions, welcome_start_button,
 )
 from app.services.achievements import AchievementService
 from app.services.tamagotchi import SPECIES_DATA
@@ -77,12 +77,13 @@ def invite_link_for(tg_id: int) -> str:
     return f"https://t.me/{ch}?start=invite_{tg_id}"
 
 
-def _main_menu_text(user) -> str:
+def _main_menu_text(user, page: int = 0) -> str:
     need = xp_needed_for_level(user.level)
     bar = progress_bar(user.xp, need)
     ch = get_settings().channel_username
+    title, _actions = MENU_PAGES[page % len(MENU_PAGES)]
     lines = [
-        "🏠 <b>Главное меню</b>\n",
+        f"🏠 <b>Главное меню · {title}</b>\n",
         f"👤 {_html.escape(user.first_name or '')}, уровень {user.level} · {bar} {user.xp}/{need} XP",
         f"🪙 Монеты: {user.coins} · 🔥 Серия: {user.streak_days} дн.",
         "",
@@ -309,6 +310,27 @@ async def _finish_onboarding(cb: CallbackQuery, state: FSMContext,
 
 @router.callback_query(F.data == "menu:main")
 async def cb_main_menu(cb: CallbackQuery, session: AsyncSession) -> None:
+    await _render_main_menu(cb, session, page=0)
+
+
+@router.callback_query(F.data.startswith("menu:page:"))
+async def cb_main_menu_page(cb: CallbackQuery, session: AsyncSession) -> None:
+    """◀️/▶️ главного меню (v1.5.2): страницы «Игра» и «Профиль»."""
+    try:
+        page = int(cb.data.split(":")[-1])
+    except ValueError:
+        page = 0
+    await _render_main_menu(cb, session, page=page)
+
+
+@router.callback_query(F.data == "menu:noop")
+async def cb_main_menu_noop(cb: CallbackQuery) -> None:
+    """Клик по неразрывной подписи страницы — просто снять «часики»."""
+    await cb.answer()
+
+
+async def _render_main_menu(cb: CallbackQuery, session: AsyncSession,
+                            page: int = 0) -> None:
     # «⬅️ Назад» ведёт сюда с любого экрана. Если сообщение-контекст — фото
     # (карточка профиля) или вообще отсутствует, edit_text невозможен;
     # safe_edit_or_answer отправит меню новым сообщением, и навигация не сломается.
@@ -320,6 +342,7 @@ async def cb_main_menu(cb: CallbackQuery, session: AsyncSession) -> None:
                                      cb.from_user.username)
     link = invite_link_for(user.tg_id)
     reward = get_settings().invite_reward_coins
-    await safe_edit_or_answer(cb.message, _main_menu_text(user),
-                              reply_markup=main_menu(link=link, reward=reward))
+    page %= len(MENU_PAGES)
+    await safe_edit_or_answer(cb.message, _main_menu_text(user, page),
+                              reply_markup=main_menu(link=link, reward=reward, page=page))
     await cb.answer()
