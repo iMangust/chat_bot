@@ -45,44 +45,29 @@ async def collect_participant_ids() -> list[int]:
     """Список user_id участников всех обязательных чатов (без дублей).
 
     Требует telethon (устанавливается опционально: pip install telethon>=1.36).
-    Ключи сессии: MTPROTO_SESSION_STRING — строка из `python -m
-    telethon.session_string`; либо MTPROTO_SESSION (путь к файлу). Если ни
+    Клиент и авторизация — через app.services.mtproto_client (единственный
+    источник конфигов; ключи читаются из .env, в коде их нет). Если ни
     чего нет — будет интерактивный логин по PHONE (не для продакшена).
     """
-    try:
-        from telethon import TelegramClient
-        from telethon.tl.functions.channels import GetFullChannelRequest
-    except ImportError as exc:  # pragma: no cover
-        raise RuntimeError(
-            "telethon не установлен: pip install 'telethon>=1.36'"
-        ) from exc
+    from telethon.tl.functions.channels import GetFullChannelRequest
 
-    st = get_settings()
-    if not st.telegram_api_id or not st.telegram_api_hash:
-        raise RuntimeError(
-            "TELEGRAM_API_ID / TELEGRAM_API_HASH не заданы (см. .env.example)")
+    from app.services.mtproto_client import holder, resolve_channel_entity
+
+    if not holder.is_connected():
+        await holder.get()  # понятная RuntimeError-подсказка, если не настроено
 
     from app.middlewares.gate import required_chats
     chats = required_chats()
     if not chats:
         raise RuntimeError("required_chats пуст — нечего синхронизировать")
 
-    client = TelegramClient(
-        st.mtproto_session_string or st.mtproto_session or "mtproto_sync",
-        st.telegram_api_id, st.telegram_api_hash)
-    await client.start(phone=st.telegram_phone or None)
-    me = await client.get_me()
-    logger.info("MTProto login ok: user id={} username={}",
-                me.id, me.username or "-")
-
     ids: set[int] = set()
+    client = await holder.get()
     for cid, uname in chats:
         target = uname or cid
         try:
-            entity = await client.get_entity(target)
+            entity = await resolve_channel_entity(target)
         except Exception as exc:  # noqa: BLE001 — wrong_type/username_not_occupied и т.п.
-            # numeric fallback: inner id (-100...) без access_hash mtproto не
-            # резолвится; если username есть — уже пробовали выше
             logger.error("MTProto: не удалось разрешить чат {!r}: {}"
                          " (укажите CHANNEL_USERNAME/public-ссылку)", target, exc)
             continue
@@ -95,7 +80,6 @@ async def collect_participant_ids() -> list[int]:
                  if not getattr(u, "bot", False)}
         logger.info("MTProto: {} — {} участник(ов)", target, len(users))
         ids |= users
-    await client.disconnect()
     return sorted(ids)
 
 
@@ -148,14 +132,72 @@ async def _self_bot_id() -> int:
         return -1
 
 
+def mtproto_configured() -> bool:
+    """Можно ли вообще запускать MTProto-синк (ключи + чем авторизоваться)."""
+    from app.services.mtproto_client import credentials_configured, telethon_available
+    return telethon_available() and credentials_configured()
+
+
+async def autosync_if_configured(first_run: bool | None = None) -> dict | None:
+    """Синк при старте бота: полная синхронизация при первой загрузке базы.
+
+    first_run=None → автоопределение: база подписчиков пуста (или это первый
+    прогон после v1.5.11) ⇒ тянем ВСЕХ участников канала разом; иначе дельту.
+    Возвращает None, если MTProto не настроен (бот живёт только на Bot API).
+    """
+    st = get_settings()
+    if not st.welcome_channel_enabled or not mtproto_configured():
+        return None
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+    from app.db.repositories import SubscriberRepository
+    from app.db.session import engine
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    async with factory() as session:
+        known = await SubscriberRepository(session).count()
+    full = (first_run if first_run is not None else known == 0)
+    logger.info("MTProto autosync: режим {} (база: {} подписчик(ов))",
+                "ПОЛНАЯ" if full else "дельта", known)
+    return await sync_subscribers(first_run=full)
+
+
+async def login_and_print_session_string() -> str:
+    """Интерактивный логин (--login): телефон → код → 2FA.
+
+    Создаёт *.session рядом с cwd и печатает MTPROTO_SESSION_STRING для
+    безинтерактивного деплоя. Секреты в лог не пишутся.
+    """
+    from app.services.mtproto_client import holder
+    client = await holder.get()          # сам запросит phone/code/password
+    string = await client.session.save_to_string()
+    me = holder.me
+    print("\n✅ Логин успешен:", me.id, me.username or "")
+    print("Для сервера добавьте в .env:")
+    print(f"MTPROTO_SESSION_STRING={string[:8]}…(полная строка ниже)")
+    print(string)
+    return string
+
+
 async def main(argv: list[str] | None = None) -> int:
     argv = argv if argv is not None else sys.argv[1:]
+    if "--login" in argv:
+        try:
+            await login_and_print_session_string()
+        except Exception as exc:  # noqa: BLE001
+            logger.error("MTProto login failed: {}", exc)
+            return 1
+        finally:
+            from app.services.mtproto_client import holder
+            await holder.disconnect()
+        return 0
     first_run = "--first-run" in argv
     try:
         res = await sync_subscribers(first_run=first_run)
     except Exception as exc:  # noqa: BLE001
         logger.error("MTProto sync failed: {}", exc)
         return 1
+    finally:
+        from app.services.mtproto_client import holder
+        await holder.disconnect()
     print(f"Участников: {res['total']}, новых в базе: {res['added']}, "
           f"старых пропущено: {res['skipped_old']}")
     print("Приветствия разошлются штатным механизмом (скан каждые "

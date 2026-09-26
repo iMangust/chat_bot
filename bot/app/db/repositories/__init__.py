@@ -474,20 +474,31 @@ class SubscriberRepository:
                          reset_welcome: bool = False) -> bool:
         """Заносит подписчика; True — если он ждёт приветствия (pending).
 
-        Идемпотентно к повторным доставкам апдейтов: опираемся на PK user_id,
-        конфликт молча пропускаем (already known). Если запись уже есть, но
-        приветствие НЕ было доставлено (например, ЛС были закрыты), обновляем
-        имя/username и возвращаем True — иначе «вечные pending» так и не
-        дождались бы доставки: welcome_pending_subscribers берёт имя из базы.
+        v1.5.12: PK пары (user_id, chat_id) — дедупликация по чатам.
+        Пользователь уже приветствовался в ЛЮБОМ из чатов (есть строка с
+        welcomed_at) ⇒ новые строки создаются сразу «приветствованными»:
+        повторного DM не будет ни при MTProto-sync, ни при событиях. Право
+        на ещё одно приветствие даёт только явный reset_welcome=True
+        (реальное вступление в ДРУГОЙ отслеживаемый чат).
 
-        Приветствованный (welcomed_at) пользователь остаётся приветствованным:
-        сброс отметки — только по явному reset_welcome=True (реальное событие
-        вступления в ДРУГОЙ отслеживаемый чат). Иначе /start или первое
-        сообщение после рестарта вернули бы новичка в очередь и он получил бы
-        повторное DM-приветствие.
+        Приветствованный пользователь остаётся приветствованным: сброс
+        отметки — только по явному reset_welcome=True. Иначе /start или
+        первое сообщение после рестарта вернули бы новичка в очередь и он
+        получил бы повторное DM-приветствие.
         """
         from app.db.models import ChannelSubscriber
-        exists = await self.session.get(ChannelSubscriber, user_id)
+        pk = {"user_id": user_id, "chat_id": chat_id}
+        exists = await self.session.get(ChannelSubscriber, pk)
+        welcomed_rows = list((await self.session.execute(
+            select(ChannelSubscriber.chat_id, ChannelSubscriber.welcome_sent_chat_id)
+            .where(ChannelSubscriber.user_id == user_id,
+                   ChannelSubscriber.welcomed_at.is_not(None))
+        )).all())
+        already_welcomed_anywhere = bool(welcomed_rows)
+        # «чаты-основания», ради которых DM уже уходил (NULL у строк до
+        # v1.5.10 — считаем известным чатом строки, чтобы не слать второй DM)
+        sent_chats = {r.welcome_sent_chat_id if r.welcome_sent_chat_id is not None
+                      else r.chat_id for r in welcomed_rows}
         if exists is not None:
             if first_name:
                 exists.first_name = first_name
@@ -495,43 +506,72 @@ class SubscriberRepository:
                 exists.username = username
             if exists.welcomed_at is None:
                 return True
-            if (reset_welcome and chat_id and exists.chat_id != chat_id
-                    and exists.welcome_sent_chat_id != chat_id):
-                # Реальное вступление в ДРУГОЙ чат (не тот, где зарегистрирован,
-                # и не тот, ради которого уже слали приветствие) — разрешаем
-                # ещё одно DM.
-                exists.chat_id = chat_id
+            # welcome_sent_chat_id может быть NULL (строки до v1.5.10) — тогда
+            # считаем, что «чат основания» совпадает, и НЕ даём второго DM
+            sent_ok = (exists.welcome_sent_chat_id is not None
+                       and exists.welcome_sent_chat_id != chat_id)
+            if reset_welcome and sent_ok:
                 exists.welcomed_at = None
                 return True
             return False
+        row = ChannelSubscriber(
+            user_id=user_id, chat_id=chat_id,
+            first_name=first_name or "", username=username)
+        if already_welcomed_anywhere:
+            # человек уже получал welcome-DM — но РЕАЛЬНОЕ вступление в ДРУГОЙ
+            # чат (reset_welcome) даёт право ещё на одно приветствие; новые
+            # «косвенные» строки регистрируем молча, без очереди
+            row.welcomed_at = utcnow()
+            row.welcome_sent_chat_id = chat_id
+            if reset_welcome and chat_id not in sent_chats:
+                row.welcomed_at = None
         try:
-            self.session.add(ChannelSubscriber(
-                user_id=user_id, chat_id=chat_id,
-                first_name=first_name or "", username=username,
-            ))
+            self.session.add(row)
             await self.session.flush()
-            return True
+            return row.welcomed_at is None
         except IntegrityError:  # гонка параллельных апдейтов
             await self.session.rollback()
             return False
 
     async def pending_welcomes(self, limit: int = 20):
-        """Новые подписчики без отправленного приветствия."""
+        """Новые подписчики без отправленного приветствия.
+
+        Дедуп по пользователю: если у него есть хоть одна приветствованная
+        строка (другой чат) — в выборку не попадает (защита от двойных DM
+        при участии в канале + группе).
+        """
         from app.db.models import ChannelSubscriber
+        welcomed_users = (select(ChannelSubscriber.user_id)
+                          .where(ChannelSubscriber.welcomed_at.is_not(None))
+                          .scalar_subquery())
         stmt = (select(ChannelSubscriber)
-                .where(ChannelSubscriber.welcomed_at.is_(None))
+                .where(ChannelSubscriber.welcomed_at.is_(None),
+                       ChannelSubscriber.user_id.notin_(welcomed_users))
                 .order_by(ChannelSubscriber.first_seen)
                 .limit(limit))
         return list((await self.session.execute(stmt)).scalars())
 
-    async def get(self, user_id: int):
+    async def get(self, user_id: int, chat_id: int | None = None):
         from app.db.models import ChannelSubscriber
-        return await self.session.get(ChannelSubscriber, user_id)
+        if chat_id is not None:
+            return await self.session.get(ChannelSubscriber,
+                                          {"user_id": user_id, "chat_id": chat_id})
+        # первая строка пользователя (для совместимых вызовов со старым API)
+        stmt = (select(ChannelSubscriber)
+                .where(ChannelSubscriber.user_id == user_id).limit(1))
+        return (await self.session.execute(stmt)).scalars().first()
 
     async def reset_welcome(self, user_id: int) -> None:
-        """Снимает отметку приветствия (повторный вход в другой чат)."""
+        """Снимает отметку приветствия (повторный вход в другой чат).
+
+        v1.5.12: PK составной (user_id, chat_id) — ищем первую строку
+        пользователя и сбрасываем welcome-отметку на ней.
+        """
         from app.db.models import ChannelSubscriber
-        row = await self.session.get(ChannelSubscriber, user_id)
+        row = (await self.session.execute(
+            select(ChannelSubscriber)
+            .where(ChannelSubscriber.user_id == user_id).limit(1)
+        )).scalars().first()
         if row is not None:
             row.welcomed_at = None
             await self.session.commit()
@@ -550,13 +590,26 @@ class SubscriberRepository:
         return int(v) if v is not None else None
 
     async def mark_welcomed(self, user_id: int, chat_id: int | None = None) -> None:
-        """Отмечает приветствие доставленным; запоминает чат-основание (v1.5.10)."""
+        """Отмечает приветствие доставленным; запоминает чат-основание (v1.5.10).
+
+        v1.5.12: PK составной — при известном chat_id метим точную строку
+        пары (user, chat); иначе — первую pending-строку пользователя
+        (её chat_id и есть «чат основания», из которого пришла очередь).
+        """
         from app.db.models import ChannelSubscriber
-        row = await self.session.get(ChannelSubscriber, user_id)
+        if chat_id is not None:
+            row = await self.session.get(ChannelSubscriber,
+                                         {"user_id": user_id, "chat_id": chat_id})
+        else:
+            stmt = (select(ChannelSubscriber)
+                    .where(ChannelSubscriber.user_id == user_id,
+                           ChannelSubscriber.welcomed_at.is_(None))
+                    .order_by(ChannelSubscriber.first_seen).limit(1))
+            row = (await self.session.execute(stmt)).scalars().first()
         if row is not None and row.welcomed_at is None:
             row.welcomed_at = utcnow()
-            if chat_id is not None:
-                row.welcome_sent_chat_id = chat_id
+            if row.welcome_sent_chat_id is None:
+                row.welcome_sent_chat_id = row.chat_id
 
     async def count(self) -> int:
         from app.db.models import ChannelSubscriber

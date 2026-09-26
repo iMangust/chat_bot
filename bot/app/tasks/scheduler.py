@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 from aiogram import Bot
@@ -288,6 +289,41 @@ async def scan_channel_members(bot: Bot) -> None:
         await release_lock("channel_scan")
 
 
+async def mtproto_delta_sync() -> None:
+    """v1.5.12: периодическая MTProto-дельта (полный Telegram API).
+
+    Bot API не отдаёт список участников канала — Telethon закрывает этот
+    пробел: раз в MTPROTO_SYNC_MINUTES тянем участников обязательных чатов
+    и добавляем только «свежих» (id больше максимального известного).
+    Задача создаётся только если MTProto настроен; ошибки не валят бота.
+    """
+    if not await acquire_lock("mtproto_sync", ttl_sec=60 * 50):
+        return
+    try:
+        from app.services.mtproto_sync import (mtproto_configured,
+                                               sync_subscribers)
+        if not mtproto_configured():
+            return
+        res = await asyncio.wait_for(sync_subscribers(first_run=False), timeout=280)
+        logger.info("MTProto delta sync: {}", res)
+        # сразу раздаём приветствия из обновлённой очереди (не ждём скан)
+        from aiogram import Bot as _Bot
+        from app.handlers.welcome import welcome_pending_subscribers
+        async with session_factory() as session:
+            n = await welcome_pending_subscribers(_Bot.get_current(), session, limit=20)
+        if n:
+            logger.info("MTProto sync: отправлено приветствий: {}", n)
+    except asyncio.TimeoutError:
+        logger.warning("MTProto delta sync: таймаут (сеть/флудконтроль?)")
+    except RuntimeError:  # вне контекста бота — разойдутся по следующему тикам
+        pass
+    except Exception as exc:  # noqa: BLE001 — без сессии/кредов тихо живём на Bot API
+        logger.info("MTProto delta sync пропущен: {}: {}",
+                    type(exc).__name__, str(exc)[:200])
+    finally:
+        await release_lock("mtproto_sync")
+
+
 def build_scheduler(bot: Bot) -> AsyncIOScheduler:
     sched = AsyncIOScheduler(timezone="UTC")
     sched.add_job(decay_all_pets, "interval", minutes=30, args=[bot],
@@ -308,4 +344,9 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
                   args=[bot], id="weeklylb", max_instances=1, coalesce=True)
     sched.add_job(weekly_arena_finish, "cron", day_of_week="mon", hour=0, minute=40,
                   args=[bot], id="weeklyarena", max_instances=1, coalesce=True)
+    # v1.5.12: MTProto-дельта (полный API), только если ключи заданы
+    if st.mtproto_sync_minutes > 0 and st.telegram_api_id and st.telegram_api_hash:
+        sched.add_job(mtproto_delta_sync, "interval", minutes=st.mtproto_sync_minutes,
+                      id="mtproto_sync", max_instances=1, coalesce=True,
+                      next_run_time=datetime.now(timezone.utc) + timedelta(seconds=90))
     return sched

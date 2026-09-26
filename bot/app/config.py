@@ -1,18 +1,80 @@
 """Конфигурация приложения.
 
 Все секреты только из окружения (.env). Никаких хардкод-токенов.
+
+v1.5.12: .env ищется по абсолютным путям (бот можно запускать из любой
+директории), плюс поддерживаются «короткие» имена ключей MTProto из
+.env.example (API_ID / API_HASH / PHONE) — раньше они молча игнорировались,
+и синхронизация «не происходила» при полностью раскомментированном блоке.
 """
 from __future__ import annotations
 
+import os
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-__version__ = "1.5.11"
+__version__ = "1.5.12"
+
+# Порядок поиска .env: переменная окружения ENV_FILE → корень проекта
+# (рядом с этим файлом: bot/app/config.py → bot/.env) → репозиторий → cwd.
+_ENV_CANDIDATES = [
+    p for p in (
+        os.getenv("ENV_FILE"),
+        str(Path(__file__).resolve().parent.parent / ".env"),
+        str(Path(__file__).resolve().parent.parent.parent / ".env"),
+        ".env",
+    ) if p
+]
+
+
+def _env_files() -> tuple[str, ...]:
+    return tuple(p for p in _ENV_CANDIDATES if Path(p).is_file()) or (".env",)
+
+
+def _alias_short_mtproto_keys() -> None:
+    """API_ID/API_HASH/PHONE (как в .env.example) == TELEGRAM_API_ID/.../PHONE.
+
+    Pydantic читает только точные имена полей; чтобы блок вида
+        API_ID=12345678
+    работал без префикса, прокидываем значения в os.environ ДО создания
+    Settings (реальные переменные окружения имеют приоритет над .env, но
+    если их нет — алиасы подхватятся). Ничего не логируем: ключи секретны.
+    """
+    from dotenv import dotenv_values
+    vals: dict[str, str] = {}
+    for path in _env_files():
+        try:
+            with open(path, encoding="utf-8") as fh:
+                vals.update({k: v for k, v in dotenv_values(fh).items() if v is not None})
+        except OSError:  # гонка/права/удалённый файл — не роняем импорт конфига
+            continue
+    pairs = {
+        "TELEGRAM_API_ID": ("API_ID",),
+        "TELEGRAM_API_HASH": ("API_HASH",),
+        "TELEGRAM_PHONE": ("PHONE",),
+        "TELEGRAM_PASSWORD": ("TELEGRAM_PASSWORD",),
+        "MTPROTO_SESSION_STRING": ("SESSION_STRING",),
+        "MTPROTO_SESSION": ("SESSION_FILE",),
+        "MTPROTO_ANSWER_MODE": ("ANSWER_MODE",),
+    }
+    for target, sources in pairs.items():
+        if os.getenv(target):
+            continue
+        for src in sources:
+            v = os.getenv(src) or vals.get(src)
+            if v:
+                os.environ[target] = v
+                break
+
+
+_alias_short_mtproto_keys()
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=_env_files(), env_file_encoding="utf-8", extra="ignore")
 
     # --- Telegram ---
     bot_token: str = ""
@@ -90,6 +152,18 @@ class Settings(BaseSettings):
     # Готовая строка сессии (без файла, для сервера): см. README «MTProto»
     mtproto_session_string: str | None = None
     mtproto_session: str = "mtproto_sync"      # либо путь к файлу .session
+    # Режим «полного API» для входящих сообщений (v1.5.12):
+    #   off     — только Bot API (дефолт; Telethon нужен лишь для sync);
+    #   user    — отвечать в чатах от user-аккаунта (UserBot, требует
+    #             интерактивного логина или готовой сессии);
+    #   hybrid  — события/команды обрабатывает бот, UserBot дублирует
+    #             ответы там, где бот не может (например, без админ-прав).
+    mtproto_answer_mode: str = "off"
+    # Автозапуск полной синхронизации участников при старте бота
+    # (если заданы api_id/api_hash + сессия). Прогоняется один раз за старт.
+    mtproto_autosync: bool = True
+    # Период дельта-синхронизации через MTProto, минут (0 = выкл).
+    mtproto_sync_minutes: int = 60
 
     # --- Мерч канала (отдельный раздел 🧢, не связан с питомцем) ---
     merch_enabled: bool = True           # показывать раздел 🧢 Мерч в главном меню

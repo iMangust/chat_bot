@@ -580,7 +580,7 @@ class TestCore:
 
     def test_version(self):
         from app.config import __version__
-        assert __version__ == "1.5.11"
+        assert __version__ == "1.5.12"
 
 
 # ---------------------------------------------------------------------------

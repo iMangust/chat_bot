@@ -18,7 +18,7 @@ from sqlalchemy import inspect as sa_inspect
 from app.config import get_settings
 from app.db.models import Base
 from app.db.session import DbMiddleware, engine, session_factory
-from app.handlers import (arena, errors, games, merch, settings, shop,
+from app.handlers import (admin, arena, errors, games, merch, settings, shop,
                           social, start, stats, tamagotchi, tracker, welcome)
 from app.middlewares.gate import AccessGateMiddleware
 from app.middlewares.throttle import ThrottleMiddleware
@@ -135,6 +135,73 @@ _LIGHT_COLUMNS: dict[str, list[tuple[str, str]]] = {
 }
 
 
+async def _migrate_channel_subscribers_pk(engine) -> None:
+    """PK channel_subscribers: user_id → (user_id, chat_id).
+
+    Идемпотентно: если PK уже составной (в SQLite это видно по sql CREATE
+    TABLE, в MySQL/PG — по количеству колонок в pk), ничего не делаем.
+    Старая таблица с PK(user_id) конвертируется ALTER-ом (MySQL/SQLite 3.25+:
+    DROP PRIMARY KEY / без него — fallback на пересоздание через временную
+    таблицу). Данные сохраняются; приветствованные остаются приветствованными.
+    """
+    from sqlalchemy import text
+    async with engine.begin() as conn:
+        dialect = conn.dialect.name
+        try:
+            if dialect == "sqlite":
+                row = (await conn.execute(text(
+                    "SELECT sql FROM sqlite_master WHERE type='table' "
+                    "AND name='channel_subscribers'"))).first()
+                ddl = (row[0] or "").lower() if row else ""
+                if "primary key (user_id, chat_id)" in ddl.replace(" ", "").replace(
+                        "primarykey(user_id,chat_id)", "primary key (user_id, chat_id)"):
+                    return  # уже мигрировано
+                await conn.execute(text("PRAGMA foreign_keys=OFF"))
+                await conn.execute(text("""
+                    CREATE TABLE IF NOT EXISTS channel_subscribers_new (
+                        user_id BIGINT NOT NULL,
+                        chat_id BIGINT NOT NULL DEFAULT 0,
+                        username VARCHAR(64),
+                        first_name VARCHAR(128) NOT NULL DEFAULT '',
+                        first_seen DATETIME NOT NULL,
+                        welcomed_at DATETIME,
+                        welcome_sent_chat_id BIGINT,
+                        PRIMARY KEY (user_id, chat_id)
+                    )"""))
+                await conn.execute(text("""
+                    INSERT OR IGNORE INTO channel_subscribers_new
+                    SELECT user_id, chat_id, username, first_name, first_seen,
+                           welcomed_at, welcome_sent_chat_id
+                    FROM channel_subscribers"""))
+                await conn.execute(text("DROP TABLE channel_subscribers"))
+                await conn.execute(text(
+                    "ALTER TABLE channel_subscribers_new RENAME TO channel_subscribers"))
+                await conn.execute(text(
+                    "CREATE INDEX IF NOT EXISTS ix_channel_subscribers_first_seen "
+                    "ON channel_subscribers (first_seen)"))
+                logger.info("миграция v1.5.12: PK channel_subscribers → (user_id, chat_id)")
+            else:
+                cols = (await conn.execute(text(
+                    "SELECT COLUMN_NAME FROM information_schema.KEY_COLUMN_USAGE "
+                    "WHERE TABLE_NAME='channel_subscribers' AND CONSTRAINT_NAME='PRIMARY' "
+                    f"AND TABLE_SCHEMA={'DATABASE()' if dialect == 'mysql' else 'current_schema()'}"
+                ))).scalars().all()
+                if len(cols) >= 2:
+                    return  # уже составной PK
+                if dialect == "mysql":
+                    await conn.execute(text(
+                        "ALTER TABLE channel_subscribers DROP PRIMARY KEY, "
+                        "ADD PRIMARY KEY (user_id, chat_id)"))
+                else:  # postgresql
+                    await conn.execute(text(
+                        "ALTER TABLE channel_subscribers DROP CONSTRAINT channel_subscribers_pkey, "
+                        "ADD PRIMARY KEY (user_id, chat_id)"))
+                logger.info("миграция v1.5.12: PK channel_subscribers → (user_id, chat_id)")
+        except Exception as exc:  # noqa: BLE001 — повторная миграция безопасна
+            logger.warning("миграция PK channel_subscribers пропущена: {}: {}",
+                           type(exc).__name__, str(exc)[:200])
+
+
 async def _light_migrations(conn) -> None:
     """Лёгкие инкрементальные миграции для колонок, появившихся после v1.4.6.
 
@@ -186,6 +253,10 @@ async def on_startup(bot: Bot) -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await _light_migrations(conn)
+    # v1.5.12: PK channel_subscribers (user_id) → (user_id, chat_id):
+    # дедупликация welcome-очереди по паре «пользователь+чат» — MTProto-sync
+    # больше не может пересоздать pending уже зарегистрированному подписчику.
+    await _migrate_channel_subscribers_pk(engine)
     async with session_factory() as session:
         await seed_achievements(session)
         await seed_items(session)   # справочник магазина (идемпотентно)
@@ -215,6 +286,22 @@ async def on_startup(bot: Bot) -> None:
         scope=private_scope,
     )
     logger.info("✅ bot started")
+    # v1.5.12: если настроен полный Telegram API (Telethon) — тянем список
+    # участников канала ЦЕЛИКОМ (Bot API его не отдаёт). Первый прогон —
+    # полная синхронизация (старые подписки тоже получат приветствие),
+    # дальше дельта по cron в scheduler. Ошибки MTProto не валят старт бота.
+    try:
+        from app.services.mtproto_sync import autosync_if_configured
+        st = get_settings()
+        if st.mtproto_autosync:
+            res = await autosync_if_configured()
+            if res is not None:
+                logger.info("🔄 MTProto autosync: {}", res)
+        else:
+            asyncio.create_task(autosync_guard())
+    except Exception as exc:  # noqa: BLE001 — без telethon/кредов бот живёт на Bot API
+        logger.info("MTProto autosync недоступен ({}) — работаю только на Bot API",
+                    type(exc).__name__)
     # после рестарта догоняем неотправленные приветствия подписчикам канала
     try:
         from app.handlers.welcome import welcome_pending_subscribers
@@ -224,6 +311,13 @@ async def on_startup(bot: Bot) -> None:
             logger.info("👋 startup catch-up welcomed {} subscriber(s)", sent)
     except Exception as exc:  # noqa: BLE001 — старт не должен падать из-за приветствий
         logger.warning("startup welcome catch-up failed: {}", exc)
+
+
+async def autosync_guard() -> None:
+    """Фоновый запасной автосинк (если on_startup пропустил запуск)."""
+    with contextlib.suppress(Exception):
+        from app.services.mtproto_sync import autosync_if_configured
+        await autosync_if_configured()
 
 
 async def main() -> None:
@@ -256,6 +350,7 @@ async def main() -> None:
 
     dp.include_routers(
         errors.error_router,   # страховка: падающий хендлер не «вешает» callback
+        admin.router,          # /mtproto, /syncnow — только ADMIN_IDS (проверка внутри)
         start.router,
         welcome.router,
         tracker.router,
@@ -285,10 +380,17 @@ async def main() -> None:
     async def _startup() -> None:
         await on_startup(bot)
         scheduler.start()
+        # v1.5.12: UserBot (полный API, режимы user/hybrid) — ошибки не валят бота
+        with contextlib.suppress(Exception):
+            from app.services.userbot import start_userbot
+            await start_userbot(bot)
 
     @dp.shutdown()
     async def _shutdown() -> None:
         scheduler.shutdown(wait=False)
+        with contextlib.suppress(Exception):
+            from app.services.userbot import stop_userbot
+            await stop_userbot()
         await close_redis()
         await engine.dispose()
         await bot.session.close()

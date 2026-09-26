@@ -36,16 +36,29 @@ Redis опционален (на Windows — Memurai); без него рабо�
   ③ фоновый скан `scan_channel_members` (APScheduler, `CHANNEL_SCAN_MINUTES`,
   Redis-lock) — сверка счётчика участников и доприветление «зависших» pending.
   Тексты: `WELCOME_CHANNEL_ENABLED`, `CHANNEL_WELCOME_TEXT` ({name}, {channel}).
-* **Опция v1.5.11 — полный Telegram API (MTProto).** Bot API не отдаёт список
-  участников канала, поэтому подписчики «до запуска бота» в welcome-очередь
-  не попадают. Для этого есть разовая/дельта-синхронизация вторым (service)
-  аккаунтом через Telethon: `python -m app.services.mtproto_sync --first-run`
-  заносит ВСЕХ участников обязательных чатов в `channel_subscribers` (pending),
-  обычный запуск без флага добавляет только новых (id больше максимального
-  известного). Ключи `API_ID/API_HASH/PHONE/TELEGRAM_PASSWORD/
-  MTPROTO_SESSION_STRING` — только в `.env` (пример с фейковыми значениями в
-  `.env.example`); само приветствие по-прежнему шлёт основной бот через Bot
-  API с дедупликацией `welcomed_at`. С user-аккаунта ничего не отправляется.
+* **v1.5.12 — полная поддержка Telegram API (MTProto / Telethon).** Bot API
+  не отдаёт список участников канала, поэтому подписчики «до запуска бота»
+  в welcome-очередь не попадали. Теперь при заданных ключах всё работает
+  автоматически:
+  - `MTPROTO_AUTOSYNC=true` (дефолт) — при старте бот тянет ЦЕЛИКОМ список
+    участников обязательных чатов через user-аккаунт (`get_full_channel`) и
+    ставит их в welcome-очередь; дальше дельта каждые `MTPROTO_SYNC_MINUTES`
+    минут (по умолчанию 60);
+  - PK `channel_subscribers` — пара `(user_id, chat_id)`: MTProto-sync не
+    создаёт «новых» из уже известных, приветствие по-прежнему ровно одно DM
+    на пользователя (дедупликация `welcomed_at` + `welcome_sent_chat_id`);
+  - `python -m app.services.mtproto_sync --login` — интерактивный логин
+    (код/2FA), печатает `MTPROTO_SESSION_STRING` для безинтерактивного
+    деплоя; `--first-run` — принудительно полная синхронизация из CLI;
+  - админ-команды: `/mtproto` (статус настройки, без показа секретов),
+    `/syncnow [full|delta]` — немедленная синхронизация + flush приветствий;
+  - `MTPROTO_ANSWER_MODE=user|hybrid` — UserBot «присутствует» в отслеживаемых
+    чатах от user-аккаунта (реакции на стикеры/мемы; игровая логика, гейт и
+    команды остаются на основном боте; антифлуд 1 сообщение / 3 сек).
+  Ключи `API_ID/API_HASH/PHONE/TELEGRAM_PASSWORD/MTPROTO_SESSION_STRING`
+  читаются из `.env` в любом формате имён (с префиксом TELEGRAM_ и без);
+  пример с фейковыми значениями — в `.env.example`. С user-аккаунта НИЧЕГО
+  не рассылается; приветствия шлёт основной бот через Bot API.
 
 ### 1.2 Навигация (единый стандарт всех экранов)
 

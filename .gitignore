@@ -1,12 +1,23 @@
 # Python compiled files
 __pycache__/
 *.pyc
+*.pyo
 
 # Environment and secrets
 .env
-.env.local
-.env.*.local
-# MTProto session files (Telethon) — никогда не коммитить
+.env.*
+!.env.example
+
+# Telethon session files (contain account access!)
 *.session
 *.session-journal
-MTPROTO_SESSION*
+*.session-wal
+
+# Local databases / caches
+*.db
+*.sqlite3
+
+# Tooling
+.pytest_cache/
+.venv/
+venv/

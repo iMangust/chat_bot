@@ -302,9 +302,13 @@ class ChannelSubscriber(Base):
     """Подписчики канала (для приветствия новичков в ЛС).
 
     Источник — апдейт chat_member (бот-админ канала + подписка на chat_member
-    в allowed_updates) и фоновый скан get_chat_member_count. Поле welcomed_at
-    гарантирует «не более одного приветствия» даже при повторных доставках
-    апдейтов и перезапусках бота.
+    в allowed_updates), MTProto-sync (v1.5.12) и фоновый скан
+    get_chat_member_count. Поле welcomed_at гарантирует «не более одного
+    приветствия» даже при повторных доставках апдейтов и перезапусках бота.
+
+    v1.5.12: PK — пара (user_id, chat_id): один пользователь может быть
+    зарегистрирован в нескольких отслеживаемых чатах; дедупликация pending
+    идёт по паре, поэтому MTProto-sync не создаёт «новых» из уже известных.
     """
     __tablename__ = "channel_subscribers"
     __table_args__ = _ta(
@@ -312,7 +316,7 @@ class ChannelSubscriber(Base):
     )
 
     user_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
-    chat_id: Mapped[int] = mapped_column(BigInteger)
+    chat_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
     username: Mapped[str | None] = mapped_column(String(64))
     first_name: Mapped[str] = mapped_column(String(128), default="")
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
