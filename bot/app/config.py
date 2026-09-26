@@ -6,6 +6,13 @@ v1.5.12: .env ищется по абсолютным путям (бот можн
 директории), плюс поддерживаются «короткие» имена ключей MTProto из
 .env.example (API_ID / API_HASH / PHONE) — раньше они молча игнорировались,
 и синхронизация «не происходила» при полностью раскомментированном блоке.
+
+v1.5.13: фикс падения на Windows (TypeError в dotenv: файл передавался
+объектом вместо пути) + устойчивое чтение .env.
+
+v1.5.14: фикс UnicodeDecodeError на Windows-1251/BOM: .env читается с
+автоподбором кодировки (utf-8-sig → cp1251 → latin-1); ошибки парсинга
+больше не роняют импорт конфига.
 """
 from __future__ import annotations
 
@@ -15,7 +22,51 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-__version__ = "1.5.12"
+__version__ = "1.5.14"
+
+# Кодировки для чтения .env: BOM-aware utf-8 → кириллица Windows → всегда
+# успешная latin-1 (последняя гарантирует, что декодирование не упадёт).
+_ENV_ENCODINGS = ("utf-8-sig", "cp1251", "latin-1")
+
+
+def _read_env_values(path: str) -> dict[str, str]:
+    """Прочитать пары KEY=VALUE из .env без жёсткой привязки к кодировке.
+
+    Исторические падения на Windows (v1.5.13/1.5.14):
+      - dotenv_values(TextIOWrapper) — TypeError (новые версии принимают
+        только путь/строку);
+      - UTF-8-файл с кириллицей в системной cp1251 — UnicodeDecodeError.
+    Поэтому читаем байты сами, подбираем кодировку (utf-8-sig → cp1251 →
+    latin-1) и парсим простым KEY=VALUE без python-dotenv.
+    """
+    raw = Path(path).read_bytes()
+    text = None
+    for enc in _ENV_ENCODINGS:
+        try:
+            text = raw.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    if text is None:  # недостижимо (latin-1 не падает), но на всякий случай
+        text = raw.decode("utf-8", errors="replace")
+    # Нормализуем переносы строк (Windows CRLF) и убираем BOM, если он
+    # оказался в начале файла.
+    text = text.replace("\r\n", "\n").replace("\r", "\n").lstrip("\ufeff")
+    vals: dict[str, str] = {}
+    for line in text.splitlines():
+        s = line.strip()
+        if not s or s.startswith("#") or "=" not in s:
+            continue
+        k, _, v = s.partition("=")
+        k = k.strip()
+        if k.startswith("export "):
+            k = k[len("export "):].strip()
+        v = v.strip()
+        if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
+            v = v[1:-1]
+        if k:
+            vals[k] = v
+    return vals
 
 # Порядок поиска .env: переменная окружения ENV_FILE → корень проекта
 # (рядом с этим файлом: bot/app/config.py → bot/.env) → репозиторий → cwd.
@@ -42,13 +93,13 @@ def _alias_short_mtproto_keys() -> None:
     Settings (реальные переменные окружения имеют приоритет над .env, но
     если их нет — алиасы подхватятся). Ничего не логируем: ключи секретны.
     """
-    from dotenv import dotenv_values
     vals: dict[str, str] = {}
     for path in _env_files():
         try:
-            with open(path, encoding="utf-8") as fh:
-                vals.update({k: v for k, v in dotenv_values(fh).items() if v is not None})
-        except OSError:  # гонка/права/удалённый файл — не роняем импорт конфига
+            vals.update(_read_env_values(path))
+        except (OSError, UnicodeError, ValueError):
+            # гонка/права/битый файл — не роняем импорт конфига;
+            # дальше сработают обычные переменные окружения
             continue
     pairs = {
         "TELEGRAM_API_ID": ("API_ID",),
@@ -74,7 +125,7 @@ _alias_short_mtproto_keys()
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=_env_files(), env_file_encoding="utf-8", extra="ignore")
+        env_file=_env_files(), env_file_encoding="utf-8-sig", extra="ignore")
 
     # --- Telegram ---
     bot_token: str = ""

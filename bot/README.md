@@ -36,6 +36,13 @@ Redis опционален (на Windows — Memurai); без него рабо�
   ③ фоновый скан `scan_channel_members` (APScheduler, `CHANNEL_SCAN_MINUTES`,
   Redis-lock) — сверка счётчика участников и доприветление «зависших» pending.
   Тексты: `WELCOME_CHANNEL_ENABLED`, `CHANNEL_WELCOME_TEXT` ({name}, {channel}).
+* **v1.5.13/1.5.14 — фикс запуска на Windows.** Импорт конфига падал при
+  чтении `.env`: `TypeError` (python-dotenv новых версий не принимает
+  файловый объект) и `UnicodeDecodeError` (UTF-8-файл с кириллицей в системной
+  cp1251). Теперь `.env` читается собственным парсером с автоподбором
+  кодировки (utf-8-sig → cp1251 → latin-1), нормализацией CRLF/BOM; битый
+  файл больше не роняет бот. Короткие ключи `API_ID/API_HASH/PHONE` из
+  `.env` подхватываются как `TELEGRAM_*`.
 * **v1.5.12 — полная поддержка Telegram API (MTProto / Telethon).** Bot API
   не отдаёт список участников канала, поэтому подписчики «до запуска бота»
   в welcome-очередь не попадали. Теперь при заданных ключах всё работает
