@@ -147,11 +147,16 @@ class ActivityService:
         for ach in unlocked:
             logger.bind(notify=True).info("achievement {} unlocked for {}", ach.code, user_id)
 
-        # мгновенные DM-уведомления (если сервис создан с bot): локап, ачивки
-        # и зачёт нестандартного типа сообщения (голос/кружок/фото…).
-        if self.bot is not None and (leveled_to or unlocked or has_media):
-            await self._notify_instant(user_id, leveled_to, unlocked,
-                                       media_type=media_type)
+        # v1.5.9: НИКАКИХ мгновенных DM за каждое сообщение/стикер. Вся фоновая
+        # активность (XP, монеты, стрики, пересчёт ачивок) проходит молча.
+        # Мгновенное уведомление — только секретная ачивка «Сова» (редкое
+        # событие, см. handlers/tracker.py). Важные события уходят в очередь
+        # NotificationQueue и доставляются планировщиком раз в минуту:
+        #  - левелапы — сюда;
+        #  - достижения — через AchievementService._grant_rewards -> queue_notification.
+        if leveled_to:
+            from app.services.notifications import queue_levelup
+            await queue_levelup(self.session, user_id, leveled_to)
 
         return entry
 
@@ -191,38 +196,6 @@ class ActivityService:
         except Exception as exc:  # ЛС закрыты — не критично
             logger.debug("referral notify failed for {}: {}", inviter.tg_id, exc)
         logger.info("referral credited: inviter={} invitee={}", inviter.tg_id, user.tg_id)
-
-    @staticmethod
-    def _media_label(media_type: str | None) -> str:
-        """Понятная человеку метка типа сообщения (для мгновенных уведомлений)."""
-        return {
-            "photo": "фото 🖼", "video_note": "видеокружок 🎥", "video": "видео 📹",
-            "voice": "голосовое 🎤", "audio": "аудио 🎵", "sticker": "стикер 🎨",
-            "animation": "GIF 🌀", "document": "файл 📄", "contact": "контакт 👤",
-            "location": "локацию 📍", "poll": "опрос 📊",
-        }.get(media_type or "", "")
-
-    async def _notify_instant(self, user_id: int, leveled_to, unlocked,
-                              media_type: str | None = None) -> None:
-        parts: list[str] = []
-        if media_type:
-            label = self._media_label(media_type)
-            if label:
-                parts.append(f"Зачтено {label} — бонусные XP уже на счету ✨")
-        for lvl in (leveled_to or []):
-            parts.append(f"🎉 Новый уровень: <b>{lvl}</b>!")
-        for ach in (unlocked or []):
-            reward = f"\nНаграда: {ach.reward_xp} XP" if ach.reward_xp else ""
-            if ach.reward_coins:
-                reward += f" и {ach.reward_coins} 🪙"
-            parts.append(f"{ach.icon} <b>Достижение пробито:</b> {ach.title}!{reward}")
-        if not parts:
-            return
-        try:
-            await self.bot.send_message(user_id, "\n".join(parts))
-        except Exception as exc:  # ЛС закрыты / юзер заблокировал бота — не критично
-            from loguru import logger
-            logger.debug("instant notify failed for {}: {}", user_id, exc)
 
     async def process_reaction(
         self, *, from_user: int, to_user: int, chat_id: int,
@@ -270,13 +243,12 @@ class ActivityService:
 
         counters = {"reactions_given": user.reactions_given}
         unlocked = await self.achievements.check(from_user, counters)
-        if self.bot is not None and leveled_to:
-            try:
-                await self.bot.send_message(
-                    from_user, f"🎉 Новый уровень: <b>{leveled_to[-1]}</b>!",
-                    parse_mode="HTML")
-            except Exception as exc:
-                logger.debug("reaction levelup notify failed: {}", exc)
+        # v1.5.9: никаких мгновенных DM за реакции — левелап уходит в очередь
+        # (доставится планировщиком раз в минуту), достижения уже в очереди
+        # через AchievementService._grant_rewards.
+        if leveled_to:
+            from app.services.notifications import queue_levelup
+            await queue_levelup(self.session, from_user, leveled_to)
         for ach in unlocked:
             logger.bind(notify=True).info("achievement {} unlocked for {}", ach.code, from_user)
         return True

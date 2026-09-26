@@ -31,6 +31,9 @@ async def queue_notification(session: AsyncSession, user_id: int, kind: str,
             "pet": ns.pet_reminders,
             "streak": ns.streak_reminders,
             "achievement": ns.achievement_notifications,
+            # левелапы — часть игрового прогресса: включены/выключены вместе
+            # с уведомлениями о достижениях
+            "levelup": ns.achievement_notifications,
             "daily": ns.daily_report,
         }.get(kind)
         if flag is False:
@@ -76,6 +79,20 @@ async def build_pet_sad_text(pet: Pet) -> str:
 async def build_streak_warning(user: User) -> str:
     return (f"🔥 {esc(user.first_name)}, серия из <b>{user.streak_days}</b> дн. сгорит в полночь!\n"
             f"Напиши что-нибудь в чат — даже «спасибо» засчитается 🙂")
+
+
+async def queue_levelup(session: AsyncSession, user_id: int, levels: list[int]) -> bool:
+    """Левелап — «важное» событие: ставим в очередь (без мгновенного DM).
+
+    Планировщик флэшит очередь раз в минуту, поэтому серия быстрых левелапов
+    не превращается в спам. kind="levelup" учитывается в персональных
+    настройках как и остальные пуши (achievement/pet/streak/daily).
+    """
+    if not levels:
+        return False
+    top = max(levels)
+    text = f"🎉 Новый уровень: <b>{top}</b>! Так держать 🔥"
+    return await queue_notification(session, user_id, "levelup", text)
 
 
 async def build_daily_report(user: User, pet: Pet | None, stats_today: int,

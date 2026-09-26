@@ -133,19 +133,14 @@ async def track_group_message(message: Message, session: AsyncSession) -> None:
             # ВАЖНО: автор может быть sender_chat (пост от имени канала),
             # тогда message.from_user is None — раньше это роняло хендлер
             # с AttributeError прямо на засчитанном сообщении.
+            # v1.5.9: без мгновенного DM — разблокировка уходит в общую очередь
+            # уведомлений (доставится планировщиком). Награда уже начислена в
+            # AchievementService.unlock_by_code -> _grant_rewards.
             from app.services.achievements import AchievementService
             ach = AchievementService(session)
             unlocked = await ach.unlock_by_code(author, "night_owl")
             if unlocked:
-                try:
-                    await message.bot.send_message(
-                        author,
-                        f"🎭 Секретное достижение: {unlocked.icon} <b>{unlocked.title}</b>!\n"
-                        f"{unlocked.description}",
-                      parse_mode="HTML",
-                    )
-                except Exception as e:  # ЛС закрыты — не критично
-                    logger.debug("no DM for secret achievement: {}", e)
+                logger.info("🎭 secret night_owl unlocked for {}", author)
 
 
 def _reaction_emoji(rt) -> str | None:
