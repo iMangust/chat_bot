@@ -36,6 +36,16 @@ Redis опционален (на Windows — Memurai); без него рабо�
   ③ фоновый скан `scan_channel_members` (APScheduler, `CHANNEL_SCAN_MINUTES`,
   Redis-lock) — сверка счётчика участников и доприветление «зависших» pending.
   Тексты: `WELCOME_CHANNEL_ENABLED`, `CHANNEL_WELCOME_TEXT` ({name}, {channel}).
+* **Опция v1.5.11 — полный Telegram API (MTProto).** Bot API не отдаёт список
+  участников канала, поэтому подписчики «до запуска бота» в welcome-очередь
+  не попадают. Для этого есть разовая/дельта-синхронизация вторым (service)
+  аккаунтом через Telethon: `python -m app.services.mtproto_sync --first-run`
+  заносит ВСЕХ участников обязательных чатов в `channel_subscribers` (pending),
+  обычный запуск без флага добавляет только новых (id больше максимального
+  известного). Ключи `API_ID/API_HASH/PHONE/TELEGRAM_PASSWORD/
+  MTPROTO_SESSION_STRING` — только в `.env` (пример с фейковыми значениями в
+  `.env.example`); само приветствие по-прежнему шлёт основной бот через Bot
+  API с дедупликацией `welcomed_at`. С user-аккаунта ничего не отправляется.
 
 ### 1.2 Навигация (единый стандарт всех экранов)
 

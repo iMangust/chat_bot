@@ -12,6 +12,12 @@ python-dotenv>=1.2          # загрузка .env
 Pillow>=12.3                # карточки профиля (этап 5)
 textual>=8.2                # TamaConsole — терминальная оболочка управления (console.bat)
 
+# --- Опционально: MTProto-синхронизация подписчиков канала (v1.5.11) ---
+# Ставить только если используете `python -m app.services.mtproto_sync`
+# (поиск ВСЕХ участников канала для welcome-очереди; Bot API этого не умеет).
+# Устанавливается отдельно:  pip install "telethon>=1.36"
+# telethon>=1.36
+
 # --- Dev / тесты ---
 pytest>=9.1
 pytest-asyncio>=1.4

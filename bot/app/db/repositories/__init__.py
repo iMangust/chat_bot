@@ -536,6 +536,19 @@ class SubscriberRepository:
             row.welcomed_at = None
             await self.session.commit()
 
+    async def last_seen_user_id(self) -> int | None:
+        """Максимальный известный user_id (курсор «новых» подписчиков).
+
+        Telegram-ID монотонно возрастают: всё, что больше курсора, — свежая
+        регистрация в Telegram и кандидат на welcome-рассылку. Используется
+        service-ботом MTProto (get_full_channel.participants), который видит
+        список участников канала целиком (Bot API — нет).
+        """
+        from app.db.models import ChannelSubscriber
+        stmt = select(func.max(ChannelSubscriber.user_id))
+        v = (await self.session.execute(stmt)).scalar_one_or_none()
+        return int(v) if v is not None else None
+
     async def mark_welcomed(self, user_id: int, chat_id: int | None = None) -> None:
         """Отмечает приветствие доставленным; запоминает чат-основание (v1.5.10)."""
         from app.db.models import ChannelSubscriber

@@ -6,3 +6,7 @@ __pycache__/
 .env
 .env.local
 .env.*.local
+# MTProto session files (Telethon) — никогда не коммитить
+*.session
+*.session-journal
+MTPROTO_SESSION*

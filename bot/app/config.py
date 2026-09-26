@@ -8,7 +8,7 @@ from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-__version__ = "1.5.10"
+__version__ = "1.5.11"
 
 
 class Settings(BaseSettings):
@@ -75,6 +75,21 @@ class Settings(BaseSettings):
     welcome_channel_enabled: bool = True     # слать приветствие новым подписчикам канала
     channel_welcome_text: str | None = None  # свой текст ({name}, {channel}); пусто = дефолтный
     channel_scan_minutes: int = 30           # период фонового скана счётчика участников
+
+    # --- Опционально: Telegram API (MTProto/Telethon) — sync подписчиков ---
+    # Нужен ТОЛЬКО для разовой/периодической синхронизации списка участников
+    # канала в welcome-очередь (python -m app.services.mtproto_sync).
+    # Основной функционал бота работает без этих ключей (Bot API).
+    # Регистрация ключей: https://my.telegram.org -> API development tools.
+    # ВАЖНО: использовать ВТОРОЙ (service) аккаунт, не личный; секреты —
+    # только в .env (файл в .gitignore), никогда в коде и репозитории.
+    telegram_api_id: int | None = None
+    telegram_api_hash: str | None = None
+    telegram_phone: str | None = None          # нужен только при интерактивном логине
+    telegram_password: str | None = None       # 2FA облачный пароль (если есть)
+    # Готовая строка сессии (без файла, для сервера): см. README «MTProto»
+    mtproto_session_string: str | None = None
+    mtproto_session: str = "mtproto_sync"      # либо путь к файлу .session
 
     # --- Мерч канала (отдельный раздел 🧢, не связан с питомцем) ---
     merch_enabled: bool = True           # показывать раздел 🧢 Мерч в главном меню
