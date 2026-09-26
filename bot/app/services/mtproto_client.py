@@ -136,8 +136,15 @@ class MtprotoClientHolder:
         return self._me
 
     def is_connected(self) -> bool:
+        """Синхронная проверка «клиент жив».
+
+        ВАЖНО: у Telethon is_user_authorized() — КОРУТИНА. Её синхронный вызов
+        всегда возвращает coroutine-объект (truthy) и печатает RuntimeWarning
+        «coroutine was never awaited» (лог v1.5.15). Здесь проверяем только
+        фактическое соединение; авторизацию делает await _authorized().
+        """
         c = self._client
-        return bool(c is not None and getattr(c, "is_user_authorized", lambda: False)())
+        return bool(c is not None and getattr(c, "is_connected", lambda: False)())
 
     async def disconnect(self) -> None:
         if self._client is not None:

@@ -580,7 +580,7 @@ class TestCore:
 
     def test_version(self):
         from app.config import __version__
-        assert __version__ == "1.5.15"
+        assert __version__ == "1.5.16"
 
     def test_env_reading_windows_encodings(self, tmp_path, monkeypatch):
         """v1.5.13/1.5.14: .env в cp1251 / с BOM / битый — импорт не падает,

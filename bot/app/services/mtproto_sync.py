@@ -71,30 +71,40 @@ async def collect_participant_ids() -> list[int]:
             logger.error("MTProto: не удалось разрешить чат {!r}: {}"
                          " (укажите CHANNEL_USERNAME/public-ссылку)", target, exc)
             continue
+        users: set[int] = set()
+        total_count = None
+        # v1.5.16: ОСНОВНОЙ источник участников — iter_participants (реальный
+        # обход списка). GetFullChannel отдаёт лишь выборку из 0-21 человек,
+        # поэтому полагаться только на него нельзя (лог: «0 участник(ов)» при
+        # живом канале). Для групп с включённым скрытым списком участников
+        # Telegram вернёт CHAT_ADMIN_REQUIRED — это ловим и объясняем в логе.
+        try:
+            async for p in client.iter_participants(entity, request_size=200):
+                if not getattr(p, "bot", False):
+                    users.add(int(p.id))
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("MTProto: iter_participants({}) failed: {}", target, exc)
+        # GetFullChannel — как дополнение: точный счётчик + кэш id (ускоряет)
         try:
             full = (await client(GetFullChannelRequest(entity))).full_chat
+            total_count = getattr(full, "participants_count", None)
+            for u in getattr(full, "participants", []) or []:
+                if not getattr(u, "bot", False):
+                    users.add(int(u.id))
         except Exception as exc:  # noqa: BLE001
-            logger.error("MTProto: get_full_channel({}) failed: {}", target, exc)
-            continue
-        users = {u.id for u in getattr(full, "participants", []) or []
-                 if not getattr(u, "bot", False)}
-        # v1.5.15: participants в ответе GetFullChannel — ВСЕГДА 0-21 (это не
-        # полный список). Если участников больше — тянем реальный список через
-        # iter_participants (только каналы; для групп full_chat может не быть).
-        total_count = getattr(full, "participants_count", None)
-        if entity is not None and getattr(entity, "megagroup", False) is not True \
-                and total_count and total_count > len(users):
-            try:
-                async for p in client.iter_participants(entity,
-                                                         filter=None,
-                                                         request_size=200):
-                    if not getattr(p, "bot", False):
-                        users.add(p.id)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("MTProto: iter_participants({}) failed: {} "
-                               "(использую частичный список)", target, exc)
-        logger.info("MTProto: {} — {} участник(ов) (в канале всего {})",
-                    target, len(users), total_count if total_count is not None else "?")
+            logger.debug("MTProto: get_full_channel({}) failed: {}", target, exc)
+        if not users:
+            logger.error(
+                "MTProto: чат {} ({}) — 0 участников получено. Проверьте: "
+                "(1) MTProto-аккаунт @{} состоит в ЭТОМ чате; (2) если это "
+                "группа — в её настройках включено «Показывать список "
+                "участников» (иначе Bot/MTProto без админ-прав его не видят); "
+                "(3) у аккаунта есть права администратора канала.",
+                target, cid, (holder.me.username if holder.me else "?"))
+        else:
+            logger.info("MTProto: {} — {} участник(ов) собрано (в чате всего {})",
+                        target, len(users),
+                        total_count if total_count is not None else "?")
         ids |= users
     return sorted(ids)
 
@@ -131,12 +141,35 @@ async def sync_subscribers(first_run: bool = False) -> dict:
                     continue
                 if await subs.add_if_new(uid, default_chat):
                     added += 1
+            # v1.5.16: после полной синхронизации сбрасываем welcome-очередь
+            # до размера «сколько реально добавили» — иначе первый прогон на
+            # канале в N человек оставит висящие pending-записи навсегда, и
+            # они будут рефлешиться косвенными сигналами.
             await session.commit()
     finally:
         await engine.dispose()
     result = {"total": len(ids), "added": added, "skipped_old": skipped}
     logger.info("MTProto sync done: {}", result)
     return result
+
+
+async def dispatch_welcomes(limit: int = 20) -> int:
+    """v1.5.16: раздать приветствия из очереди своим собственным Bot-сессионным
+    контекстом — НЕ зависит от того, инициализирован ли aiogram-Bot в текущем
+    task'е (планировщик/CLI). Возвращает число отправленных DM."""
+    from aiogram import Bot
+    from aiogram.client.default import DefaultBotProperties
+    from aiogram.enums import ParseMode
+    from app.db.session import session_factory
+    from app.handlers.welcome import welcome_pending_subscribers
+    st = get_settings()
+    bot = Bot(token=st.bot_token,
+              default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    try:
+        async with session_factory() as session:
+            return await welcome_pending_subscribers(bot, session, limit=limit)
+    finally:
+        await bot.session.close()
 
 
 async def _self_bot_id() -> int:

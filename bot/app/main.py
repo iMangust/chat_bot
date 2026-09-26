@@ -369,6 +369,11 @@ async def main() -> None:
     dp.errors.register(errors.on_error)
 
     scheduler = build_scheduler(bot)
+    # v1.5.16: планировщик стартует СРАЗУ (раньше — только внутри on_startup,
+    # который aiogram вызывает уже ВНУТРИ start_polling; из-за этого первая
+    # MTProto-дельта падала с «Bot is not initialized», т.к. session.start()
+    # ещё не выполнился к моменту add_job(next_run_time=+90s)).
+    scheduler.start()
 
     loop = asyncio.get_running_loop()
     stop = asyncio.Event()
@@ -379,7 +384,10 @@ async def main() -> None:
     @dp.startup()
     async def _startup() -> None:
         await on_startup(bot)
-        scheduler.start()
+        # scheduler.start() идемпотентен; вызываем ещё раз на случай, если
+        # main-путь (webhook) пойдёт в обход блока выше
+        with contextlib.suppress(Exception):
+            scheduler.start()
         # v1.5.12: UserBot (полный API, режимы user/hybrid) — ошибки не валят бота
         with contextlib.suppress(Exception):
             from app.services.userbot import start_userbot

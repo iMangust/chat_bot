@@ -308,23 +308,20 @@ async def mtproto_delta_sync(bot: Bot | None = None) -> None:
             return
         res = await asyncio.wait_for(sync_subscribers(first_run=False), timeout=280)
         logger.info("MTProto delta sync: {}", res)
-        # сразу раздаём приветствия из обновлённой очереди (не ждём скан)
-        b = bot
-        if b is None:
+        # v1.5.16: приветствия раздаём через dispatch_welcomes() — он создаёт
+        # собственный Bot-контекст и не зависит от «get_current»/инициализации
+        # session в task'е планировщика (в логах было: AttributeError
+        # type object 'Bot' has no attribute 'get_current').
+        if res.get("added"):
             try:
-                from aiogram.methods import Bot as _Bot
-                b = _Bot.get_current()
-            except Exception:  # noqa: BLE001 — вне контекста бота
-                b = None
-        if b is None:
-            logger.debug("MTProto sync: бот недоступен — приветствия разошлются "
-                         "на следующем скане")
-            return
-        from app.handlers.welcome import welcome_pending_subscribers
-        async with session_factory() as session:
-            n = await welcome_pending_subscribers(b, session, limit=20)
-        if n:
-            logger.info("MTProto sync: отправлено приветствий: {}", n)
+                from app.services.mtproto_sync import dispatch_welcomes
+                n = await dispatch_welcomes(limit=20)
+                if n:
+                    logger.info("MTProto sync: отправлено приветствий: {}", n)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("MTProto welcome flush failed: {} ({}) "
+                               "(разойдутся на ближайшем скане)",
+                               type(exc).__name__, str(exc)[:150])
     except asyncio.TimeoutError:
         logger.warning("MTProto delta sync: таймаут (сеть/флудконтроль?)")
     except RuntimeError:  # вне контекста бота — разойдутся по следующему тикам
