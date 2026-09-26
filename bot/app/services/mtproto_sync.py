@@ -73,17 +73,48 @@ async def collect_participant_ids() -> list[int]:
             continue
         users: set[int] = set()
         total_count = None
-        # v1.5.16: ОСНОВНОЙ источник участников — iter_participants (реальный
-        # обход списка). GetFullChannel отдаёт лишь выборку из 0-21 человек,
-        # поэтому полагаться только на него нельзя (лог: «0 участник(ов)» при
-        # живом канале). Для групп с включённым скрытым списком участников
-        # Telegram вернёт CHAT_ADMIN_REQUIRED — это ловим и объясняем в логе.
-        try:
-            async for p in client.iter_participants(entity, request_size=200):
+        # v1.5.17: ОСНОВНОЙ источник участников — асинхронный обход
+        # iter_participants()/get_participants() (Telethon возвращает один и тот
+        # же _ParticipantsIter; в раннинге event loop используется __aiter__).
+        # Причины прошлых провалов:
+        #  * iter_participants(..., request_size=200) — Telethon НЕ принимает
+        #    request_size (лог: «got an unexpected keyword argument»), исключение
+        #    глоталось и синк давал 0 при живом канале;
+        #  * GetFullChannel отдаёт лишь выборку из 0-21 id — только на него
+        #    полагаться нельзя.
+        # Для группы со СКРЫТЫМ списком участников сервер ответит
+        # PARTICIPANTS_TOO_LARGE даже админу — это отдельная строка в логе:
+        # лечится включением «Показывать список участников» в настройках группы.
+        async def _collect() -> int:
+            n = 0
+            async for p in client.iter_participants(entity, aggressive=True):
                 if not getattr(p, "bot", False):
                     users.add(int(p.id))
+                    n += 1
+            return n
+
+        try:
+            await _collect()
+        except TypeError as exc:
+            # совместимость на случай иной сигнатуры в других версиях Telethon
+            logger.debug("MTProto: iter_participants({}) TypeError: {} — "
+                         "пробую get_participants()", target, exc)
+            try:
+                async for p in client.get_participants(entity):
+                    if not getattr(p, "bot", False):
+                        users.add(int(p.id))
+            except Exception as exc2:  # noqa: BLE001
+                logger.warning("MTProto: get_participants({}) failed: {}",
+                               target, exc2)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("MTProto: iter_participants({}) failed: {}", target, exc)
+            code = getattr(exc, "message", None) or str(exc)
+            hint = ""
+            if "PARTICIPANTS_TOO_LARGE" in str(code).upper():
+                hint = (" — у ГРУППЫ выключен показ списка участников: включите "
+                        "Настройки группы → «Показывать список участников» "
+                        "(Telegram не отдаёт его даже админу MTProto)")
+            logger.warning("MTProto: сбор участников {} не удался: {}{}",
+                           target, code, hint)
         # GetFullChannel — как дополнение: точный счётчик + кэш id (ускоряет)
         try:
             full = (await client(GetFullChannelRequest(entity))).full_chat
