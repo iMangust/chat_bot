@@ -143,6 +143,12 @@ async def pet_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     await cb.answer()
 
 
+@router.callback_query(F.data == "pet:noop")
+async def pet_hub_noop(cb: CallbackQuery) -> None:
+    """Клик по неразрывной подписи страницы хаба — просто снять «часики»."""
+    await cb.answer()
+
+
 @router.callback_query(F.data == "pet:page:0")
 @router.callback_query(F.data.startswith("pet:page:"))
 async def pet_page_screen(cb: CallbackQuery, session: AsyncSession) -> None:
