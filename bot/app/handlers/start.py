@@ -8,6 +8,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 import html as _html  # noqa: E402  (экран имён в HTML-текстах)
 from sqlalchemy.ext.asyncio import AsyncSession
+from loguru import logger
 
 from app.db.models import Pet, PetSpecies
 from app.db.repositories import PetRepository, UserRepository
@@ -103,7 +104,10 @@ def _main_menu_text(user, page: int = 0) -> str:
 private_only = F.chat.type == "private"
 
 
-@router.message(CommandStart(deep_link=True), private_only)
+# deep_link=True отбрасывал обычный «голый» /start (без параметра) — у бота
+# оставалось два входа вместо одного. Убираем ограничение: handler сам
+# различает presence/absence аргумента invite_*.
+@router.message(CommandStart(), private_only)
 async def cmd_start(message: Message, state: FSMContext, session: AsyncSession,
                     command: CommandObject | None = None) -> None:
     """Основной вход: регистрация + онбординг + информативное главное меню.

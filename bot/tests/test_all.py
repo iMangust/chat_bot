@@ -325,6 +325,48 @@ class TestAccessGate:
         gate.reset_subscribe_cache(321)                               # «проверить» сбрасывает
         assert asyncio.run(is_channel_subscribed(FakeBot(("member",)), 321)) is True
 
+    def test_tracked_chats_gate_membership_in_one_of(self, monkeypatch):
+        """Подписка хотя бы на ОДИН из TRACKED_CHAT_IDS открывает доступ."""
+        from app.middlewares import gate
+        st = get_settings()
+        monkeypatch.setattr(st, "channel_username", None)
+        monkeypatch.setattr(st, "tracked_chat_ids", [-1001, -1002])
+        gate.reset_subscribe_cache()
+        # первый чат — left, второй — member: доступ должен быть открыт
+        bot = FakeBot(("left", "member"))
+        assert asyncio.run(gate.is_channel_subscribed(bot, 555)) is True
+        gate.reset_subscribe_cache()
+        # во всех чатах left — доступа нет
+        bot2 = FakeBot(("left", "left"))
+        assert asyncio.run(gate.is_channel_subscribed(bot2, 556)) is False
+        gate.reset_subscribe_cache()
+
+    def test_required_chats_fallback_to_single_channel(self, monkeypatch):
+        from app.middlewares import gate
+        st = get_settings()
+        monkeypatch.setattr(st, "tracked_chat_ids", [])
+        monkeypatch.setattr(st, "channel_chat_id", -100999)
+        monkeypatch.setattr(st, "channel_username", "testchan")
+        assert gate.required_chats() == [("-100999", "testchan")]
+        monkeypatch.setattr(st, "channel_chat_id", None)
+        assert gate.required_chats() == [("", "testchan")]
+        monkeypatch.setattr(st, "channel_username", None)
+        assert gate.required_chats() == []
+
+    def test_welcome_flushes_on_group_join_event(self):
+        """on_new_members сам доставляет канальное приветствие (не ждёт скан)."""
+        src = inspect.getsource(__import__(
+            "app.handlers.welcome", fromlist=["on_new_members"]).on_new_members)
+        assert "welcome_pending_subscribers" in src
+
+    def test_channel_welcome_not_tied_to_username(self):
+        """Доставка приветствий не требует CHANNEL_USERNAME (хватит TRACKED_CHAT_IDS)."""
+        src = inspect.getsource(__import__(
+            "app.handlers.welcome", fromlist=["welcome_pending_subscribers"]
+        ).welcome_pending_subscribers)
+        assert "required_chats" in src
+        assert "not st.channel_username" not in src
+
     def test_commands_private_only(self):
         """Каждый командный хендлер ограничен приватными чатами."""
         from app.handlers import start, stats, settings, social, arena, tamagotchi
@@ -349,12 +391,20 @@ class TestAccessGate:
 class TestWelcome:
     @pytest.mark.asyncio
     async def test_add_pending_subscriber_idempotent(self, session):
+        """Повтор не плодит строк; pending остаётся «свежим», welcomed — нет."""
         assert await SubscriberRepository(session).count() == 0
         added = await _add(session, 10)
         assert added is True
+        # welcome-доставка не прошла (ЛС закрыты) → повторный сигнал обязан
+        # вернуть True, иначе «вечный pending» так и не будет доставлен
         again = await _add(session, 10)
-        assert again is False
+        assert again is True
         assert await SubscriberRepository(session).count() == 1
+        # после успешного приветствия повторных DM не будет
+        repo = SubscriberRepository(session)
+        await repo.mark_welcomed(10)
+        await session.commit()
+        assert await _add(session, 10) is False
 
     @pytest.mark.asyncio
     async def test_reset_welcome(self, session):
@@ -420,4 +470,4 @@ class TestCore:
 
     def test_version(self):
         from app.config import __version__
-        assert __version__ == "1.5.4"
+        assert __version__ == "1.5.6"

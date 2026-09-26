@@ -14,6 +14,7 @@ _credit_referral). Здесь мы только подхватываем deep-li
 """
 from __future__ import annotations
 
+import contextlib
 import html
 
 from aiogram import Bot, F, Router
@@ -98,6 +99,10 @@ async def on_new_members(message: Message, bot: Bot, session: AsyncSession) -> N
 
     # В группы/каналы бот ничего не пишет (правило v1.5.3): приветствие —
     # только в ЛС; тем, кто закрыл ЛС, видна подсказка написать /start сами.
+    # Канальное приветствие доставляем сразу, не дожидаясь фонового скана:
+    # welcome_pending_subscribers сам сверит членство с API и учтёт welcomed_at.
+    with contextlib.suppress(Exception):
+        await welcome_pending_subscribers(bot, session, limit=5)
 
 
 def _channel_line_safe() -> str:
@@ -164,9 +169,16 @@ async def welcome_pending_subscribers(bot: Bot, session: AsyncSession,
     оставляет запись pending: скан доприветствует, когда ЛС откроются.
     """
     from app.db.repositories import SubscriberRepository, UserRepository
-    from app.middlewares.gate import is_channel_subscribed
+    # gate.is_channel_subscribed берёт обязательные чаты из config при каждом
+    # вызове — monkeypatch на функцию тестов работает как задумано
+    from app.middlewares.gate import is_channel_subscribed, required_chats
     st = get_settings()
-    if not st.welcome_channel_enabled or not st.channel_username:
+    if not st.welcome_channel_enabled:
+        return 0
+    if not required_chats():
+        # ни один канал/чат не настроен — «подписчиков» верифицировать негде,
+        # слать приветствие всем подряд нельзя
+        logger.debug("channel welcome skipped: no tracked chats configured")
         return 0
     subs = SubscriberRepository(session)
     users = UserRepository(session)
@@ -226,6 +238,11 @@ async def on_channel_join(update: ChatMemberUpdated, bot: Bot,
         # присоединился к другому отслеживаемому чату — разрешаем ещё одно
         # приветствие (для одного канала повторного DM не будет)
         await SubscriberRepository(session).reset_welcome(member.user.id)
-    if update.chat.type == "channel":
+    # Приветствуем новичков всех отслеживаемых чатов (канал И группа):
+    # раньше доставка шла только для type == "channel", и подписчик группы
+    # ждал бы фоновый скан. welcome_pending_subscribers сам проверит участие
+    # хотя бы в одном обязательном чате через API (см. gate.required_chats).
+    ids = get_settings().tracked_chat_ids
+    if update.chat.type == "channel" or not ids or update.chat.id in ids:
         await welcome_pending_subscribers(bot, session, limit=5)
 

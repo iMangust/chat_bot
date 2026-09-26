@@ -1,19 +1,23 @@
-"""Глобальный доступ: только ЛС и только подписчики канала.
+"""Глобальный доступ: только ЛС и только подписчики отслеживаемых чатов.
 
-Правила бота (v1.5.3):
+Правила бота (v1.5.6):
 1. Взаимодействие с ботом — исключительно в личных сообщениях. В группах и
    каналах бот молчит: не отвечает на команды и кнопки, ничего не пишет
    (пассивный трекер активности остаётся — см. handlers/tracker.py).
-2. Пользователь без подписки на канал (CHANNEL_USERNAME) не может
+2. Пользователь без подписки хотя бы на ОДИН из TRACKED_CHAT_IDS (а если
+   список пуст — на канал CHANNEL_USERNAME / CHANNEL_CHAT_ID) не может
    взаимодействовать с ботом: вместо ответа — просьба подписаться.
+   Раньше проверялся только CHANNEL_USERNAME; при его отсутствии гейт
+   жил в режиме fail-open и правило подписки не работало вовсе.
 
-Проверка подписки — Bot API getChatMember (бот обязан быть админом канала),
-результат кэшируется в Redis/in-memory на SUBSCRIBE_CACHE_SEC, чтобы не
-жечь лимит API на каждый тап. Если канал не настроен или Telegram вернул
-ошибку — доступ разрешён (fail-open: иначе бот «умирает» при сбое API).
-Особый случай — TelegramForbiddenError «bot must be an administrator»:
-это настройка окружения, а не сбой; fail-open тоже применяется, но событие
-логируется как ERROR и подсвечивается админу (ADMIN_CHAT_ID), чтобы проблема
+Проверка подписки — Bot API getChatMember (бот обязан быть админом чата),
+результат кэшируется in-memory на SUBSCRIBE_CACHE_SEC, чтобы не жечь лимит
+API на каждый тап. При сбое Telegram действует fail-open (бот не должен
+«мирать» из-за недоступности API); если ни один чат не настроен — доступ
+разрешён (dev-режим), но админ получает разовое предупреждение. Особый
+случай — TelegramForbiddenError «bot must be an administrator»: это
+настройка окружения, а не сбой; fail-open тоже применяется, но событие
+логируется как ERROR и подсвечивается админу (ADMIN_IDS), чтобы проблема
 не осталась незамеченной.
 """
 from __future__ import annotations
@@ -43,15 +47,44 @@ _pos_cache: dict[Any, float] = {}  # user_id -> monotonic-срок жизни «
 class _SyntheticPrivateChat:
     """Заглушка чата: приватный тип для ЛС-колбэков без message.chat."""
     type = ChatType.PRIVATE
+
+
 _neg_cache: dict[Any, float] = {}  # user_id -> monotonic-срок жизни «не подписан»
 _warned_no_admin: set[str] = set()  # каналы, по которым уже били в лог/админу
+_warned_no_gating: set[str] = set()  # «гейт выключен» (чат не настроен) — разово
+
+
+def required_chats() -> list[tuple[str, str]]:
+    """Чаты, подписка хотя бы на ОДИН из которых обязательна: [(id, username)].
+
+    Источник — TRACKED_CHAT_IDS (см. config): взаимодействие разрешено только
+    подписчикам одного из отслеживаемых канала/группы. Если список пуст,
+    используем CHANNEL_CHAT_ID / CHANNEL_USERNAME (одиночный канал).
+    """
+    st = get_settings()
+    chats: list[tuple[str, str]] = [(str(cid), "") for cid in st.tracked_chat_ids]
+    if not chats and (st.channel_chat_id or st.channel_username):
+        chats.append((str(st.channel_chat_id or ""), st.channel_username or ""))
+    return chats
 
 
 def subscribe_kb() -> "Any":
     """Клавиатура-заглушка для неподписанных: ссылка на канал + проверка."""
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-    ch = get_settings().channel_username or ""
+    st = get_settings()
     rows = []
+    ch = st.channel_username or ""
+    if not ch:
+        # юзернейма канала нет — ведём на первый отслеживаемый чат по ID
+        for cid, uname in required_chats():
+            if uname:
+                ch = uname
+                break
+            if cid.startswith("-100"):
+                # t.me/+<внутренний id> — рабочая ссылка-приглашение для
+                # приватных каналов/групп без юзернейма
+                ch = f"+{cid[4:]}"
+                break
     if ch:
         rows.append([InlineKeyboardButton(text=f"📢 Подписаться: t.me/{ch}",
                                           url=f"https://t.me/{ch}")])
@@ -70,33 +103,42 @@ def reset_subscribe_cache(user_id: int | None = None) -> None:
         _neg_cache.pop(user_id, None)
 
 
-async def _notify_admin_no_rights(bot, channel: str) -> None:
-    """Разово предупреждает админа (ADMIN_CHAT_ID), что бот не может проверить
-    подписку — иначе гейт живёт в режиме fail-open незамеченным."""
-    if channel in _warned_no_admin:
+async def _notify_admin(bot, text_key: str, uid: str, text: str) -> None:
+    """Разово предупреждает админа (ADMIN_IDS) о проблеме конфигурации гейта."""
+    if uid in _warned_no_admin or uid in _warned_no_gating:
         return
-    _warned_no_admin.add(channel)
+    if text_key == "no_admin":
+        _warned_no_admin.add(uid)
+    else:
+        _warned_no_gating.add(uid)
     ids = get_settings().admin_ids
     if not ids:
         return
     with contextlib.suppress(Exception):
-        await bot.send_message(
-            ids[0],
-            f"⚠️ Не могу проверять подписку на @{channel}: бот должен быть "
-            "администратором канала с правом «Добавлять администраторов» "
-            "(Add Admins). Пока доступ работает в режиме разрешения (fail-open).")
+        await bot.send_message(ids[0], text)
 
 
 async def is_channel_subscribed(bot, user_id: int) -> bool:
-    """True — пользователь подписан на канал (или проверка недоступна).
+    """True — пользователь подписан хотя бы на ОДИН обязательный чат
+    (TRACKED_CHAT_IDS; при пустом списке — CHANNEL_USERNAME/CHANNEL_CHAT_ID),
+    либо проверка недоступна (fail-open).
 
     Положительный результат кэшируется на SUBSCRIBE_CACHE_SEC, отрицательный —
     на _NEG_TTL_SEC (короткий, чтобы «Я подписался» срабатывало почти сразу).
     Любая ошибка API => fail-open: бот обязан оставаться отзывчивым даже при
     недоступном канале/сбое Telegram — молчание в ЛС недопустимо.
     """
-    st = get_settings()
-    if not st.channel_username:
+    chats = required_chats()
+    if not chats:
+        # Ни один чат не настроен — проверять подписку негде: доступ открыт,
+        # но админ получает разовое предупреждение (правило 2 не работает).
+        logger.error("subscription gate disabled: TRACKED_CHAT_IDS/CHANNEL_* are empty — "
+                     "anyone can use the bot")
+        asyncio.ensure_future(_notify_admin(
+            bot, "no_gating", "no-gating",
+            "⚠️ Проверка подписки отключена: не заданы TRACKED_CHAT_IDS и "
+            "CHANNEL_USERNAME/CHANNEL_CHAT_ID. Любой пользователь может "
+            "взаимодействовать с ботом — настройте обязательные чаты."))
         return True
     now = time.monotonic()
     pos = _pos_cache.get(user_id)
@@ -105,22 +147,34 @@ async def is_channel_subscribed(bot, user_id: int) -> bool:
     neg = _neg_cache.get(user_id)
     if neg is not None and neg > now:
         return False
-    try:
-        member = await bot.get_chat_member(f"@{st.channel_username}", user_id)
-    except TelegramForbiddenError as exc:
-        # Бот не админ канала / неверный CHANNEL_USERNAME: это настройка,
-        # а не сбой на секунду. Fail-open + разовое предупреждение админу.
-        logger.error("cannot check subscription for @{}: {} — fail-open",
-                     st.channel_username, exc)
-        asyncio.ensure_future(_notify_admin_no_rights(bot, st.channel_username))
-        return True
-    except TelegramAPIError as exc:
-        logger.warning("subscription check failed for {} ({}): fail-open",
-                       user_id, exc)
-        return True
-    if member.status in ("member", "administrator", "creator"):
-        _pos_cache[user_id] = time.monotonic() + SUBSCRIBE_CACHE_SEC
-        _neg_cache.pop(user_id, None)
+    api_error = False
+    for cid, uname in chats:
+        target = f"@{uname}" if uname else cid
+        try:
+            member = await bot.get_chat_member(target, user_id)
+        except TelegramForbiddenError as exc:
+            # Бот не админ чата / неверный ID: это настройка, а не сбой
+            # на секунду. Пробуем следующий чат; fail-open + предупреждение.
+            api_error = True
+            logger.error("cannot check subscription for {}: {} — fail-open",
+                         target, exc)
+            asyncio.ensure_future(_notify_admin(
+                bot, "no_admin", target,
+                f"⚠️ Не могу проверять доступ ({target}): бот должен быть "
+                "администратором канала с правом «Добавлять администраторов» "
+                "(Add Admins). Пока доступ работает в режиме разрешения (fail-open)."))
+            continue
+        except TelegramAPIError as exc:
+            api_error = True
+            logger.warning("subscription check failed for {} ({}): skip chat",
+                           target, exc)
+            continue
+        if member.status in ("member", "administrator", "creator"):
+            _pos_cache[user_id] = time.monotonic() + SUBSCRIBE_CACHE_SEC
+            _neg_cache.pop(user_id, None)
+            return True
+    if api_error:
+        # ни в один чат проверить не удалось — не глушим бота из-за сбоя
         return True
     _neg_cache[user_id] = time.monotonic() + _NEG_TTL_SEC
     return False

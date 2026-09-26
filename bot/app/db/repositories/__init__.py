@@ -474,11 +474,20 @@ class SubscriberRepository:
         """Заносит подписчика; True — если это новая запись (нужно приветствовать).
 
         Идемпотентно к повторным доставкам апдейтов: опираемся на PK user_id,
-        конфликт молча пропускаем (already known).
+        конфликт молча пропускаем (already known). Если запись уже есть, но
+        приветствие НЕ было доставлено (например, ЛС были закрыты), обновляем
+        имя/username и возвращаем True — иначе «вечные pending» так и не
+        дождались бы доставки: welcome_pending_subscribers берёт имя из базы.
         """
         from app.db.models import ChannelSubscriber
         exists = await self.session.get(ChannelSubscriber, user_id)
         if exists is not None:
+            if exists.welcomed_at is None:
+                if first_name:
+                    exists.first_name = first_name
+                if username:
+                    exists.username = username
+                return True
             return False
         try:
             self.session.add(ChannelSubscriber(

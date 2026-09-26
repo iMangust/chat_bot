@@ -253,7 +253,10 @@ async def scan_channel_members(bot: Bot) -> None:
     человек сначала закрыл ЛС, а потом открыл).
     """
     st = get_settings()
-    if not st.welcome_channel_enabled or not st.channel_chat_id:
+    if not st.welcome_channel_enabled:
+        return
+    from app.middlewares.gate import required_chats
+    if not required_chats():
         return
     if not await acquire_lock("channel_scan", ttl_sec=max(60, st.channel_scan_minutes * 60 - 30)):
         return
@@ -264,8 +267,11 @@ async def scan_channel_members(bot: Bot) -> None:
             # догоняем приветствия, которые не удалось отправить раньше
             sent = await welcome_pending_subscribers(bot, session, limit=5)
             known = await SubscriberRepository(session).count()
+            # счётчик берём по первому настроенному чату (channel_chat_id или
+            # первый из TRACKED_CHAT_IDS) — раньше скан молча не работал без него
+            probe_chat = st.channel_chat_id or required_chats()[0][0]
             try:
-                total = await bot.get_chat_member_count(st.channel_chat_id)
+                total = await bot.get_chat_member_count(probe_chat)
             except Exception as e:  # noqa: BLE001 — бот не админ/нет доступа к каналу
                 logger.debug("channel member count unavailable: {}", e)
                 total = None
