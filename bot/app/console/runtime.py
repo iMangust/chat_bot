@@ -20,7 +20,7 @@ from pathlib import Path
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.types import BotCommand
+from aiogram.types import BotCommand, BotCommandScopeAllChatAdministrators, BotCommandScopeAllGroupChats, BotCommandScopeAllPrivateChats
 from loguru import logger
 
 from app.config import get_settings
@@ -134,18 +134,26 @@ class BotRuntime:
                 await seed_items(session)
                 await session.commit()
 
-            await self.bot.set_my_commands([
-                BotCommand(command="start", description="Главное меню"),
-                BotCommand(command="pet", description="🐾 Питомец"),
-                BotCommand(command="stats", description="📊 Моя статистика"),
-                BotCommand(command="ach", description="🏆 Достижения"),
-                BotCommand(command="top", description="🏅 Топы"),
-                BotCommand(command="arena", description="⚔️ Арена питомцев"),
-                BotCommand(command="card", description="🖼 Карточка профиля"),
-                BotCommand(command="award", description="🎁 Итоги недели"),
-                BotCommand(command="settings", description="⚙️ Настройки"),
-                BotCommand(command="help", description="❓ Справка"),
-            ])
+            # Команды видимы только в ЛС (совпадает с on_startup из app.main):
+            # в группах взаимодействие с ботом запрещено гейтом доступа.
+            await self.bot.delete_my_commands()          # глобальный scope
+            await self.bot.delete_my_commands(scope=BotCommandScopeAllGroupChats())
+            await self.bot.delete_my_commands(scope=BotCommandScopeAllChatAdministrators())
+            await self.bot.set_my_commands(
+                [
+                    BotCommand(command="start", description="Главное меню"),
+                    BotCommand(command="pet", description="🐾 Питомец"),
+                    BotCommand(command="stats", description="📊 Моя статистика"),
+                    BotCommand(command="ach", description="🏆 Достижения"),
+                    BotCommand(command="top", description="🏅 Топы"),
+                    BotCommand(command="arena", description="⚔️ Арена питомцев"),
+                    BotCommand(command="card", description="🖼 Карточка профиля"),
+                    BotCommand(command="award", description="🎁 Итоги недели"),
+                    BotCommand(command="settings", description="⚙️ Настройки"),
+                    BotCommand(command="help", description="❓ Справка"),
+                ],
+                scope=BotCommandScopeAllPrivateChats(),
+            )
 
             # проверка токена/связи с Telegram API до старта поллинга —
             # иначе при неверном токене или сетевом проблеме getUpdates просто

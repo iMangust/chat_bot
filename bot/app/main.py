@@ -10,7 +10,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.redis import RedisStorage
-from aiogram.types import BotCommand
+from aiogram.types import BotCommand, BotCommandScopeAllChatAdministrators, BotCommandScopeAllGroupChats, BotCommandScopeAllPrivateChats
 from loguru import logger
 
 from sqlalchemy import inspect as sa_inspect
@@ -185,18 +185,30 @@ async def on_startup(bot: Bot) -> None:
         await seed_achievements(session)
         await seed_items(session)   # справочник магазина (идемпотентно)
         await session.commit()
-    await bot.set_my_commands([
-        BotCommand(command="start", description="Главное меню"),
-        BotCommand(command="pet", description="🐾 Питомец"),
-        BotCommand(command="stats", description="📊 Моя статистика"),
-        BotCommand(command="ach", description="🏆 Достижения"),
-        BotCommand(command="top", description="🏅 Топы"),
-        BotCommand(command="arena", description="⚔️ Арена питомцев"),
-        BotCommand(command="card", description="🖼 Карточка профиля"),
-        BotCommand(command="award", description="🎁 Итоги недели"),
-        BotCommand(command="settings", description="⚙️ Настройки"),
-        BotCommand(command="help", description="❓ Справка"),
-    ])
+    # Меню команд ("/...") регистрируем ТОЛЬКО для личных чатов.
+    # В группах и каналах взаимодействие с ботом запрещено моделью доступа
+    # (AccessGateMiddleware), поэтому список команд там вводил в заблуждение.
+    # setMyCommands без scope не сбрасывает скоупы — сначала очищаем всё,
+    # иначе старые глобальные команды продолжат отображаться в группах.
+    await bot.delete_my_commands()          # глобальный scope
+    await bot.delete_my_commands(scope=BotCommandScopeAllGroupChats())
+    await bot.delete_my_commands(scope=BotCommandScopeAllChatAdministrators())
+    private_scope = BotCommandScopeAllPrivateChats()
+    await bot.set_my_commands(
+        [
+            BotCommand(command="start", description="Главное меню"),
+            BotCommand(command="pet", description="🐾 Питомец"),
+            BotCommand(command="stats", description="📊 Моя статистика"),
+            BotCommand(command="ach", description="🏆 Достижения"),
+            BotCommand(command="top", description="🏅 Топы"),
+            BotCommand(command="arena", description="⚔️ Арена питомцев"),
+            BotCommand(command="card", description="🖼 Карточка профиля"),
+            BotCommand(command="award", description="🎁 Итоги недели"),
+            BotCommand(command="settings", description="⚙️ Настройки"),
+            BotCommand(command="help", description="❓ Справка"),
+        ],
+        scope=private_scope,
+    )
     logger.info("✅ bot started")
     # после рестарта догоняем неотправленные приветствия подписчикам канала
     try:
