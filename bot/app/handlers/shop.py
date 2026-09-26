@@ -294,7 +294,7 @@ async def use_item(cb: CallbackQuery, session: AsyncSession) -> None:
     await session.flush()
     await pets.log_action(pet.id, "use", meta={"item": item.code})
     try:
-        await safe_edit_or_answer(cb.message, f"{result}\n\n" + svc.render(pet),
+        await safe_edit_or_answer(cb.message, f"{result}\n\n" + await svc.render_async(pet),
                                   reply_markup=pet_hub(1))
     finally:
         # коммит в finally: edit уже неотменить, а без commit'а при сетевом

@@ -1,17 +1,17 @@
-"""Мини-игры с питомцем: угадайка, РКШ, реакция.
+"""Мини-игры с питомцем: угадайка, РКШ, «21» (блэкджек против питомца-дилера).
 
 UX: каждая игра — редактирование одного сообщения. Состояние игры хранится
 в FSM, а не в callback_data, чтобы нельзя было «подсмотреть» секрет через
 пересылку кнопок.
 
 Баланс: победа = svc.play(pet, won=True) → XP/счастье; характеристики влияют
-на честные условия игры (интеллект — диапазон подсказки, ловкость — бюджет
-реакции). Победы идут в счётчик games_won для ачивки «Игумен».
+на честные условия игры (интеллект — диапазон подсказки и «выдержка» дилера
+в «21»). Победы идут в счётчик games_won для ачивки «Игумен».
 """
 from __future__ import annotations
 
 import random
-from datetime import datetime, timezone
+from app.utils.local_time import now as local_now
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
@@ -21,7 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.repositories import PetRepository, UserRepository
 from app.keyboards.inline import (
-    guess_hint_keyboard, games_menu, pet_hub, reaction_keyboard, rps_keyboard,
+    guess_hint_keyboard, games_menu, pet_hub, rps_keyboard, twentyone_keyboard,
 )
 from app.services.achievements import AchievementService
 from app.utils.safe_edit import safe_edit_or_answer
@@ -36,7 +36,7 @@ RPS_EMOJI = {"rock": "🪨", "scissors": "✂️", "paper": "📄"}
 class Games(StatesGroup):
     guessing = State()
     rps = State()
-    reaction = State()
+    blackjack = State()
 
 
 async def _get_pet(session: AsyncSession, tg_id: int):
@@ -60,7 +60,7 @@ async def games_screen(cb: CallbackQuery, state: FSMContext, session: AsyncSessi
         f"🎮 <b>Игровая с {pet.name}</b> {sp['emoji']}\n\n"
         "• 🔢 <i>Угадай число</i> — 🧠 интеллект сужает подсказку\n"
         "• ✂️ <i>Камень-ножницы-бумага</i> — честный рандом\n"
-        "• ⚡ <i>Реакция</i> — жми «ЛОВИ!» быстрее; 🏃 ловкость даёт доп. время\n\n"
+        "• 🃏 <i>Двадцать одно</i> — набери ≤21; 🧠 интеллект делает дилера «мягче»\n\n"
         "Победа: +15 XP и море счастья. Поражение всё равно даёт опыт!",
         reply_markup=games_menu(),
     )
@@ -106,7 +106,7 @@ async def do_guess_cb(cb: CallbackQuery, state: FSMContext, session: AsyncSessio
     if won:
         await bump_games_won(session, cb.from_user.id)
     hint = "" if won else f" Это было число <b>{secret}</b>."
-    await safe_edit_or_answer(cb.message, f"{result}{hint}\n\n" + svc.render(pet),
+    await safe_edit_or_answer(cb.message, f"{result}{hint}\n\n" + await svc.render_async(pet),
                                reply_markup=games_menu())
     await cb.answer()
 
@@ -163,7 +163,7 @@ async def play_rps(cb: CallbackQuery, state: FSMContext, session: AsyncSession) 
         await state.clear()
         return await cb.answer()
     theirs = random.choice(list(RPS_EMOJI))
-    won = TamagotchiService.rps_beats(mine) == theirs
+    won = TamagotchiService.rps_beaten_by(mine) == theirs
     draw = theirs == mine
     svc = TamagotchiService(session)
     result = await svc.play(pet, won)
@@ -173,73 +173,136 @@ async def play_rps(cb: CallbackQuery, state: FSMContext, session: AsyncSession) 
                                                   "theirs": theirs})
     if won:
         await bump_games_won(session, cb.from_user.id)
-    outcome = "🤝 Ничья!" if draw else ("🎉 Ты выиграл!" if won else "😿 Питомец хитрее…")
+    outcome = "🤝 Ничья!" if draw else ("🎉 Ты выиграл! Питомец не угадал твой ход." if won else "😿 Питомец хитрее…")
     await safe_edit_or_answer(cb.message, 
         f"Ты: {RPS_EMOJI[mine]} · {pet.name}: {RPS_EMOJI[theirs]} — {outcome}\n\n"
-        f"{result}\n\n" + svc.render(pet),
+        f"{result}\n\n" + await svc.render_async(pet),
         reply_markup=games_menu(),
     )
     await cb.answer()
 
 
 # ---------------------------------------------------------------------------
-# Игра 3: реакция. Античит: время старта подписано в callback_data + FSM.
+# Игра 3: «21» (блэкджек). Питомец — дилер; античит: колода подписана в FSM.
 # ---------------------------------------------------------------------------
-REACTION_GRACE_MS = 400  # допуск на сетевую задержку «опережающего» клика
+BJ_DECK = [(r, s) for r in range(2, 11) for s in ("♠", "♥", "♦", "♣")]
 
 
-@router.callback_query(F.data == "game:reaction")
-async def start_reaction(cb: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+def _bj_value(cards: list[tuple[int, str]]) -> int:
+    """Очки руки: туз = 11, пока не перебор; иначе 1."""
+    total = 0
+    aces = 0
+    for rank, _suit in cards:
+        if rank == 11:
+            aces += 1
+            total += 11
+        else:
+            total += max(2, min(rank, 10))
+    while total > 21 and aces:
+        total -= 10
+        aces -= 1
+    return total
+
+
+def _bj_render(cards: list[tuple[int, str]], hidden: bool = False) -> str:
+    if hidden and cards:
+        return f"{_card_str(cards[0])} + 🂠"
+    return _card_str(cards)
+
+
+def _card_str(cards: list[tuple[int, str]]) -> str:
+    labels = {2: "2", 3: "3", 4: "4", 5: "5", 6: "6", 7: "7", 8: "8", 9: "9", 10: "10", 11: "Т"}
+    return " ".join(f"{labels[r]}{s}" for r, s in cards) or "—"
+
+
+@router.callback_query(F.data == "game:blackjack")
+async def start_blackjack(cb: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
         return await cb.answer()
-    budget = TamagotchiService(session).reaction_ms_budget(pet)
-    ts = datetime.now(timezone.utc).isoformat()
-    await state.set_state(Games.reaction)
-    await state.update_data(react_start=ts, budget=budget)
-    await safe_edit_or_answer(cb.message, 
-        f"⚡ <b>Тест реакции!</b>\n\n"
-        f"Нажми «ЛОВИ!» быстрее, чем за <b>{budget} мс</b>.\n"
-        f"🏃 Ловкость питомца = +60 мс за каждый пункт. Пошёл!",
-        reply_markup=reaction_keyboard(ts),
+    svc = TamagotchiService(session)
+    rng = random.Random()
+    deck = BJ_DECK[:]
+    rng.shuffle(deck)
+    # 🧠 интеллект питомца = «хитрость» дилера: умный чаще пасует на 17, глупый тянет до 18+
+    dealer_stay = 17 + min(3, pet.intellect // 6)
+    player = [deck.pop(), deck.pop()]
+    dealer = [deck.pop(), deck.pop()]
+    await state.set_state(Games.blackjack)
+    await state.update_data(deck=deck, player=player, dealer=dealer, stay=dealer_stay)
+    await safe_edit_or_answer(cb.message,
+        f"🃏 <b>Двадцать одно!</b> {pet.name} — дилер.\n\n"
+        f"Твои карты: <b>{_bj_render(player)}</b> ({_bj_value(player)})\n"
+        f"Карты дилера: <b>{_bj_render(dealer, hidden=True)}</b>\n\n"
+        "«Ещё» — взять карту, «Хватит» — остановиться. Больше 21 — перебор!",
+        reply_markup=twentyone_keyboard(),
     )
     await cb.answer()
 
 
-@router.callback_query(Games.reaction, F.data.startswith("react:"))
-async def finish_reaction(cb: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
-    data = await state.get_data()
-    started_iso = data.get("react_start")
-    if not started_iso or not cb.data.endswith(started_iso):
-        await state.clear()
-        return await cb.answer("Ход уже сделан — начни игру заново", show_alert=True)
-    try:
-        started = datetime.fromisoformat(started_iso)
-        if started.tzinfo is None:
-            started = started.replace(tzinfo=timezone.utc)
-    except ValueError:
-        await state.clear()
-        return await cb.answer("Игра сломалась, начни заново", show_alert=True)
-    elapsed_ms = (datetime.now(timezone.utc) - started).total_seconds() * 1000.0
-    budget = int(data.get("budget", 1500))
+async def _bj_finish(cb: CallbackQuery, state: FSMContext, session: AsyncSession,
+                     player: list, dealer: list) -> None:
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
         await state.clear()
         return await cb.answer()
     svc = TamagotchiService(session)
-    won = elapsed_ms <= budget + REACTION_GRACE_MS
+    pv, dv = _bj_value(player), _bj_value(dealer)
+    if pv > 21:
+        outcome, won = "💥 Перебор! Питомец забирает сдачу.", False
+    elif dv > 21:
+        outcome, won = f"🎉 Дилер перебрал ({dv}) — ты забрал банк!", True
+    elif pv > dv:
+        outcome, won = f"🎉 Ты выиграл: {pv} против {dv}!", True
+    elif pv == dv:
+        outcome, won = f"🤝 Ничья: по {pv}.", False
+    else:
+        outcome, won = f"😿 Питомец-дилер хитрее: {dv} против {pv}.", False
     result = await svc.play(pet, won)
     await state.clear()
     await PetRepository(session).log_action(pet.id, "game", value=int(won),
-                                            meta={"kind": "reaction", "ms": int(elapsed_ms)})
+                                            meta={"kind": "blackjack", "player": pv, "dealer": dv})
     if won:
         await bump_games_won(session, cb.from_user.id)
-    await safe_edit_or_answer(cb.message, 
-        f"⏱ Твоё время: <b>{int(elapsed_ms)} мс</b> (бюджет {budget} мс)\n\n"
-        f"{result}\n\n" + svc.render(pet),
+    await safe_edit_or_answer(cb.message,
+        f"Твои: <b>{_bj_render(player)}</b> ({pv}) · {pet.name}: <b>{_bj_render(dealer)}</b> ({dv})\n"
+        f"{outcome}\n\n{result}",
         reply_markup=games_menu(),
     )
     await cb.answer()
+
+
+@router.callback_query(Games.blackjack, F.data == "bj:hit")
+async def bj_hit(cb: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    data = await state.get_data()
+    deck, player = list(data.get("deck") or []), list(data.get("player") or [])
+    dealer = list(data.get("dealer") or [])
+    if not deck:
+        await state.clear()
+        return await cb.answer("Колода кончилась — начни игру заново", show_alert=True)
+    player.append(deck.pop())
+    pv = _bj_value(player)
+    if pv >= 21:
+        return await _bj_finish(cb, state, session, player, dealer)
+    await state.update_data(deck=deck, player=player)
+    await safe_edit_or_answer(cb.message,
+        f"🃏 Твои карты: <b>{_bj_render(player)}</b> ({pv})\n"
+        f"Карты дилера: <b>{_bj_render(dealer, hidden=True)}</b>\n\n"
+        "Ещё или хватит?",
+        reply_markup=twentyone_keyboard(),
+    )
+    await cb.answer()
+
+
+@router.callback_query(Games.blackjack, F.data == "bj:stand")
+async def bj_stand(cb: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
+    data = await state.get_data()
+    deck, player = list(data.get("deck") or []), list(data.get("player") or [])
+    dealer = list(data.get("dealer") or [])
+    stay = int(data.get("stay", 17))
+    while _bj_value(dealer) < stay and deck:   # «глупый» дилер тянет дольше — шанс на его перебор
+        dealer.append(deck.pop())
+    await _bj_finish(cb, state, session, player, dealer)
 
 
 # ---------------------------------------------------------------------------

@@ -28,3 +28,4 @@ pytest-asyncio>=1.4
 fastapi>=0.116
 uvicorn>=0.35
 websockets>=12.0   # WebSocket-стрим логов в панель
+httpx>=0.28        # реальная погода Камчатки (Open-Meteo) в карточке питомца

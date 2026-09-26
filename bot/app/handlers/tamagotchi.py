@@ -114,8 +114,9 @@ async def cmd_pet(message: Message, session: AsyncSession) -> None:
     await svc.apply_decay(pet)
     users = UserRepository(session)
     user = await users.get(message.from_user.id)
-    await message.answer(svc.render(pet, user.first_name if user else ""),
-                         reply_markup=pet_hub(pet_page_for(message.chat.id)),
+    await message.answer(await svc.render_async(pet, user.first_name if user else ""),
+                         reply_markup=pet_hub(pet_page_for(message.chat.id),
+                                              sleeping=pet.is_sleeping),
                          parse_mode="HTML")
 
 
@@ -134,9 +135,10 @@ async def pet_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     await svc.apply_decay(pet)
     users = UserRepository(session)
     user = await users.get(cb.from_user.id)
-    text = svc.render(pet, user.first_name if user else "")
+    text = await svc.render_async(pet, user.first_name if user else "")
     await safe_edit_or_answer(cb.message, text,
-                              reply_markup=pet_hub(pet_page_for(cb.message.chat.id)))
+                              reply_markup=pet_hub(pet_page_for(cb.message.chat.id),
+                                                   sleeping=pet.is_sleeping))
     await cb.answer()
 
 
@@ -177,8 +179,8 @@ async def pet_page_screen(cb: CallbackQuery, session: AsyncSession) -> None:
                  "\n\n⚠️ Жизней больше нет — можно только усыновить нового.")
     await safe_edit_or_answer(
         cb.message,
-        f"{svc.render(pet)}\n\n<i>{title} · {hint}</i>{extra}",
-        reply_markup=pet_hub(page, critical=crit),
+        f"{await svc.render_async(pet)}\n\n<i>{title} · {hint}</i>{extra}",
+        reply_markup=pet_hub(page, critical=crit, sleeping=pet.is_sleeping),
     )
     await cb.answer()
 
@@ -195,8 +197,9 @@ async def act_revive(cb: CallbackQuery, session: AsyncSession) -> None:
     await svc.apply_decay(pet)
     if not svc.is_critical(pet):
         await safe_edit_or_answer(
-            cb.message, svc.render(pet),
-            reply_markup=pet_hub(pet_page_for(cb.message.chat.id)))
+            cb.message, await svc.render_async(pet),
+            reply_markup=pet_hub(pet_page_for(cb.message.chat.id),
+                                 sleeping=pet.is_sleeping))
         return await cb.answer(t("pet.not_critical"), show_alert=True)
     users = UserRepository(session)
     user = await users.get(cb.from_user.id)
@@ -205,7 +208,7 @@ async def act_revive(cb: CallbackQuery, session: AsyncSession) -> None:
         # жизни кончились: сразу предлагаем усыновление
         await safe_edit_or_answer(
             cb.message,
-            f"{svc.render(pet)}\n\n" + t("pet.no_more_lives", name=esc(pet.name)),
+            f"{await svc.render_async(pet)}\n\n" + t("pet.no_more_lives", name=esc(pet.name)),
             reply_markup=pet_hub(0, critical=True))
         return await cb.answer()
     have = user.coins if user else 0
@@ -224,7 +227,7 @@ async def act_revive(cb: CallbackQuery, session: AsyncSession) -> None:
     await session.commit()
     await safe_edit_or_answer(
         cb.message,
-        f"{result}\n\n" + svc.render(pet),
+        f"{result}\n\n" + await svc.render_async(pet),
         reply_markup=pet_hub(pet_page_for(cb.message.chat.id)))
     await cb.answer(f"⭐ −{cost}")
 
@@ -336,8 +339,9 @@ async def _after_action(cb: CallbackQuery, session: AsyncSession, result_text: s
         prefix = f"{wtext}\n\n"
     try:
         await safe_edit_or_answer(cb.message, 
-            f"{prefix}{result_text}\n\n" + svc.render(pet),
-            reply_markup=pet_hub(pet_page_for(cb.message.chat.id)),
+            f"{prefix}{result_text}\n\n" + await svc.render_async(pet),
+            reply_markup=pet_hub(pet_page_for(cb.message.chat.id),
+                                 sleeping=pet.is_sleeping),
         )
     finally:
         # ВАЖНО: коммит в finally — Telegram-редактирование не откатить, а без
@@ -384,13 +388,24 @@ async def act_sleep(cb: CallbackQuery, session: AsyncSession) -> None:
     if pet is None:
         return await cb.answer()
     if pet.is_sleeping:
-        # кнопка работает и как «разбудить»
-        pet.is_sleeping = False
-        pet.sleep_until = None
-        result = "⏰ Ты разбудил питомца."
+        # во сне та же кнопка уже «Разбудить» (см. pet_hub(sleeping=...));
+        # повторный клик по старой кнопке — просто разбудить.
+        result = await svc.wake(pet)
     else:
         result = await svc.sleep(pet, hours=8)
     await PetRepository(session).log_action(pet.id, "sleep")
+    await _after_action(cb, session, result)
+
+
+@router.callback_query(F.data == "pet:wake")
+async def act_wake(cb: CallbackQuery, session: AsyncSession) -> None:
+    """Принудительно разбудить: накопленная за сон энергия сохраняется."""
+    svc = TamagotchiService(session)
+    pet = await _get_pet(session, cb.from_user.id)
+    if pet is None:
+        return await cb.answer()
+    result = await svc.wake(pet)
+    await PetRepository(session).log_action(pet.id, "wake")
     await _after_action(cb, session, result)
 
 

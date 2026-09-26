@@ -18,6 +18,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Pet, PetStage, User
+from app.utils.local_time import now as local_now, localize
 from app.i18n import t
 from app.utils.formatting import (clamp, holiday_effect_mults, season_for,
                                   stat_bar, weather_info)
@@ -28,10 +29,8 @@ CRIT_MSG = "pet.critical_deny"
 
 
 def _aware(dt: datetime) -> datetime:
-    """datetime из MySQL DATETIME приходит naive — нормализуем к UTC."""
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+    """datetime из MySQL DATETIME приходит naive — нормализуем к локальному (камчатскому) времени."""
+    return localize(dt)
 
 
 # сезонные множители скорости деградации (погода/сезоны)
@@ -207,7 +206,7 @@ class TamagotchiService:
 
         Идемпотентно: после применения обновляет pet.last_update.
         """
-        now = now or datetime.now(timezone.utc)
+        now = now or local_now()
         last = _aware(pet.last_update)
         hours = (now - last).total_seconds() / 3600.0
         if hours <= 0:
@@ -223,15 +222,21 @@ class TamagotchiService:
         except (ImportError, AttributeError) as exc:  # конфиг/сезоны недоступны — без сезонности
             logger.debug("season lookup failed, decay without seasonality: {}", exc)
             season = ""
-        decay_hunger = DECAY_PER_HOUR["hunger"] * d.get("hunger", 1.0) * season_decay_mult(season, "hunger")
-        decay_happy = DECAY_PER_HOUR["happiness"] * d.get("happiness", 1.0) * season_decay_mult(season, "happy")
-        decay_energy_day = DECAY_PER_HOUR["energy_day"] * d.get("energy", 1.0) * season_decay_mult(season, "energy")
-        decay_hygiene = DECAY_PER_HOUR["hygiene"] * d.get("hygiene", 1.0) * season_decay_mult(season, "hygiene")
+        try:
+            from app.services.weather import weather_decay_mods
+            wmods = weather_decay_mods()   # реальная погода Камчатки из кэша (без сети)
+        except Exception:  # noqa: BLE001
+            wmods = {}
+        decay_hunger = DECAY_PER_HOUR["hunger"] * d.get("hunger", 1.0) * season_decay_mult(season, "hunger") * wmods.get("hunger", 1.0)
+        decay_happy = DECAY_PER_HOUR["happiness"] * d.get("happiness", 1.0) * season_decay_mult(season, "happy") * wmods.get("happy", 1.0)
+        decay_energy_day = DECAY_PER_HOUR["energy_day"] * d.get("energy", 1.0) * season_decay_mult(season, "energy") * wmods.get("energy", 1.0)
+        decay_hygiene = DECAY_PER_HOUR["hygiene"] * d.get("hygiene", 1.0) * season_decay_mult(season, "hygiene") * wmods.get("hygiene", 1.0)
 
         if pet.is_sleeping:
             if pet.sleep_until and now >= _aware(pet.sleep_until):
                 pet.is_sleeping = False
                 pet.sleep_until = None
+                pet.sleep_started_at = None
                 pet.energy = clamp(100 + sp["bonus"]["sleep_bonus"])  # сова спит «лучше всех»
                 pet.happiness = clamp(pet.happiness + species_pref_delta(pet, "sleep"))
             else:
@@ -286,10 +291,12 @@ class TamagotchiService:
 
     async def feed(self, pet: Pet, effect: dict[str, float]) -> str:
         """Эффект из item.effect, напр. {"hunger": +25, "happiness": +5}. Кулдаун 60 сек."""
-        now = datetime.now(timezone.utc)
+        now = local_now()
         await self.apply_decay(pet, now)
         if self.is_critical(pet):
             return t(CRIT_MSG)
+        if pet.is_sleeping:
+            return t("pet.sleeping_deny_feed")
         ok, wait = self._check_cooldown(pet, "feed", 60, now)
         if not ok:
             return t("pet.cooldown_feed", sec=wait)
@@ -315,7 +322,7 @@ class TamagotchiService:
 
     async def play(self, pet: Pet, won: bool) -> str:
         """Мини-игра завершена; won — результат. Кулдаун 120 сек. Тратит энергию."""
-        now = datetime.now(timezone.utc)
+        now = local_now()
         await self.apply_decay(pet, now)
         if self.is_critical(pet):
             return t(CRIT_MSG)
@@ -349,8 +356,8 @@ class TamagotchiService:
     # Мини-игры: честная игра с характеристиками питомца
     # ------------------------------------------------------------------
     @staticmethod
-    def rps_beats(hand: str) -> str:
-        """Ход, который побеждает указанный."""
+    def rps_beaten_by(hand: str) -> str:
+        """Ход, который ПРОИГРЫВАЕТ указанному (камень проигрывает бумаге)."""
         return {"rock": "paper", "paper": "scissors", "scissors": "rock"}[hand]
 
     def guess_range(self, pet: Pet) -> tuple[int, int]:
@@ -360,27 +367,52 @@ class TamagotchiService:
         lo, hi = max(1, secret - half), min(20, secret + half)
         return secret, (lo, hi)
 
-    def reaction_ms_budget(self, pet: Pet) -> int:
-        """Бюджет реакции в мс: ловкость даёт доп. время (база 1500 + 60*agility)."""
-        return 1500 + pet.agility * 60
+
 
     async def sleep(self, pet: Pet, hours: int = 8) -> str:
-        now = datetime.now(timezone.utc)
+        now = local_now()
         await self.apply_decay(pet, now)
         if self.is_critical(pet):
             return t(CRIT_MSG)
         if pet.is_sleeping:
             return t("pet.already_sleeping")
         pet.is_sleeping = True
+        pet.sleep_started_at = now
         pet.sleep_until = now + timedelta(hours=hours)
         self._set_cooldown(pet, "sleep", now)
         return t("pet.fell_asleep", time=f"{pet.sleep_until:%H:%M}")
 
+    async def wake(self, pet: Pet) -> str:
+        """Принудительно разбудить: начисляем энергию за ФАКТИЧЕСКИ проспанные часы.
+
+        apply_decay уже капает +energy за каждый час сна; здесь лишь фиксируем,
+        что сон окончен, и не даём «фармить» бесконечный сон без кулдауна.
+        """
+        now = local_now()
+        await self.apply_decay(pet, now)
+        if not pet.is_sleeping:
+            return t("pet.not_sleeping")
+        slept_h = 0.0
+        if pet.sleep_started_at:
+            slept_h = max(0.0, (now - _aware(pet.sleep_started_at)).total_seconds() / 3600.0)
+        elif pet.sleep_until:
+            # страховка для старых данных: считаем от оставшегося срока в худшую сторону
+            planned = 8
+            left = max(0.0, (_aware(pet.sleep_until) - now).total_seconds() / 3600.0)
+            slept_h = max(0.0, planned - left)
+        pet.is_sleeping = False
+        pet.sleep_until = None
+        pet.sleep_started_at = None
+        gained = int(round(slept_h * DECAY_PER_HOUR["energy_sleep"]))
+        return t("pet.woken", hours=f"{slept_h:.1f}".rstrip("0").rstrip("."), energy=gained)
+
     async def wash(self, pet: Pet) -> str:
-        now = datetime.now(timezone.utc)
+        now = local_now()
         await self.apply_decay(pet, now)
         if self.is_critical(pet):
             return t(CRIT_MSG)
+        if pet.is_sleeping:
+            return t("pet.sleeping_deny")
         ok, wait = self._check_cooldown(pet, "wash", 300, now)
         if not ok:
             return f"⏳ Мыться можно раз в 5 минут (осталось {wait} сек)."
@@ -393,8 +425,10 @@ class TamagotchiService:
         return t("pet.washed")
 
     async def heal(self, pet: Pet) -> str:
-        now = datetime.now(timezone.utc)
+        now = local_now()
         await self.apply_decay(pet, now)
+        if pet.is_sleeping:
+            return t("pet.sleeping_deny_heal")
         if pet.sick_since is None and pet.health >= 70:
             return t("pet.not_sick")
         pet.health = clamp(pet.health + 35)
@@ -405,10 +439,12 @@ class TamagotchiService:
 
     async def train(self, pet: Pet, stat: str) -> str:
         """Тренировка strength/agility/intellect. Кулдаун 180 сек, тратит энергию."""
-        now = datetime.now(timezone.utc)
+        now = local_now()
         await self.apply_decay(pet, now)
         if self.is_critical(pet):
             return t(CRIT_MSG)
+        if pet.is_sleeping:
+            return t("pet.sleeping_deny_train")
         if stat not in ("strength", "agility", "intellect"):
             return "❓ Неизвестная тренировка."
         if pet.energy < 20:
@@ -433,7 +469,7 @@ class TamagotchiService:
         return t("pet.train_done", label=label, gain=gain)
 
     async def start_walk(self, pet: Pet, hours: int = 2) -> str:
-        now = datetime.now(timezone.utc)
+        now = local_now()
         await self.apply_decay(pet, now)
         if self.is_critical(pet):
             return t(CRIT_MSG)
@@ -454,7 +490,7 @@ class TamagotchiService:
         roll = random.random()
         sp = _species(pet)
         # Хэллоуин и пр.: прогулки находят ×N монет; xp по празднику тоже множится
-        hol = holiday_effect_mults(datetime.now(timezone.utc))
+        hol = holiday_effect_mults(local_now())
         coin_mult = sp["bonus"]["coin_mult"] * hol.get("walk_coins", 1.0)
         xp_mult = sp["bonus"]["xp_mult"]
         pref_bonus = species_pref_delta(pet, "walk")  # собаки обожают гулять
@@ -569,7 +605,7 @@ class TamagotchiService:
         grace = (pet.settings_extra or {}).get("revive_grace_until")
         if grace:
             try:
-                if _aware(datetime.fromisoformat(grace)) > datetime.now(timezone.utc):
+                if _aware(datetime.fromisoformat(grace)) > local_now():
                     return False
             except (TypeError, ValueError):
                 pass  # мусорное значение — считаем, что grace нет
@@ -600,7 +636,7 @@ class TamagotchiService:
         pet.health = clamp(30.0)
         pet.sick_since = None
         extra = dict(pet.settings_extra or {})
-        now = datetime.now(timezone.utc)
+        now = local_now()
         extra["revived_at"] = now.isoformat()
         extra["revive_grace_until"] = (now + timedelta(minutes=30)).isoformat()
         extra["revives_used"] = int(extra.get("revives_used", 0)) + 1
@@ -625,7 +661,7 @@ class TamagotchiService:
         """«Усыновление» питомца: карточка уходит в историю (is_archived),
         все связанные логи (кормления/прогулки/дуэли) сохраняются."""
         pet.is_archived = True
-        pet.archived_at = datetime.now(timezone.utc)
+        pet.archived_at = local_now()
         pet.archive_reason = reason
         pet.is_sleeping = False
         pet.sleep_until = None
@@ -678,6 +714,37 @@ class TamagotchiService:
     # ------------------------------------------------------------------
     # Рендер карточки питомца (emoji-спрайт + бары)
     # ------------------------------------------------------------------
+    async def render_async(self, pet: Pet, owner_first_name: str = "") -> str:
+        """Карточка с реальной погодой Камчатки (Open-Meteo, кэш 30 мин).
+
+        Сетевые сбои не ломают UI: kamchatka_weather сам откатывается к
+        сезонной модели. Синхронный render() остаётся для тестов/оффлайна.
+        """
+        text = self.render(pet, owner_first_name)
+        try:
+            from app.services.weather import kamchatka_weather
+            w = await kamchatka_weather()
+            line = f"🌦️ Погода: {w['icon']} {w['name']} — {w['note']}"
+            lines = text.split("\n")
+            # заменяем сезонную строку погоды, если она есть (иначе дописываем перед «Настроением»)
+            for i, ln in enumerate(lines):
+                if ln.startswith("🌦️ Погода:"):
+                    lines[i] = line
+                    break
+            else:
+                for i, ln in enumerate(lines):
+                    if ln.startswith("💭 Настроение:"):
+                        lines.insert(i, line)
+                        break
+                else:
+                    lines.append(line)
+            if "holiday_icon" in w:
+                lines.append(f"{w['holiday_icon']} {w['holiday_note']}")
+            return "\n".join(lines)
+        except Exception as exc:  # noqa: BLE001 — карточка важнее погоды
+            logger.debug("render_async weather skipped: {}: {}", type(exc).__name__, exc)
+            return text
+
     def render(self, pet: Pet, owner_first_name: str = "") -> str:
         mood = compute_mood(pet)
         sp = _species(pet)

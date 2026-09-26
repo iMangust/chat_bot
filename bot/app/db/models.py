@@ -16,7 +16,18 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    """Метка «сейчас» — камчатское локальное время (см. app.utils.local_time).
+
+    Имя сохранено для обратной совместимости импортов; фактически возвращает
+    aware-datetime с фиксированным смещением UTC+12 (Asia/Kamchatka).
+    """
+    from app.utils.local_time import now as kamchatka_now
+    return kamchatka_now()
+
+
+def localnow() -> datetime:
+    """Канонический псевдоним: текущее время по Камчатке."""
+    return utcnow()
 
 
 class Base(DeclarativeBase):
@@ -231,6 +242,7 @@ class Pet(Base):
     sick_since: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     last_update: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    sleep_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
     born_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     settings_extra: Mapped[dict] = mapped_column(JSON, default=dict)  # окрас, аксессуары
 

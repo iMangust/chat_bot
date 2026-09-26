@@ -98,15 +98,20 @@ def pet_page_count() -> int:
     return len(PET_PAGES)
 
 
-def pet_hub(page: int = 0, critical: bool = False) -> InlineKeyboardMarkup:
+def pet_hub(page: int = 0, critical: bool = False,
+            sleeping: bool = False) -> InlineKeyboardMarkup:
     """Постраничный хаб питомца (2 в ряд, ◀️ i/n ▶️, один выход 🏠).
 
     critical=True: на странице «Уход» вместо обычных действий — реанимация
-    и усыновление нового. «📜 История» есть на каждой странице.
+    и усыновление нового. sleeping=True: кнопка «💤 Спать» превращается
+    в «⏰ Разбудить». «📜 История» есть на каждой странице.
     """
     n = len(PET_PAGES)
     page %= n
     title, actions = PET_PAGES[page]
+    if sleeping and page == 0:
+        actions = [(("⏰ Разбудить", "pet:wake") if lbl == "💤 Спать" else (lbl, cb))
+                   for lbl, cb in actions]
     if critical and page == 0:
         buttons = [
             InlineKeyboardButton(text="💖 Реанимация", callback_data="pet:revive"),
@@ -129,7 +134,7 @@ def games_menu() -> InlineKeyboardMarkup:
     b.button(text="🔢 Угадай число · 🧠 помогает", callback_data="game:guess")
     b.row()
     b.button(text="✂️ Камень-ножницы-бумага", callback_data="game:rps")
-    b.button(text="⚡ Реакция · 🏃 помогает", callback_data="game:reaction")
+    b.button(text="🃏 Двадцать одно · 🧠 помогает", callback_data="game:blackjack")
     b.adjust(1, 2)
     b.row(InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main"))
     return b.as_markup()
@@ -146,10 +151,12 @@ def rps_keyboard() -> InlineKeyboardMarkup:
     return b.as_markup()
 
 
-def reaction_keyboard(start_ts: str) -> InlineKeyboardMarkup:
-    """Кнопка «Лови!» с подписанным временем старта (античит)."""
+def twentyone_keyboard() -> InlineKeyboardMarkup:
+    """Ходы игрока в «21»: взять карту или остановиться."""
     b = InlineKeyboardBuilder()
-    b.button(text="⚡ ЛОВИ!", callback_data=f"react:{start_ts}")
+    b.button(text="➕ Ещё карту", callback_data="bj:hit")
+    b.button(text="✋ Хватит", callback_data="bj:stand")
+    b.adjust(2)
     b.row(InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main"))
     return b.as_markup()
 

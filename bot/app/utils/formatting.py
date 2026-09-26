@@ -114,16 +114,18 @@ HOLIDAY_EFFECTS: dict[tuple[int, int], dict[str, float]] = {
 
 
 def holiday_effect_mults(dt=None) -> dict[str, float]:
-    """Множителей на сегодня (пустой dict — обычный день)."""
-    from datetime import datetime as _dt, timezone as _tz
-    dt = dt or _dt.now(_tz.utc)
+    """Множители на сегодня (пустой dict — обычный день). День считается по камчатскому времени."""
+    if dt is None:
+        from app.utils.local_time import now as _local_now
+        dt = _local_now()
     return HOLIDAY_EFFECTS.get((dt.month, dt.day), {})
 
 
 def weather_info(dt=None) -> dict:
-    """Текущая «погода» для карточки питомца и подсказок."""
-    from datetime import datetime as _dt, timezone as _tz
-    dt = dt or _dt.now(_tz.utc)
+    """Текущая «погода» для карточки питомца и подсказок (сезон/праздник — по камчатскому времени)."""
+    if dt is None:
+        from app.utils.local_time import now as _local_now
+        dt = _local_now()
     key = season_for(dt)
     info = dict(WEATHER_SEASONS[key])
     hol = HOLIDAYS.get((dt.month, dt.day))
