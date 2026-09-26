@@ -16,7 +16,6 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.config import get_settings
 from app.db.models import NotificationQueue, NotificationSetting, Pet, User
 from app.services.tamagotchi import MOOD_TEXT, compute_mood
 from app.utils.html_text import esc

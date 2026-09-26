@@ -16,7 +16,7 @@ from loguru import logger
 from app.config import get_settings
 from app.db.models import (NotificationQueue, NotificationSetting, Pet, User,
                            utcnow)
-from app.db.repositories import ActivityRepository, UserRepository
+from app.db.repositories import ActivityRepository
 from app.db.session import session_factory
 from app.services.leaderboard import snapshot_weekly
 from app.services.notifications import (build_daily_report, build_pet_sad_text,

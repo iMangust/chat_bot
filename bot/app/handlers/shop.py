@@ -21,10 +21,9 @@ from loguru import logger
 
 from aiogram.types import InlineKeyboardButton
 
-from app.config import get_settings
 from app.db.models import Item, PetInventory, User
 from app.db.repositories import PetRepository, UserRepository
-from app.keyboards.inline import back_to_main, pet_hub
+from app.keyboards.inline import pet_hub
 from app.keyboards.paged import paged_keyboard
 from app.handlers.tamagotchi import set_pet_page
 from app.services.tamagotchi import TamagotchiService

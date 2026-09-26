@@ -9,7 +9,6 @@
 """
 from __future__ import annotations
 
-import datetime as dt
 import time
 from typing import Any
 
@@ -75,7 +74,6 @@ async def _try_redis() -> Any:
     Ошибки команд (например, ResponseError от старого сервера) логируются
     один раз на тип ошибки, чтобы не спамить в лог при каждом апдейте.
     """
-    global redis_client
     if redis_client is None:
         return None
     try:

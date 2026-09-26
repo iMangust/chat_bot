@@ -11,14 +11,11 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import datetime as dt
 from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import func, select
-import pytest_asyncio
 from aiogram.enums import ChatType
-from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, Chat, Message, User
 
 from app.config import get_settings
@@ -268,7 +265,6 @@ class TestAccessGate:
     def test_subscribe_cache_positive_only(self, monkeypatch):
         st = get_settings()
         monkeypatch.setattr(st, "channel_username", "testchan")
-        from app.middlewares import gate
         bot = FakeBot(("member", "left"))
         assert asyncio.run(is_channel_subscribed(bot, 123)) is True
         assert asyncio.run(is_channel_subscribed(bot, 123)) is True  # из кэша
@@ -641,7 +637,6 @@ class TestCommandScope:
     async def test_commands_private_scope_only(self, tmp_path, monkeypatch):
         """on_startup ставит команды с scope AllPrivateChats и очищает
         глобальный/групповые scope'ы — в группах меню «/» должно быть пусто."""
-        import os as _os
 
         monkeypatch.setenv("BOT_TOKEN", "123:fake-token-for-test")
         monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{tmp_path/'t.db'}")

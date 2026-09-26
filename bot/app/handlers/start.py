@@ -8,7 +8,6 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 import html as _html  # noqa: E402  (экран имён в HTML-текстах)
 from sqlalchemy.ext.asyncio import AsyncSession
-from loguru import logger
 
 from app.db.models import Pet, PetSpecies
 from app.db.repositories import PetRepository, UserRepository

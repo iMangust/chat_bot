@@ -12,7 +12,6 @@ Callback-данные страниц: ``<prefix>:page:<n>`` — обработч
 from __future__ import annotations
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 PAGE_SIZE = 6          # максимум действий на страницу
 NAV_ROW = "◀️"         # символ строки навигации

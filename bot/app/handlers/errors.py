@@ -14,7 +14,7 @@ from typing import Any
 
 from aiogram import BaseMiddleware, Router
 from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError
-from aiogram.types import CallbackQuery, TelegramObject
+from aiogram.types import CallbackQuery
 from loguru import logger
 
 error_router = Router(name="errors")

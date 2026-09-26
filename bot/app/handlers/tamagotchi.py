@@ -12,7 +12,6 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
-from loguru import logger
 
 from app.db.models import Pet
 from app.db.repositories import PetRepository, UserRepository
@@ -27,6 +26,10 @@ from app.services.tamagotchi import (SPECIES_DATA, TamagotchiService, _aware,
 
 router = Router(name="tamagotchi")
 _aware_dt = _aware  # алиас: walk_until из БД может быть naive (SQLite) — нормализуем
+
+# Контекст двухшагового подтверждения «усыновить нового» (u_id -> {stage, pet_id}).
+# In-memory по дизайну: состояние живёт между двумя нажатиями одной кнопки.
+_ADOPT_CTX: dict[int, dict] = {}
 
 
 async def _get_pet(session: AsyncSession, tg_id: int) -> Pet | None:

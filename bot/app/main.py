@@ -18,8 +18,8 @@ from sqlalchemy import inspect as sa_inspect
 from app.config import get_settings
 from app.db.models import Base
 from app.db.session import DbMiddleware, engine, session_factory
-from app.handlers import (admin, arena, errors, games, merch, settings, shop,
-                          social, start, stats, tamagotchi, tracker, welcome)
+from app.handlers import (admin, arena, errors, games, merch, shop, social,
+                          start, stats, tamagotchi, tracker, welcome)
 from app.middlewares.gate import AccessGateMiddleware
 from app.middlewares.throttle import ThrottleMiddleware
 from app.handlers.shop import seed_items

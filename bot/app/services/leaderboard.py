@@ -6,7 +6,6 @@ leaderboards_snapshot и выдаёт призёрам монеты/XP + уве�
 """
 from __future__ import annotations
 
-import json
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import Integer, func, select
@@ -207,7 +206,6 @@ async def snapshot_weekly(session: AsyncSession,
     this_monday = (now - timedelta(days=now.weekday())).replace(
         hour=0, minute=0, second=0, microsecond=0)
     week_start = this_monday - timedelta(days=7)
-    week_end = this_monday
 
     marker_key = f"last_week_award:{week_start.date().isoformat()}"
     # Идемпотентность: маркер храним в снапшоте (category='weekly_award'),

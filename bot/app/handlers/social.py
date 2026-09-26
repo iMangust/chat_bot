@@ -11,8 +11,8 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Pet
-from app.db.repositories import AchievementRepository, PetRepository, UserRepository
-from app.keyboards.inline import back_to_main, main_menu
+from app.db.repositories import PetRepository
+from app.keyboards.inline import back_to_main
 from app.services.achievements import AchievementService
 from app.services.pet_social import (MAX_FRIENDS, list_friends, make_friends,
                                      render_friend_list, suggest_friend)

@@ -27,7 +27,6 @@ from loguru import logger
 
 from app.config import get_settings
 from app.db.repositories import UserRepository
-from app.services.achievements import AchievementService
 from app.handlers.start import WELCOME_DM
 from app.keyboards.inline import welcome_start_button
 

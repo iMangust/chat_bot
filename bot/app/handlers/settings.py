@@ -6,7 +6,7 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.repositories import NotificationRepository, UserRepository
+from app.db.repositories import NotificationRepository
 from app.keyboards.inline import back_to_main, main_menu, settings_keyboard
 from app.services.leaderboard import leaderboard_text, snapshot_weekly
 from app.utils.safe_edit import safe_edit_or_answer

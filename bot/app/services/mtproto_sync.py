@@ -32,8 +32,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import os
-import re
 import sys
 
 from loguru import logger

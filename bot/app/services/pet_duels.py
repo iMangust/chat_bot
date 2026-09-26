@@ -25,7 +25,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Pet, PetDuel, User
-from app.i18n import tf
 from app.services.notifications import queue_notification
 from app.utils.html_text import esc
 
@@ -158,9 +157,7 @@ async def fight(session: AsyncSession, pet: Pet) -> dict:
 
 async def arena_screen(session: AsyncSession, tg_id: int) -> tuple[str, object]:
     """Текст арены недели + клавиатура (кнопка «⚔️ Вызов» с учётом кулдауна)."""
-    from aiogram.types import InlineKeyboardMarkup
     from app.keyboards.inline import arena_keyboard
-    from app.utils.html_text import esc
 
     wk = week_key()
     rows = await weekly_top(session, wk, 10)

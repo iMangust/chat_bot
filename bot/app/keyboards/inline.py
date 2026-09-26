@@ -267,8 +267,7 @@ def top_tabs(active: str = "week", section: str = "talk") -> InlineKeyboardMarku
     keys = [k for k, _ in TOP_SECTIONS]
     idx = keys.index(section) if section in keys else 0
     n = len(keys)
-    period_keys = list(TOP_SECTION_PERIODS := ("day", "week", "all"))
-    p_idx = period_keys.index(active) if active in period_keys else 1
+    period_keys = ["day", "week", "all"]
     b = InlineKeyboardBuilder()
     for key in period_keys:
         label = {"day": "📅 День", "week": "🗓 Неделя", "all": "♾ Всё время"}[key]

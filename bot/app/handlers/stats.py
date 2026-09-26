@@ -5,14 +5,12 @@ import html
 from datetime import datetime, timedelta, timezone
 
 from aiogram import F, Router
-from aiogram.types import BufferedInputFile, CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.repositories import ActivityRepository, UserRepository
+from app.db.repositories import UserRepository
 from aiogram.filters import Command
-from sqlalchemy import select
 
-from app.db.models import ChatMessageLog
 from app.keyboards.inline import (achievements_list, back_to_main, main_menu,
                                   top_tabs)
 from app.services.leaderboard import (overall_top, top_emotional, top_karma,
@@ -114,7 +112,7 @@ def _render_achievements(items, page: int = 0, page_size: int = 8) -> tuple[str,
     chunk = items[page * page_size:(page + 1) * page_size]
 
     unlocked_count = sum(1 for a, ur in items if ur and ur.unlocked_at)
-    lines = [f"🏆 <b>Достижения</b>\n", f"Открыто: {unlocked_count}/{len(items)}\n"]
+    lines = ["🏆 <b>Достижения</b>\n", f"Открыто: {unlocked_count}/{len(items)}\n"]
     for a, ur in chunk:
         progress = ur.progress if ur else 0
         done = bool(ur and ur.unlocked_at)
@@ -167,7 +165,6 @@ async def _top_section(session: AsyncSession, period: str, section: str) -> str:
     now = datetime.now(timezone.utc)
     since = _since_for(period, now)
     lines = [f"🏅 <b>Топы чата · {PERIODS[period]} · {section_label(section)[0]} {section_label(section)[1]}</b>\n"]
-    my_rank = None
 
     if section == "talk":
         talkers = await top_messages(session, since, 10)
@@ -176,8 +173,6 @@ async def _top_section(session: AsyncSession, period: str, section: str) -> str:
             lines.append("   пока пусто — будь первым! 💬")
         for i, (u, c) in enumerate(talkers, start=1):
             me = " 👈 <i>это ты</i>" if u.tg_id == _TOP_CTX.get("me") else ""
-            if u.tg_id == _TOP_CTX.get("me"):
-                my_rank = i
             lines.append(f"{_medal(i)} {html.escape(u.first_name or '')} — {c} сообщ. (ур. {u.level}){me}")
     elif section == "react":
         reactors = await top_reactions(session, since, 10)

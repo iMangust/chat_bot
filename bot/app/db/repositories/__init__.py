@@ -9,8 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.models import (
-    ChatMessageLog, NotificationSetting, Pet, PetActionLog, ReactionLog,
-    User, UserAchievement, UserStat, utcnow,
+    ChatMessageLog, NotificationSetting, Pet, PetActionLog, PetFriend,
+    ReactionLog, User, UserAchievement, UserStat, utcnow,
 )
 
 
@@ -373,13 +373,11 @@ class PetRepository:
 
     # ---- друзья и соревнование питомцев ----
     async def friends(self, pet_id: int) -> list["PetFriend"]:
-        from app.db.models import PetFriend
         stmt = select(PetFriend).where(PetFriend.pet_id == pet_id)
         return list((await self.session.execute(stmt)).scalars())
 
     async def add_friend(self, pet_id: int, friend_pet_id: int) -> bool:
         """Добавляет дружбу в обе стороны; False — если уже дружат."""
-        from app.db.models import PetFriend
         dup = (await self.session.execute(
             select(PetFriend).where(PetFriend.pet_id == pet_id,
                                     PetFriend.friend_pet_id == friend_pet_id)

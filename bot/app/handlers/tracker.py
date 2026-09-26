@@ -22,8 +22,7 @@ from datetime import timedelta, timezone
 
 from aiogram import Bot, F, Router
 from aiogram.types import (Message, MessageReactionUpdated,
-                           MessageReactionCountUpdated, ReactionTypeEmoji,
-                           User)
+                           MessageReactionCountUpdated, ReactionTypeEmoji)
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 

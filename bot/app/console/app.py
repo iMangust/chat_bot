@@ -13,7 +13,6 @@
 """
 from __future__ import annotations
 
-import asyncio
 import time
 
 from loguru import logger
@@ -23,9 +22,8 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.screen import ModalScreen
-from textual.timer import Timer
-from textual.widgets import (Button, DataTable, Footer, Header, Input, Label,
-                             Log, RichLog, Static, TabbedContent, TabPane)
+from textual.widgets import (Button, DataTable, Footer, Header, Input, RichLog,
+                             Static, TabbedContent, TabPane)
 
 from app.config import __version__, get_settings
 from app.console import settings_io

@@ -169,8 +169,9 @@ async def merch_category(cb: CallbackQuery) -> None:
     products = _items_by_cat().get(code, [])
     if not products:
         await safe_edit_or_answer(
-            cb.message, f"{icon} <b>{html.escape(title)}</b>\n\nПока пусто — скоро новинки!",
-            reply_markup=_back_kb("menu:merch", f"⬅️ К категориям").as_markup())
+            cb.message, f"{icon} <b>{html.escape(title)}</b>\n\n"
+                        "Пока пусто — скоро новинки!",
+            reply_markup=_back_kb("menu:merch", "⬅️ К категориям").as_markup())
         return await cb.answer()
     # витрина категории листается (≤6 товаров на страницу);
     # страница зашита в callback: merch:page:<n>:<code>.

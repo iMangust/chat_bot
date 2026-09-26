@@ -22,7 +22,7 @@ from loguru import logger
 
 from app.config import get_settings
 from app.db.models import ChatMessageLog, User
-from app.db.repositories import AchievementRepository, ActivityRepository, UserRepository
+from app.db.repositories import ActivityRepository, UserRepository
 from app.services.achievements import AchievementService
 from app.utils.html_text import esc
 from app.utils.redis import set_cooldown

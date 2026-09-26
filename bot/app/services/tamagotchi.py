@@ -452,9 +452,8 @@ class TamagotchiService:
         roll = random.random()
         sp = _species(pet)
         # Хэллоуин и пр.: прогулки находят ×N монет; xp по празднику тоже множится
-        hol = holiday_effect_mults(now_dt := datetime.now(timezone.utc))
+        hol = holiday_effect_mults(datetime.now(timezone.utc))
         coin_mult = sp["bonus"]["coin_mult"] * hol.get("walk_coins", 1.0)
-        xp_hol = hol.get("xp", 1.0)
         xp_mult = sp["bonus"]["xp_mult"]
         pref_bonus = species_pref_delta(pet, "walk")  # собаки обожают гулять
         if roll < 0.35:

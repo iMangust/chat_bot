@@ -9,11 +9,9 @@ from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
-from loguru import logger
 
 from app.db.repositories import PetRepository, UserRepository
-from app.i18n import t
-from app.keyboards.inline import back_to_main, pet_hub, style_keyboard
+from app.keyboards.inline import style_keyboard
 from app.handlers.tamagotchi import set_pet_page
 from app.services.pet_duels import arena_screen, fight
 from app.services.tamagotchi import TamagotchiService

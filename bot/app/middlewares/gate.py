@@ -275,7 +275,7 @@ class AccessGateMiddleware(BaseMiddleware):
         exempt = isinstance(event, Message) and _is_entry_command(event)
         if not exempt and not subscribed:
             text = ("🔒 Бот доступен только подписчикам канала.\n\n"
-                    f"📢 Подпишись — и возвращайся, я жду!\n"
+                    "📢 Подпишись — и возвращайся, я жду!\n"
                     "После подписки нажми «Проверить» или отправь /start.")
             if isinstance(event, CallbackQuery):
                 await event.answer("Сначала подпишись на канал 📢", show_alert=True)
