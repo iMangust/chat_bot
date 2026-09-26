@@ -20,7 +20,7 @@ from app.services.tamagotchi import SPECIES_DATA
 from app.utils.formatting import progress_bar, xp_needed_for_level
 from app.utils.safe_edit import safe_edit_or_answer
 from app.config import get_settings
-from app.middlewares.gate import is_channel_subscribed, subscribe_kb
+from app.middlewares.gate import is_channel_subscribed, reset_subscribe_cache, subscribe_kb
 
 router = Router(name="start")
 
@@ -184,6 +184,7 @@ async def cmd_start(message: Message, state: FSMContext, session: AsyncSession,
 @router.callback_query(F.data == "gate:check")
 async def cb_gate_check(cb: CallbackQuery, bot: Bot, session: AsyncSession) -> None:
     """«Я подписался — проверить»: после успешной проверки сразу в меню."""
+    reset_subscribe_cache(cb.from_user.id)  # жмём «проверить» — игнорируем старый кэш
     if not await is_channel_subscribed(bot, cb.from_user.id):
         await cb.answer("Подписка не найдена 😔 Проверь, что ты в канале", show_alert=True)
         return

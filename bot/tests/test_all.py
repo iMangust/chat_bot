@@ -176,10 +176,13 @@ def monkeypatched(obj, **attrs):
 class FakeBot:
     id = 999
 
-    def __init__(self, statuses=("member",)):
+    def __init__(self, statuses=("member",), raise_exc=None):
         self._statuses = list(statuses)
+        self._raise = raise_exc
 
     async def get_chat_member(self, chat_id, user_id):
+        if self._raise is not None:
+            raise self._raise
         status = self._statuses.pop(0) if self._statuses else "member"
         return SimpleNamespace(status=status)
 
@@ -213,6 +216,8 @@ class TestAccessGate:
     def setup_method(self):
         from app.middlewares import gate
         gate._pos_cache.clear()
+        gate._neg_cache.clear()
+        gate._warned_no_admin.clear()
 
     def test_group_message_not_answered(self, monkeypatch):
         # команда в группе: гейт не пропускает её к командным хендлерам,
@@ -267,6 +272,58 @@ class TestAccessGate:
         assert asyncio.run(is_channel_subscribed(bot, 123)) is True
         assert asyncio.run(is_channel_subscribed(bot, 123)) is True  # из кэша
         assert asyncio.run(is_channel_subscribed(bot, 456)) is False  # без кэша — API
+
+    def test_failopen_on_api_error(self, monkeypatch):
+        """Сбой Telegram API не должен «глушить» бота в ЛС."""
+        from aiogram.exceptions import TelegramAPIError
+        st = get_settings()
+        monkeypatch.setattr(st, "channel_username", "testchan")
+        exc = TelegramAPIError(method="getChatMember", message="502 Bad Gateway")
+        m = _message(_private_chat(), text="привет")
+        result, _, answers = asyncio.run(_run_gate(m, bot=FakeBot(raise_exc=exc)))
+        assert result == "handled", "при ошибке API доступ разрешён (fail-open)"
+        assert not answers, "заглушка «🔒» показываться не должна"
+
+    @pytest.mark.asyncio
+    async def test_failopen_and_admin_notice_when_bot_not_admin(self, monkeypatch):
+        """Forbidden (бот не админ канала) => fail-open + разовый тост админу."""
+        from aiogram.exceptions import TelegramForbiddenError
+        st = get_settings()
+        monkeypatch.setattr(st, "channel_username", "testchan")
+        monkeypatch.setattr(st, "admin_ids", [777])
+        sent = []
+
+        class NotAdminBot(FakeBot):
+            async def get_chat_member(self, chat_id, user_id):
+                raise TelegramForbiddenError(method="getChatMember",
+                                             message="403: bot must be an administrator")
+            async def send_message(self, chat_id, text, **kw):
+                sent.append((chat_id, text))
+                return SimpleNamespace(message_id=1)
+
+        bot = NotAdminBot()
+        m = _message(_private_chat(), text="привет")
+        result, _, _ = await _run_gate(m, bot=bot)
+        assert result == "handled", "без прав админа канала бот обязан оставаться отзывчивым"
+        await asyncio.sleep(0.01)  # дать ensure_future отработать
+        assert sent and sent[0][0] == 777 and "администратор" in sent[0][1]
+
+        m2 = _message(_private_chat(), text="ещё")
+        result2, _, _ = await _run_gate(m2, bot=bot)
+        assert result2 == "handled"
+        await asyncio.sleep(0.01)
+        assert len(sent) == 1, "предупреждение админу — однократное на канал"
+
+    def test_negative_result_short_cached_and_resettable(self, monkeypatch):
+        st = get_settings()
+        monkeypatch.setattr(st, "channel_username", "testchan")
+        from app.middlewares import gate
+        gate.reset_subscribe_cache()
+        bot = FakeBot(("left",))
+        assert asyncio.run(is_channel_subscribed(bot, 321)) is False
+        assert asyncio.run(is_channel_subscribed(bot, 321)) is False  # из короткого кэша
+        gate.reset_subscribe_cache(321)                               # «проверить» сбрасывает
+        assert asyncio.run(is_channel_subscribed(FakeBot(("member",)), 321)) is True
 
     def test_commands_private_only(self):
         """Каждый командный хендлер ограничен приватными чатами."""
