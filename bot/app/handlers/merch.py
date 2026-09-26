@@ -112,6 +112,7 @@ def _find(idx_str: str) -> dict | None:
 # ---------------------------------------------------------------------------
 
 def _back_kb(target: str, label: str = "⬅️ Назад") -> InlineKeyboardBuilder:
+    """Одна кнопка возврата (для экранов «пусто» и финальных)."""
     b = InlineKeyboardBuilder()
     b.button(text=label, callback_data=target)
     return b
@@ -153,7 +154,6 @@ def _category_kb(buttons: list[InlineKeyboardButton], code: str,
         b2.button(text="▶️", callback_data=f"merch:page:{(page + 1) % total_pages}:{code}")
         b2.row()
     b2.button(text="⬅️ К категориям", callback_data="menu:merch")
-    b2.button(text="🏠 Меню", callback_data="menu:main")
     return b2.as_markup()
 
 
@@ -212,7 +212,7 @@ async def merch_item(cb: CallbackQuery) -> None:
     b.button(text="✅ Заказать", callback_data=f"merch:buy:{cb.data.split(':')[1]}")
     b.row()
     b.button(text="⬅️ К товарам", callback_data=f"merch:cat:{it['cat']}")
-    b.button(text="🧢 Категории", callback_data="menu:merch")
+    b.button(text="🏠 Меню", callback_data="menu:main")
     await safe_edit_or_answer(cb.message, text, reply_markup=b.as_markup())
     await cb.answer()
 
@@ -250,6 +250,9 @@ async def merch_buy(cb: CallbackQuery, session) -> None:
         b.button(text="💬 Написать менеджеру", url=settings.merch_url)
         b.row()
     b.button(text="⬅️ Назад к товару", callback_data=f"merch:item:{cb.data.split(':')[1]}")
+    b.row()
+    b.button(text="🧢 Категории", callback_data="menu:merch")
+    b.button(text="🏠 Меню", callback_data="menu:main")
     await cb.message.answer(
         f"✅ Заказ <b>№{order_id}</b> принят!\n"
         f"{it['icon']} {html.escape(it['name'])} — {it['price']:,} ₽\n\n"

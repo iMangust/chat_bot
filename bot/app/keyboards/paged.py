@@ -3,8 +3,8 @@
 Единый стандарт для всех экранов с большим числом кнопок:
 * до ``PAGE_SIZE`` (6) содержательных кнопок на страницу;
 * layout 2 кнопки в ряд (длинные подписи — по одной, чтобы не резались);
-* строка навигации ◀️ · «Название 📖 i/n» · ▶️ (перехлёст зацикливается);
-* фиксированный нижний ряд ⬅️ Назад (+ опциональные 🏠 Меню / внешняя ссылка).
+* 4-й ряд — страницы: ◀️ · «Название 📖 i/n» · ▶️ (перехлёст зацикливается);
+* фиксированный нижний ряд — ОДНА кнопка выхода 🏠 Меню (без дублей «Назад»).
 
 Callback-данные страниц: ``<prefix>:page:<n>`` — обработчик экрана принимает
 необязательный параметр ``page`` и перерендеривает себя (см. shop/merch/stats).
@@ -49,7 +49,6 @@ def paged_keyboard(
     page: int = 0,
     page_size: int = PAGE_SIZE,
     back_cb: str | None = "menu:main",
-    back_label: str = "⬅️ Назад",
     home_cb: str | None = None,
     url_button: InlineKeyboardButton | None = None,
 ) -> tuple[InlineKeyboardMarkup, int]:
@@ -89,28 +88,27 @@ def paged_keyboard(
 
     kb_rows: list[list[InlineKeyboardButton]] = [list(r) for r in pages[page]]
 
-    # --- навигация -----------------------------------------------------
+    # --- строка страниц (4-й ряд): ◀️ · i/n · ▶️ -------------------------
+    # Единая стилистика v1.5.3: «Назад» — это ◀️/▶️ по страницам; выход с
+    # экрана — одна кнопка 🏠 Меню в самом низу (без дублей).
     prev_cb = f"{prefix}:page:{(page - 1) % total}"
     next_cb = f"{prefix}:page:{(page + 1) % total}"
     label = f"{title} 📖 {page + 1}/{total}".strip() if total > 1 else title.strip()
-    nav: list[InlineKeyboardButton] = []
     if total > 1:
-        nav.append(InlineKeyboardButton(text="◀️ Назад", callback_data=prev_cb))
-        nav.append(InlineKeyboardButton(text=label or "📖", callback_data=f"{prefix}:noop"))
-        nav.append(InlineKeyboardButton(text="Вперёд ▶️", callback_data=next_cb))
+        kb_rows.append([
+            InlineKeyboardButton(text="◀️", callback_data=prev_cb),
+            InlineKeyboardButton(text=label or f"📖 {page + 1}/{total}",
+                                 callback_data=f"{prefix}:noop"),
+            InlineKeyboardButton(text="▶️", callback_data=next_cb),
+        ])
     elif label:
-        nav.append(InlineKeyboardButton(text=label, callback_data=f"{prefix}:noop"))
-    if nav:
-        kb_rows.append(nav)
+        kb_rows.append([InlineKeyboardButton(text=label,
+                                             callback_data=f"{prefix}:noop")])
 
-    # --- фиксированный низ ---------------------------------------------
-    footer: list[InlineKeyboardButton] = []
-    if back_cb:
-        footer.append(InlineKeyboardButton(text=back_label, callback_data=back_cb))
-    if home_cb and home_cb != back_cb:
-        footer.append(InlineKeyboardButton(text="🏠 Меню", callback_data=home_cb))
+    # --- фиксированный низ: одна кнопка выхода --------------------------
     if url_button is not None:
         kb_rows.append([url_button])
-    if footer:
-        kb_rows.append(footer)
+    exit_cb = home_cb or back_cb
+    if exit_cb:
+        kb_rows.append([InlineKeyboardButton(text="🏠 Меню", callback_data=exit_cb)])
     return InlineKeyboardMarkup(inline_keyboard=kb_rows), page

@@ -1,7 +1,7 @@
 """Хендлеры /start, онбординг (имя питомца), главное меню."""
 from __future__ import annotations
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.filters import CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -20,6 +20,7 @@ from app.services.tamagotchi import SPECIES_DATA
 from app.utils.formatting import progress_bar, xp_needed_for_level
 from app.utils.safe_edit import safe_edit_or_answer
 from app.config import get_settings
+from app.middlewares.gate import is_channel_subscribed, subscribe_kb
 
 router = Router(name="start")
 
@@ -140,11 +141,36 @@ async def cmd_start(message: Message, state: FSMContext, session: AsyncSession,
             reply_markup=welcome_start_button(),
         )
         return
+    # не подписан на канал — взаимодействовать нельзя (правило гейта; здесь
+    # показываем мягкую заглушку вместо молчания)
+    if not await is_channel_subscribed(message.bot, message.from_user.id):
+        await message.answer(
+            "🔒 Бот доступен только подписчикам канала.\n\n"
+            "📢 Подпишись — и возвращайся, я жду!\n"
+            "После подписки нажми «Проверить» или отправь /start.",
+            reply_markup=subscribe_kb())
+        return
     link = invite_link_for(user.tg_id)
     reward = get_settings().invite_reward_coins
     text = _main_menu_text(user)
     await message.answer(text, reply_markup=main_menu(link=link, reward=reward),
                        parse_mode="HTML")
+
+
+@router.callback_query(F.data == "gate:check")
+async def cb_gate_check(cb: CallbackQuery, bot: Bot, session: AsyncSession) -> None:
+    """«Я подписался — проверить»: после успешной проверки сразу в меню."""
+    if not await is_channel_subscribed(bot, cb.from_user.id):
+        await cb.answer("Подписка не найдена 😔 Проверь, что ты в канале", show_alert=True)
+        return
+    users = UserRepository(session)
+    user = await users.get_or_create(cb.from_user.id, cb.from_user.first_name or "",
+                                     cb.from_user.username)
+    await safe_edit_or_answer(
+        cb.message, _main_menu_text(user),
+        reply_markup=main_menu(link=invite_link_for(user.tg_id),
+                               reward=get_settings().invite_reward_coins))
+    await cb.answer("Ура, добро пожаловать! 🎉")
 
 
 @router.callback_query(F.data == "onb:start")

@@ -3,8 +3,8 @@
 Сценарий:
 1. Бот видит новых участников в отслеживаемой группе.
 2. Пытается отправить каждому в ЛС персональное приветствие с кнопкой «Начать».
-3. Если ЛС закрыты (TelegramForbiddenError) — упоминает новичка в группе
-   с просьбой написать боту /start.
+3. Если ЛС закрыты (TelegramForbiddenError) — новичок увидит подсказку
+   только у себя (в группу бот не пишет ничего).
 
 Реферал: награда пригласившему начисляется ОДНО место — в ActivityService
 при первой засчитанной активности новичка (см. services/activity.py,
@@ -85,14 +85,8 @@ async def on_new_members(message: Message, bot: Bot, session: AsyncSession) -> N
         except TelegramAPIError as e:
             logger.error("failed to welcome {}: {}", member.id, e)
 
-    if greeters and message.chat.type == "supergroup":
-        names = ", ".join(greeters)
-        await message.answer(
-            f"🎉 Добро пожаловать, {names}!\n"
-            f"Я бот-компаньон: за активность тут дают XP, монеты и достижения, "
-            f"а ещё можно завести питомца. Проверь личные сообщения от меня 🐾",
-            parse_mode="HTML",
-        )
+    # В группы/каналы бот ничего не пишет (правило v1.5.3): приветствие —
+    # только в ЛС; тем, кто закрыл ЛС, видна подсказка написать /start сами.
 
 
 def _channel_line_safe() -> str:

@@ -35,16 +35,19 @@ def test_page_clamped_and_wraps():
     kb, page = paged_keyboard(_btns(15), prefix="x", title="🧰", page=99)
     assert page == 2                       # clamp к последней странице
     nav_texts = {b.text: b.callback_data for b in _flat(kb)}
-    assert nav_texts.get("Вперёд ▶️") == "x:page:0"   # зацикление
-    assert nav_texts.get("◀️ Назад") == "x:page:1"
+    assert nav_texts.get("▶️") == "x:page:0"   # зацикление
+    assert nav_texts.get("◀️") == "x:page:1"
 
 
-def test_footer_back_home_url():
+def test_footer_home_url():
     url = InlineKeyboardButton(text="🌐 Сайт", url="https://example.com")
     kb, _ = paged_keyboard(_btns(2), prefix="x", back_cb="menu:pet",
                            home_cb="menu:main", url_button=url)
     texts = [b.text for b in _flat(kb)]
-    assert "⬅️ Назад" in texts and "🏠 Меню" in texts and "🌐 Сайт" in texts
+    # единая стилистика v1.5.3: одна кнопка выхода 🏠 Меню (без дубля «⬅️ Назад»)
+    assert "🏠 Меню" in texts and "🌐 Сайт" in texts
+    assert sum(1 for t in texts if t == "🏠 Меню") == 1
+    assert not any(t.startswith("⬅️") for t in texts)
 
 
 def test_long_labels_get_own_row():
@@ -100,19 +103,20 @@ def test_pet_hub_arrows_are_labeled():
     from app.keyboards.inline import pet_hub
     kb = pet_hub(0)
     texts = [b.text for b in _flat(kb)]
-    assert any(t.startswith("◀️ ") for t in texts)
-    assert any(t.endswith(" ▶️") for t in texts)
+    assert "◀️" in texts and "▶️" in texts
 
 
 def test_achievements_arrows_labeled():
     from app.keyboards.inline import achievements_list
     kb = achievements_list([], page=0, total_pages=3)
     texts = [b.text for b in _flat(kb)]
-    assert "◀️ Новее" in texts and "Старше ▶️" in texts
+    assert "◀️" in texts and "▶️" in texts
+    assert any("📖 1/3" in t for t in texts)
 
 
 def test_top_tabs_arrows_labeled():
     from app.keyboards.inline import top_tabs
     kb = top_tabs("week", "talk")
     texts = [b.text for b in _flat(kb)]
-    assert "◀️ Раздел" in texts and "Раздел ▶️" in texts
+    assert "◀️" in texts and "▶️" in texts
+    assert any("📖" in t for t in texts)

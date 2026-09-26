@@ -136,11 +136,9 @@ async def shop_screen(cb: CallbackQuery, session: AsyncSession) -> None:
             callback_data=f"buy:{it.id}")
         for it in chunk
     ]
-    settings = get_settings()
     kb, page = paged_keyboard(
         buttons, prefix="shop", title="🛒 Магазин", page=page,
         back_cb="menu:main",
-        home_cb="menu:merch" if settings.merch_enabled else None,
     )
     await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=kb)
     await cb.answer()

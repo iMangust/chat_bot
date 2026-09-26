@@ -18,8 +18,9 @@ from sqlalchemy import inspect as sa_inspect
 from app.config import get_settings
 from app.db.models import Base
 from app.db.session import DbMiddleware, engine, session_factory
-from app.handlers import (arena, errors, games, merch, settings, shop, social,
-                          start, stats, tamagotchi, tracker, welcome)
+from app.handlers import (arena, errors, games, merch, settings, shop,
+                          social, start, stats, tamagotchi, tracker, welcome)
+from app.middlewares.gate import AccessGateMiddleware
 from app.middlewares.throttle import ThrottleMiddleware
 from app.handlers.shop import seed_items
 from app.services.achievements import seed_achievements
@@ -217,6 +218,11 @@ async def main() -> None:
     dp = Dispatcher(storage=storage)
     # мидлвары: сессия БД — глобально, throttle — только на callbacks
     dp.update.outer_middleware(DbMiddleware())
+    # Глобальный доступ: только ЛС + только подписчики канала (v1.5.3).
+    # Правило «бот молчит в группах/каналах» и проверка подписки — здесь;
+    # пассивный трекер активности (tracker.py) работает поверх этого правила,
+    # потому что регистрируется отдельным фильтром по chat.type.
+    dp.update.outer_middleware(AccessGateMiddleware())
     dp.callback_query.outer_middleware(ThrottleMiddleware())
     # страховка на уровне callback-мидлваров (ошибки до/вне хендлеров:
     # throttle, FSM, БД-сессия) — пользователь получит тост, а не «вечные часы»
