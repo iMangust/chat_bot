@@ -1,0 +1,4 @@
+# Ensure Windows batch files always keep CRLF line endings and are treated
+# as binary-ish text (no eol conversion, no UTF-8 BOM issues on checkout).
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
