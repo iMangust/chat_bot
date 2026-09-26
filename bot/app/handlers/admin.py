@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import asyncio
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.filters import Command, CommandObject
 from aiogram.types import Message
 from loguru import logger
@@ -54,7 +54,7 @@ async def cmd_mtproto_status(message: Message) -> None:
 
 
 @router.message(F.chat.type == "private", Command("syncnow"))
-async def cmd_syncnow(message: Message) -> None:
+async def cmd_syncnow(message: Message, bot: Bot) -> None:
     if not _is_admin(message):
         return
     st = get_settings()
@@ -74,14 +74,10 @@ async def cmd_syncnow(message: Message) -> None:
     # сразу раздаём приветствия из обновлённой очереди
     welcomed = 0
     try:
-        from aiogram import Bot
         from app.db.session import session_factory
         from app.handlers.welcome import welcome_pending_subscribers
-        bot = Bot.get_current()
         async with session_factory() as session:
             welcomed = await welcome_pending_subscribers(bot, session, limit=20)
-    except RuntimeError:
-        pass  # вне контекста бота — разойдутся по скану
     except Exception as exc:  # noqa: BLE001
         logger.warning("/syncnow welcome flush failed: {}", exc)
     await msg.edit_text(

@@ -78,7 +78,23 @@ async def collect_participant_ids() -> list[int]:
             continue
         users = {u.id for u in getattr(full, "participants", []) or []
                  if not getattr(u, "bot", False)}
-        logger.info("MTProto: {} — {} участник(ов)", target, len(users))
+        # v1.5.15: participants в ответе GetFullChannel — ВСЕГДА 0-21 (это не
+        # полный список). Если участников больше — тянем реальный список через
+        # iter_participants (только каналы; для групп full_chat может не быть).
+        total_count = getattr(full, "participants_count", None)
+        if entity is not None and getattr(entity, "megagroup", False) is not True \
+                and total_count and total_count > len(users):
+            try:
+                async for p in client.iter_participants(entity,
+                                                         filter=None,
+                                                         request_size=200):
+                    if not getattr(p, "bot", False):
+                        users.add(p.id)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("MTProto: iter_participants({}) failed: {} "
+                               "(использую частичный список)", target, exc)
+        logger.info("MTProto: {} — {} участник(ов) (в канале всего {})",
+                    target, len(users), total_count if total_count is not None else "?")
         ids |= users
     return sorted(ids)
 

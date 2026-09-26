@@ -65,12 +65,28 @@ class MtprotoClientHolder:
         self._lock = asyncio.Lock()
         self._me: Any | None = None
 
+    async def _authorized(self) -> bool:
+        """Telethon: is_user_authorized() — КОРУТИНА (await обязателен).
+
+        Синхронный вызов давал RuntimeWarning «coroutine was never awaited»
+        и всегда True (bool coroutine-объекта), из-за чего использовался
+        отключённый клиент. v1.5.15: проверяем is_connected() синхронно,
+        авторизацию — только через await.
+        """
+        c = self._client
+        if c is None or not getattr(c, "is_connected", lambda: False)():
+            return False
+        try:
+            return bool(await c.is_user_authorized())
+        except Exception:  # noqa: BLE001
+            return False
+
     async def get(self) -> Any:
         """Подключённый клиент либо RuntimeError с внятной подсказкой."""
-        if self._client is not None and getattr(self._client, "is_user_authorized", lambda: False)():
+        if await self._authorized():
             return self._client
         async with self._lock:
-            if self._client is not None and getattr(self._client, "is_user_authorized", lambda: False)():
+            if await self._authorized():
                 return self._client
             if not telethon_available():
                 raise RuntimeError(
