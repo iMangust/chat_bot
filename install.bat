@@ -41,6 +41,5 @@ if not exist .env (
 echo.
 echo  [OK] Установка завершена.
 echo     Дальше: отредактируйте bot\.env и запустите run.bat
-echo     (или console.bat - если хотите интерфейс с вкладками).
 echo.
 pause

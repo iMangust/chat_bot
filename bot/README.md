@@ -1,7 +1,7 @@
 # 🐾 TamaBot — полная документация
 
 Стек: **Python 3.12 · aiogram 3.x (long polling) · MySQL 8 · SQLAlchemy 2 async ·
-APScheduler · loguru · Textual 8 (TamaConsole)**.
+APScheduler · loguru**.
 Redis опционален (на Windows — Memurai); без него работает in-memory fallback для
 кулдаунов/FSM. Бот полностью русскоязычный (RU-only), весь интерактив — только в ЛС.
 
@@ -293,25 +293,12 @@ run.bat
 Long polling с живыми цветными логами (loguru → консоль + `bot/logs/`). Ctrl+C —
 graceful shutdown (остановка scheduler, закрытие Redis/engine).
 
-### 4.2 console.bat — TamaConsole (Textual)
-```bat
-console.bat          :: эквивалент: cd bot && venv\Scripts\python -m app.console
-```
-Полноэкранное управление без второго окна:
-
-* **📋 Логи** — живой лог с фильтрами и подсветкой уровней;
-* **📊 Дашборд** — аптайм, пользователи/питомцы/сообщения, графики активности;
-* **🗄 БД** — просмотр таблиц и запросы;
-* **⚙️ Настройки** — редактирование `.env` прямо из UI (валидация ключей);
-* **🔍 Пользователи** — поиск по нику/ID, карточки;
-* hotkey `r` — Пуск/Стоп бота из консоли (запуск отдельным процессом, перехват логов).
-
-### 4.3 Кодировка BAT-скриптов
-`install.bat`, `run.bat`, `console.bat` сохранены в **cp1251 (ANSI Russian) с CRLF** —
+### 4.2 Кодировка BAT-скриптов
+`install.bat`, `run.bat` сохранены в **cp1251 (ANSI Russian) с CRLF** —
 требование `cmd.exe`. При редактировании сохранять в cp1251/«Кириллица Windows»
 (Notepad++ → Кодировки → Кириллица → Windows-1251), иначе cmd перестанет понимать скрипты.
 
-### 4.4 Автозапуск (сервис)
+### 4.3 Автозапуск (сервис)
 Рекомендуется NSSM / Task Scheduler: запуск `run.bat` при старте ОС, restart on failure.
 Логи ротятся в `bot/logs/`.
 
@@ -355,7 +342,7 @@ bot/
 │   ├── services/             # tamagotchi, achievements, leaderboard, activity,
 │   │                         # notifications, pet_duels, pet_social, profile_card
 │   ├── tasks/scheduler.py    # APScheduler: decay, отчёты, стрики, арена, скан канала
-│   ├── console/              # TamaConsole (Textual + tamaconsole.tcss)
+│   ├── console/              # livelog + runtime: консольный запуск (run.bat)
 │   └── utils/                # helpers (safe_edit_or_answer и т.п.)
 ├── tests/test_all.py         # единый pytest-сьют
 ├── requirements.txt

@@ -1,13 +1,13 @@
-"""Управляемая из GUI версия жизненного цикла бота.
+"""Управляемая версия жизненного цикла бота (используется livelog / run.bat).
 
-Оболочка (app/console) запускает бота внутри своего asyncio-цикла событий,
+Бот запускается внутри asyncio-цикла событий живого лога (app/console/livelog),
 поэтому сигнальные обработчики не нужны, а статус/логи должны быть доступны
-из UI-потока. Модуль предоставляет:
+вызывающему коду. Модуль предоставляет:
 
 * :class:`BotRuntime` — запуск/остановка aiogram-бота + планировщика;
 * :class:`UiLogHandler` — sink loguru, который буферизует лог-записи и
-  опционально транслирует их в UI через колбэк;
-* глобальный singleton-экземпляр runtime (для панели статуса и вкладок).
+  опционально транслирует их через колбэк;
+* глобальный singleton-экземпляр runtime (для статуса и аптайма).
 """
 from __future__ import annotations
 
@@ -37,16 +37,16 @@ from app.utils.redis import close_redis, init_redis
 
 
 class UiLogHandler:
-    """Sink loguru: буфер последних строк + колбэк в UI.
+    """Sink loguru: буфер последних строк + колбэк слушателю.
 
     Колбэк вызывается синхронно из того же потока, что пишет лог (то есть из
-    event loop'а оболочки), поэтому Textual может принять строку через
+    event loop'а), поэтому принимающая сторона может использовать
     ``call_from_thread`` внутри своего колбэка.
     """
 
     def __init__(self, maxlen: int = 1000) -> None:
         self.buffer: deque[str] = deque(maxlen=maxlen)
-        self._callback = None  # callable(str) -> None; ставится из UI
+        self._callback = None  # callable(str) -> None; ставится слушателем
 
     def set_callback(self, callback) -> None:
         self._callback = callback
