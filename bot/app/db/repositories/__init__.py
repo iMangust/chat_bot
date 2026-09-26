@@ -12,6 +12,7 @@ from app.db.models import (
     ChatMessageLog, NotificationSetting, Pet, PetActionLog, PetFriend,
     ReactionLog, User, UserAchievement, UserStat, utcnow,
 )
+from app.utils.local_time import now as local_now
 
 
 # ---------------------------------------------------------------------------
@@ -430,7 +431,7 @@ class AchievementRepository:
     async def upsert_progress(self, user_id: int, achievement_id: int,
                               progress: int) -> bool:
         """Обновляет прогресс; возвращает True если ачивка ТОЛЬКО ЧТО разблокирована."""
-        now = datetime.now(timezone.utc)
+        now = local_now()
         row = (await self.session.execute(
             select(UserAchievement).where(
                 UserAchievement.user_id == user_id,

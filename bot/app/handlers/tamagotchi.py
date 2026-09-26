@@ -25,6 +25,7 @@ from app.utils.safe_edit import safe_edit_or_answer
 from app.utils.html_text import esc
 from app.services.tamagotchi import (SPECIES_DATA, TamagotchiService, _aware,
                                      _species_key)
+from app.utils.local_time import now as local_now
 
 router = Router(name="tamagotchi")
 _aware_dt = _aware  # алиас: walk_until из БД может быть naive (SQLite) — нормализуем
@@ -70,7 +71,7 @@ def _collect_walk_result(svc: TamagotchiService, pet: Pet, session: AsyncSession
     """
     if pet.walk_until is None:
         return None
-    if datetime.now(timezone.utc) < _aware_dt(pet.walk_until):
+    if local_now() < _aware_dt(pet.walk_until):
         return None   # ещё гуляет
     text, coins, xp = svc.finish_walk_event(pet)
     return text, coins, xp

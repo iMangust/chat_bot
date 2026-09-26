@@ -31,6 +31,7 @@ from loguru import logger
 from app.config import get_settings
 from app.db.repositories import UserRepository
 from app.utils.safe_edit import safe_edit_or_answer
+from app.utils.local_time import now as local_now
 
 router = Router(name="merch")
 
@@ -226,7 +227,7 @@ async def merch_buy(cb: CallbackQuery, session) -> None:
         return await cb.answer("Товар не найден 😅", show_alert=True)
     users = UserRepository(session)
     user = await users.get(cb.from_user.id)
-    order_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    order_id = local_now().strftime("%Y%m%d%H%M%S")
     record = {
         "order_id": order_id,
         "tg_id": cb.from_user.id,

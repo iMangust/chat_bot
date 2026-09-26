@@ -20,6 +20,7 @@ from app.services.activity import ActivityService
 from app.services.achievements import AchievementService
 from app.utils.formatting import progress_bar, xp_needed_for_level
 from app.utils.safe_edit import safe_edit_or_answer
+from app.utils.local_time import now as local_now
 
 router = Router(name="stats")
 
@@ -162,7 +163,7 @@ def _since_for(period: str, now) -> datetime | None:
 async def _top_section(session: AsyncSession, period: str, section: str) -> str:
     """Один раздел топа: все номинации выводятся по одной на страницу
     навигации (топ был единым длинным сообщением)."""
-    now = datetime.now(timezone.utc)
+    now = local_now()
     since = _since_for(period, now)
     lines = [f"🏅 <b>Топы чата · {PERIODS[period]} · {section_label(section)[0]} {section_label(section)[1]}</b>\n"]
 

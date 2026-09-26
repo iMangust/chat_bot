@@ -132,6 +132,14 @@ _LIGHT_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "channel_subscribers": [
         ("welcome_sent_chat_id", "BIGINT"),
     ],
+    # сон/разбужение: время засыпания питомца (честный расчёт накопленной
+    # энергии при принудительном пробуждении). create_all НЕ добавляет
+    # колонки в существующие таблицы — без лёгкой миграции живая БД падала
+    # с OperationalError (1054 Unknown column 'sleep_started_at') на любой
+    # странице питомца.
+    "pets": [
+        ("sleep_started_at", "DATETIME"),
+    ],
 }
 
 

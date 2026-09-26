@@ -15,8 +15,7 @@ from sqlalchemy import select
 from loguru import logger
 
 from app.config import get_settings
-from app.db.models import (NotificationQueue, NotificationSetting, Pet, User,
-                           utcnow)
+from app.db.models import (NotificationQueue, NotificationSetting, Pet, User)
 from app.db.repositories import ActivityRepository
 from app.db.session import session_factory
 from app.services.leaderboard import snapshot_weekly
@@ -26,6 +25,7 @@ from app.services.notifications import (build_daily_report, build_pet_sad_text,
 from app.services.pet_social import list_friends
 from app.services.tamagotchi import TamagotchiService, compute_mood
 from app.utils.redis import acquire_lock, release_lock
+from app.utils.local_time import now as local_now
 
 
 async def decay_all_pets(bot: Bot) -> None:
@@ -45,7 +45,7 @@ async def decay_all_pets(bot: Bot) -> None:
                 friends = await list_friends(session, pet.id)
                 if friends:
                     day_key = "friend_bonus_day"
-                    today = utcnow().date().isoformat()
+                    today = local_now().date().isoformat()
                     extra = pet.settings_extra or {}
                     if extra.get(day_key) != today:
                         pet.happiness = min(100.0, pet.happiness + len(friends))
@@ -77,7 +77,7 @@ async def flush_notifications(bot: Bot) -> None:
     if not await acquire_lock("notify_flush", ttl_sec=50):
         return
     try:
-        now = datetime.now(timezone.utc)
+        now = local_now()
         async with session_factory() as session:
             rows = list((await session.execute(
                 select(NotificationQueue).where(
@@ -111,7 +111,7 @@ async def check_streak_expiry(bot: Bot) -> None:
     if not await acquire_lock("streak_check", ttl_sec=3600):
         return
     try:
-        now = datetime.now(timezone.utc)
+        now = local_now()
         yesterday = (now - timedelta(days=1)).date()
         async with session_factory() as session:
             users = list((await session.execute(
@@ -161,7 +161,7 @@ async def daily_reports(bot: Bot) -> None:
             )).scalars())
             off = await _flagged_users(session, "daily_report")
             repo = ActivityRepository(session)
-            now = utcnow()
+            now = local_now()
             day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
             sent = 0
             for u in users:
@@ -190,7 +190,7 @@ async def evening_streak_warnings(bot: Bot) -> None:
         return
     try:
         async with session_factory() as session:
-            now = utcnow()
+            now = local_now()
             day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
             users = list((await session.execute(
                 select(User).where(User.streak_days > 0, User.onboarded.is_(True))
@@ -364,5 +364,5 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
         sched.add_job(mtproto_delta_sync, "interval", minutes=st.mtproto_sync_minutes,
                       args=[bot],
                       id="mtproto_sync", max_instances=1, coalesce=True,
-                      next_run_time=datetime.now(timezone.utc) + timedelta(seconds=90))
+                      next_run_time=local_now() + timedelta(seconds=90))
     return sched

@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import Pet, PetDuel, User
 from app.services.notifications import queue_notification
 from app.utils.html_text import esc
+from app.utils.local_time import now as local_now
 
 DUEL_XP_WIN = 12
 DUEL_XP_LOSS = 3
@@ -40,7 +41,7 @@ WEEKLY_PRIZES = {1: 300, 2: 150, 3: 75}
 def week_key(dt: datetime | None = None) -> str:
     """ISO-ключ текущей недели: '2026-W39' (сброс очков происходит сам собой —
     новая неделя = новая строка PetDuel)."""
-    dt = dt or datetime.now(timezone.utc)
+    dt = dt or local_now()
     y, w, _ = dt.isocalendar()
     return f"{y}-W{w:02d}"
 
@@ -96,7 +97,7 @@ async def pick_opponent(session: AsyncSession, pet: Pet) -> Pet | None:
 
 def duel_cooldown_left(pet: Pet, now=None) -> int:
     """Секунд до конца кулдауна боя (0 — можно драться)."""
-    now = now or datetime.now(timezone.utc)
+    now = now or local_now()
     last = (pet.settings_extra or {}).get("duel_last_ts")
     if not last:
         return 0
@@ -111,7 +112,7 @@ def duel_cooldown_left(pet: Pet, now=None) -> int:
 
 async def fight(session: AsyncSession, pet: Pet) -> dict:
     """Проводит один бой. Возвращает результат для экрана или причину отказа."""
-    now = datetime.now(timezone.utc)
+    now = local_now()
     wk = week_key(now)
     my = await get_or_create_row(session, pet.id, wk)
     # суточный лимит считаем по счётчику дня в settings_extra (без новой таблицы)
@@ -170,7 +171,7 @@ async def arena_screen(session: AsyncSession, tg_id: int) -> tuple[str, object]:
     hint = ""
     if pet is not None:
         extra = pet.settings_extra or {}
-        today = datetime.now(timezone.utc).date().isoformat()
+        today = local_now().date().isoformat()
         left = extra.get("duel_count", 0) if extra.get("duel_day") == today else 0
         if DAILY_FIGHT_LIMIT - left <= 0:
             can_fight = False
@@ -200,7 +201,7 @@ async def weekly_top(session: AsyncSession, wk: str | None = None,
 async def finish_week(session: AsyncSession, prev_week: str | None = None) -> bool:
     """Закрывает прошлую неделю: призы топ-3 + снапшот. Идемпотентно по маркеру."""
     from app.db.models import LeaderboardSnapshot
-    now = datetime.now(timezone.utc)
+    now = local_now()
     if prev_week is None:
         # «прошлая» ISO-неделя = неделя, которой принадлежит понедельник минус 1 день
         iso_dt = datetime(now.year, now.month, now.day, tzinfo=timezone.utc) - __import__("datetime").timedelta(days=7)

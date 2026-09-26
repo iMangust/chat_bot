@@ -43,6 +43,7 @@ from loguru import logger
 
 from app.config import get_settings
 from app.services.mtproto_client import resolve_channel_entity
+from app.utils.local_time import now as local_now
 
 # Сырые TL-типы импортируются лениво (telethon опционален).
 _LISTENER_TASK: asyncio.Task | None = None
@@ -277,7 +278,7 @@ async def warm_snapshots(client, hours: int = 24) -> int:
     for cid in sorted(tracked):
         try:
             entity = await resolve_channel_entity(cid)
-            since = datetime.now(timezone.utc) - timedelta(hours=hours)
+            since = local_now() - timedelta(hours=hours)
             async for m in client.iter_messages(entity, offset_date=since,
                                                 reverse=True):
                 key = (cid, int(m.id))

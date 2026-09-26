@@ -26,13 +26,13 @@ from app.db.repositories import ActivityRepository, UserRepository
 from app.services.achievements import AchievementService
 from app.utils.html_text import esc
 from app.utils.redis import set_cooldown
+from app.utils.local_time import now as local_now
 
 
 def _aware(dt: datetime) -> datetime:
-    """Приводит datetime из БД к aware-UTC (MySQL/DATETIME возвращают naive)."""
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
+    """Приводит datetime из БД к aware-камчатскому (MySQL/DATETIME возвращает naive)."""
+    from app.utils.local_time import localize
+    return localize(dt)
 
 
 def _day(dt: datetime) -> datetime:
@@ -86,7 +86,7 @@ class ActivityService:
             else:
                 return None
 
-        now = datetime.now(timezone.utc)
+        now = local_now()
         length = len(text or "")
 
         # --- фильтры (логируем всё для антифрод-аналитики) ---
@@ -223,7 +223,7 @@ class ActivityService:
         user = await self.users.get(user_id)
         if user is None:
             return None
-        now = datetime.now(timezone.utc)
+        now = local_now()
         entry = ChatMessageLog(
             user_id=user_id, chat_id=chat_id, message_id=message_id,
             length=len(text or ""), has_media=has_media, media_type=media_type,
@@ -250,7 +250,7 @@ class ActivityService:
         if user is None or user.is_banned or not user.onboarded:
             return False
         # суточный лимит засчитанных реакций от одного фейкера к одному цели
-        day_start = _day(datetime.now(timezone.utc))
+        day_start = _day(local_now())
         given_today = (await self.session.execute(
             select(func.count()).select_from(ReactionLog).where(
                 ReactionLog.from_user == from_user,
@@ -356,7 +356,7 @@ class ActivityService:
         v1.4.7: добавлена разбивка по типам сообщений (breakdown) — статистика
         теперь различает текст/фото/стикеры/голос/кружки/reply/упоминания.
         """
-        now = datetime.now(timezone.utc)
+        now = local_now()
         repo = ActivityRepository(self.session)
         return {
             "total": await repo.messages_count(tg_id),

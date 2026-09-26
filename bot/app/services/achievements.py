@@ -20,6 +20,7 @@ from app.db.models import (
     User, UserAchievement,
 )
 from app.db.repositories import AchievementRepository
+from app.utils.local_time import now as local_now
 
 
 @dataclass(frozen=True)
@@ -192,7 +193,7 @@ class AchievementService:
                                     or already.progress >= a.condition_value):
             # уже открыто (или открылась ранее, но не зафиксирована) — помечаем и молча выходим
             if already.unlocked_at is None:
-                already.unlocked_at = datetime.now(timezone.utc)
+                already.unlocked_at = local_now()
                 await self.session.flush()
             return None
         unlocked_now = await self.repo.upsert_progress(user_id, a.id, a.condition_value)

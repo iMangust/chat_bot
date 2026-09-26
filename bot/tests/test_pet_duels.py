@@ -13,6 +13,7 @@ from sqlalchemy import select
 
 from app.db.models import LeaderboardSnapshot, NotificationQueue, Pet, User
 from app.services import pet_duels as pd
+from app.utils.local_time import now as local_now
 
 
 async def mk_user(session, tg_id: int, coins: int = 0) -> User:
@@ -142,7 +143,7 @@ async def test_fight_flow_scores_limits_xp(session):
 
     # суточный лимит: снимаем кулдаун, ставим счётчик дня = лимиту
     me.settings_extra = {**me.settings_extra,
-                         "duel_last_ts": (datetime.now(timezone.utc)
+                         "duel_last_ts": (local_now()
                                           - timedelta(seconds=200)).isoformat(),
                          "duel_count": pd.DAILY_FIGHT_LIMIT}
     res3 = await pd.fight(session, me)
@@ -167,9 +168,9 @@ async def test_arena_screen_states(session):
                for row in kb.inline_keyboard for b in row)
 
     # после боя с кулдауном кнопка боя заменяется на подсказку
-    p.settings_extra = {"duel_day": datetime.now(timezone.utc).date().isoformat(),
+    p.settings_extra = {"duel_day": local_now().date().isoformat(),
                         "duel_count": 1,
-                        "duel_last_ts": datetime.now(timezone.utc).isoformat()}
+                        "duel_last_ts": local_now().isoformat()}
     await session.flush()
     text2, kb2 = await pd.arena_screen(session, u.tg_id)
     datas = [b.callback_data for row in kb2.inline_keyboard for b in row]
@@ -181,7 +182,7 @@ async def test_arena_screen_states(session):
 
     # суточный лимит исчерпан → тоже подсказка, но с другим текстом
     p.settings_extra = {**p.settings_extra, "duel_count": pd.DAILY_FIGHT_LIMIT,
-                        "duel_last_ts": (datetime.now(timezone.utc)
+                        "duel_last_ts": (local_now()
                                          - timedelta(seconds=200)).isoformat()}
     await session.flush()
     _, kb3 = await pd.arena_screen(session, u.tg_id)
@@ -192,7 +193,7 @@ async def test_arena_screen_states(session):
 
 @pytest.mark.asyncio
 async def test_finish_week_prizes_idempotent(session):
-    now = datetime.now(timezone.utc)
+    now = local_now()
     prev = pd.week_key(now - timedelta(days=7))
 
     users = [await mk_user(session, 7501 + i, coins=0) for i in range(4)]

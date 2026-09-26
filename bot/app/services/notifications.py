@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import NotificationQueue, NotificationSetting, Pet, User
 from app.services.tamagotchi import MOOD_TEXT, compute_mood
 from app.utils.html_text import esc
+from app.utils.local_time import now as local_now
 
 
 async def queue_notification(session: AsyncSession, user_id: int, kind: str,
@@ -40,7 +41,7 @@ async def queue_notification(session: AsyncSession, user_id: int, kind: str,
     # все пуши уходят с parse_mode=HTML — экранируем династические куски,
     # чтобы имя юзера/питомца не сломало разметку
     session.add(NotificationQueue(user_id=user_id, kind=kind, text=text,
-                                  send_at=send_at or datetime.now(timezone.utc)))
+                                  send_at=send_at or local_now()))
     await session.flush()
     return True
 
@@ -48,7 +49,7 @@ async def queue_notification(session: AsyncSession, user_id: int, kind: str,
 async def has_recent(session: AsyncSession, user_id: int, kind: str,
                      within: timedelta) -> bool:
     """Есть ли свежее неотправленное/отправленное уведомление этого рода?"""
-    cutoff = datetime.now(timezone.utc) - within
+    cutoff = local_now() - within
     row = (await session.execute(
         select(NotificationQueue.id).where(
             NotificationQueue.user_id == user_id,

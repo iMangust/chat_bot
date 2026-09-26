@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import Pet, User
 from app.services.activity import ActivityService
 from app.utils.formatting import xp_needed_for_level
+from app.utils.local_time import now as local_now
 
 W, H = 900, 620
 CHART_H = 130   # зона графика активности (под плитками)
@@ -191,7 +192,7 @@ class ProfileCardRenderer:
     def _draw_activity_chart(d, daily: dict[str, int], y0: int, f_small) -> None:
         """Столбцы сообщений по дням за последние 7 дней (UTC)."""
         from datetime import datetime, timedelta, timezone
-        now = datetime.now(timezone.utc)
+        now = local_now()
         days = [(now - timedelta(days=i)).date() for i in range(6, -1, -1)]
         vals = [int(daily.get(dt.isoformat(), 0)) for dt in days]
         maxv = max(vals) if vals else 0
