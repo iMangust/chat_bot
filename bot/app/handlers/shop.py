@@ -87,7 +87,10 @@ def shop_keyboard(items: list[Item], user_coins: int) -> "InlineKeyboardBuilder 
 
 @router.callback_query(F.data.in_({"menu:shop", "pet:shop"}))
 @router.callback_query(F.data.startswith("shop:page:"))
-async def shop_screen(cb: CallbackQuery, session: AsyncSession) -> None:
+async def shop_screen(cb: CallbackQuery, session: AsyncSession,
+                      page: int | None = None) -> None:
+    """Экран магазина. page — явный номер страницы (используется после
+    покупки: cb.data менять нельзя — объект frozen, v1.5.18)."""
     set_pet_page(cb.message.chat.id, 1)  # «Назад» из магазина вернёт на стр. «Вещи»
     users = UserRepository(session)
     user = await users.get(cb.from_user.id)
@@ -103,11 +106,13 @@ async def shop_screen(cb: CallbackQuery, session: AsyncSession) -> None:
         )).scalars())
     # магазин листается постранично (≤6 товаров на страницу), текст показывает
     # только товары текущей страницы — кнопки и список всегда синхронны.
-    # Страница берётся из callback_data (shop:page:<n>).
-    try:
-        page = int(cb.data.split(":")[2]) if cb.data.startswith("shop:page:") else 0
-    except (IndexError, ValueError):
-        page = 0
+    # Страница: явный аргумент page (после покупки) либо из callback_data
+    # (shop:page:<n>).
+    if page is None:
+        try:
+            page = int(cb.data.split(":")[2]) if cb.data.startswith("shop:page:") else 0
+        except (IndexError, ValueError):
+            page = 0
     grouped = [it for t in ("food", "toy", "medicine")
                for it in items if it.type == t] + \
               [it for it in items if it.type not in ("food", "toy", "medicine")]
@@ -174,8 +179,9 @@ async def buy_item(cb: CallbackQuery, session: AsyncSession) -> None:
         await cb.answer(f"Не хватает {item.price - user.coins} монет 🪙", show_alert=True)
         return
 
-    # возврат к списку с сохранением страницы (было: всегда 0)
-    cb.data = "shop:page:0"
+    # v1.5.18: НЕ присваиваем cb.data — объекты aiogram frozen (pydantic),
+    # мутация «после покупки» кидала ValidationError на каждом buy:/use:.
+    # Страницу возврата передаём параметром в shop_screen.
     # защита от двойного списания при быстрых дабл-кликах: UPDATE ... WHERE coins>=price
     from sqlalchemy import update
     res = await session.execute(
@@ -197,8 +203,9 @@ async def buy_item(cb: CallbackQuery, session: AsyncSession) -> None:
     await session.commit()   # фиксируем списание сразу (res.rowcount уже проверен)
     logger.info("user {} bought {} for {}", user.tg_id, item.code, item.price)
     await cb.answer(f"Куплено: {item.icon} {item.name}!", show_alert=False)
-    # перерендерим магазин, чтобы цены-замки обновились
-    await shop_screen(cb, session)
+    # перерендерим магазин, чтобы цены-замки обновились (страницу передаём
+    # аргументом: cb.data — frozen, мутировать нельзя, v1.5.18)
+    await shop_screen(cb, session, page=0)
 
 
 @router.callback_query(F.data == "pet:inv")

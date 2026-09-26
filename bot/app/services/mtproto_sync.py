@@ -160,12 +160,21 @@ async def sync_subscribers(first_run: bool = False) -> dict:
     engine = create_async_engine(st.database_url)
     factory = async_sessionmaker(engine, expire_on_commit=False)
     added = skipped = 0
+    self_ids: set[int] = {await _self_bot_id()}
+    # v1.5.18: MTProto-аккаунт (он же может быть админом/владельцем чатов)
+    # физически присутствует в каналах — его нельзя заносить в welcome-очередь,
+    # иначе бот начнёт слать приветствие самому себе при каждом дельта-синке.
+    with contextlib.suppress(Exception):
+        from app.services.mtproto_client import holder
+        me = holder.me  # кэшируется при подключении (свойство, без await)
+        if me is not None:
+            self_ids.add(int(me.id))
     try:
         async with factory() as session:
             subs = SubscriberRepository(session)
             cursor = None if first_run else await subs.last_seen_user_id()
             for uid in ids:
-                if uid == (await _self_bot_id()):
+                if uid in self_ids:
                     continue
                 if cursor is not None and uid <= cursor:
                     skipped += 1

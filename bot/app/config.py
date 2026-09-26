@@ -22,7 +22,7 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-__version__ = "1.5.17"
+__version__ = "1.5.18"
 
 # Кодировки для чтения .env: BOM-aware utf-8 → кириллица Windows → всегда
 # успешная latin-1 (последняя гарантирует, что декодирование не упадёт).
