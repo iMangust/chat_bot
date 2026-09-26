@@ -35,8 +35,9 @@ def _page_nav(prefix: str, page: int, total: int, title: str) -> list[InlineKeyb
 
 MENU_PAGES: list[tuple[str, list[tuple[str, str]]]] = [
     ("🎮 Игра", [
+        # «🛒 Магазин» убран: он принадлежит питомцу и доступен только
+        # в хабе питомца (страница «🎒 Вещи» → pet:shop).
         ("🐾 Питомец", "menu:pet"),
-        ("🛒 Магазин", "menu:shop"),
         ("🧢 Мерч канала", "menu:merch"),
     ]),
     ("👤 Профиль", [

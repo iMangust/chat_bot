@@ -84,7 +84,7 @@ def shop_keyboard(items: list[Item], user_coins: int) -> "InlineKeyboardBuilder 
     return b
 
 
-@router.callback_query(F.data.in_({"menu:shop", "pet:shop"}))
+@router.callback_query(F.data == "pet:shop")
 @router.callback_query(F.data.startswith("shop:page:"))
 async def shop_screen(cb: CallbackQuery, session: AsyncSession,
                       page: int | None = None) -> None:
