@@ -470,23 +470,34 @@ class SubscriberRepository:
         self.session = session
 
     async def add_if_new(self, user_id: int, chat_id: int,
-                         first_name: str = "", username: str | None = None) -> bool:
-        """Заносит подписчика; True — если это новая запись (нужно приветствовать).
+                         first_name: str = "", username: str | None = None,
+                         reset_welcome: bool = False) -> bool:
+        """Заносит подписчика; True — если он ждёт приветствия (pending).
 
         Идемпотентно к повторным доставкам апдейтов: опираемся на PK user_id,
         конфликт молча пропускаем (already known). Если запись уже есть, но
         приветствие НЕ было доставлено (например, ЛС были закрыты), обновляем
         имя/username и возвращаем True — иначе «вечные pending» так и не
         дождались бы доставки: welcome_pending_subscribers берёт имя из базы.
+
+        Приветствованный (welcomed_at) пользователь остаётся приветствованным:
+        сброс отметки — только по явному reset_welcome=True (реальное событие
+        вступления в ДРУГОЙ отслеживаемый чат). Иначе /start или первое
+        сообщение после рестарта вернули бы новичка в очередь и он получил бы
+        повторное DM-приветствие.
         """
         from app.db.models import ChannelSubscriber
         exists = await self.session.get(ChannelSubscriber, user_id)
         if exists is not None:
+            if first_name:
+                exists.first_name = first_name
+            if username:
+                exists.username = username
             if exists.welcomed_at is None:
-                if first_name:
-                    exists.first_name = first_name
-                if username:
-                    exists.username = username
+                return True
+            if (reset_welcome and chat_id and exists.chat_id != chat_id):
+                exists.chat_id = chat_id
+                exists.welcomed_at = None
                 return True
             return False
         try:

@@ -146,11 +146,22 @@ def channel_welcome_text() -> str:
 
 async def add_pending_subscriber(session: AsyncSession, user_id: int,
                                  chat_id: int, first_name: str = "",
-                                 username: str | None = None) -> bool:
-    """Заносит подписчика в базу; True — если он новый (ждёт приветствия)."""
+                                 username: str | None = None,
+                                 reset_welcome: bool = False) -> bool:
+    """Заносит подписчика в базу; True — если он ждёт приветствия.
+
+    reset_welcome=True уместен только для РЕАЛЬНЫХ событий вступления
+    (chat_member/new_chat_members): человек присоединился к новому чату —
+    разрешаем ещё одно приветствие. Для сигналов «косвенного присутствия»
+    (/start, трекер сообщений) сброс запрещён: иначе каждое действие
+    возвращает уже приветствованного пользователя в pending-очередь и он
+    получает повторное DM-приветствие (двойные приветствия v1.5.6).
+    """
     from app.db.repositories import SubscriberRepository
-    added = await SubscriberRepository(session).add_if_new(
-        user_id, chat_id, first_name=first_name, username=username)
+    subs = SubscriberRepository(session)
+    added = await subs.add_if_new(
+        user_id, chat_id, first_name=first_name, username=username,
+        reset_welcome=reset_welcome)
     if added:
         await session.commit()
         logger.info("new channel subscriber registered: {} ({})", user_id, username or first_name)
@@ -228,21 +239,20 @@ async def on_channel_join(update: ChatMemberUpdated, bot: Bot,
     member = update.new_chat_member
     if member.user.is_bot or member.user.id == bot.id:
         return
-    from app.db.repositories import SubscriberRepository
-    row = await SubscriberRepository(session).get(member.user.id)
-    if row is None:
-        await add_pending_subscriber(
-            session, member.user.id, update.chat.id,
-            first_name=member.user.first_name or "", username=member.user.username)
-    elif row.welcomed_at is not None and row.chat_id != update.chat.id:
-        # присоединился к другому отслеживаемому чату — разрешаем ещё одно
-        # приветствие (для одного канала повторного DM не будет)
-        await SubscriberRepository(session).reset_welcome(member.user.id)
-    # Приветствуем новичков всех отслеживаемых чатов (канал И группа):
-    # раньше доставка шла только для type == "channel", и подписчик группы
-    # ждал бы фоновый скан. welcome_pending_subscribers сам проверит участие
-    # хотя бы в одном обязательном чате через API (см. gate.required_chats).
     ids = get_settings().tracked_chat_ids
-    if update.chat.type == "channel" or not ids or update.chat.id in ids:
-        await welcome_pending_subscribers(bot, session, limit=5)
+    # Бот — админ и канала, и группы: chat_member приходит из обоих. Приветствуем
+    # события отслеживаемых чатов; при пустом списке tracked — любой канал.
+    if not (update.chat.type == "channel" or not ids or update.chat.id in ids):
+        return
+    # Реальное событие вступления: если человек уже приветствовался ради
+    # ДРУГОГО отслеживаемого чата — разрешаем ещё одно приветствие (один DM
+    # на чат). Сброс делает add_if_new(reset_welcome=True), поэтому отдельный
+    # reset_welcome здесь не нужен и повторных сбросов не допускает.
+    await add_pending_subscriber(
+        session, member.user.id, update.chat.id,
+        first_name=member.user.first_name or "", username=member.user.username,
+        reset_welcome=True)
+    # Доставка: welcome_pending_subscribers сам сверит участие хотя бы в одном
+    # обязательном чате через API (см. gate.required_chats) и учтёт welcomed_at.
+    await welcome_pending_subscribers(bot, session, limit=5)
 

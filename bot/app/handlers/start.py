@@ -126,26 +126,16 @@ async def cmd_start(message: Message, state: FSMContext, session: AsyncSession,
         first_name=message.from_user.first_name or "",
         username=message.from_user.username,
     )
-    # регистрация в очереди канальных приветствий: событие «подписался на
-    # канал» Bot API не присылает, поэтому /start — самый надёжный сигнал,
-    # что человек уже здесь. Идемпотентно; приветствие придёт ровно один раз
-    # (контроль — welcomed_at). Если запись уже была до очистки базы —
-    # reset_welcome снимет старую отметку и DM придёт заново.
-    from app.handlers.welcome import (add_pending_subscriber,
-                                      welcome_pending_subscribers)
-    from app.db.repositories import SubscriberRepository
-    if await add_pending_subscriber(
-            session, user.tg_id, message.chat.id,
-            first_name=user.first_name or "", username=user.username):
-        # сразу доставим приветствие подписчику (не ждём фоновый скан)
-        try:
-            await welcome_pending_subscribers(message.bot, session, limit=1)
-        except Exception as exc:  # noqa: BLE001 — доставка не критична для /start
-            logger.debug("welcome flush on /start failed: {}", exc)
-    else:
-        sub = await SubscriberRepository(session).get(user.tg_id)
-        if sub is not None and sub.welcomed_at is not None and not user.onboarded:
-            await SubscriberRepository(session).reset_welcome(user.tg_id)
+    # Отметка в очереди канальных приветствий: /start — надёжный сигнал, что
+    # человек уже в боте. ВАЖНО (фикс двойного приветствия v1.5.7): сам /start
+    # НЕ шлёт канальное DM-приветствие и не сбрасывает welcomed_at — иначе
+    # новичок получал два сообщения подряд (канальное приветствие + онбординг
+    # ниже). Доставка канального приветства — задача событий вступления
+    # (chat_member / new_chat_members), фоновых сканов и catch-up при старте.
+    from app.handlers.welcome import add_pending_subscriber
+    await add_pending_subscriber(
+        session, user.tg_id, message.chat.id,
+        first_name=user.first_name or "", username=user.username)
     # запоминаем пригласившего из deep-linkа (если пришли по реф-ссылке)
     payload = (command.args or "") if command else ""
     if payload.startswith("invite_"):

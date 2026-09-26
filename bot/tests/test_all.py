@@ -443,10 +443,69 @@ class TestWelcome:
         src = inspect.getsource(__import__("app.handlers.start", fromlist=["cmd_start"]).cmd_start)
         assert "add_pending_subscriber" in src, "/start должен ставить в очередь приветствий"
 
+    def test_start_does_not_send_channel_welcome(self):
+        """Регресс v1.5.7: /start НЕ должен слать канальное приветствие —
+        иначе новичок получал два DM подряд (приветствие + онбординг)."""
+        src = inspect.getsource(__import__("app.handlers.start", fromlist=["cmd_start"]).cmd_start)
+        assert "welcome_pending_subscribers" not in src
+        assert "reset_welcome" not in src
 
-async def _add(session, uid):
+    @pytest.mark.asyncio
+    async def test_no_double_welcome_after_restart(self, session, monkeypatch):
+        """Приветствованный пользователь не возвращается в pending-очередь
+        ни через /start-сигнал (add без reset), ни после рестарта бота."""
+        from app.handlers import welcome as w
+        st = get_settings()
+        monkeypatch.setattr(st, "channel_username", "testchan")
+        monkeypatch.setattr(st, "welcome_channel_enabled", True)
+        async def _subscribed(*a, **k):
+            return True
+        from app.middlewares import gate
+        monkeypatch.setattr(gate, "is_channel_subscribed", _subscribed)
+        sent: list[int] = []
+        class Bot(FakeBot):
+            async def send_message(self, uid, text, **k):
+                sent.append(uid)
+        # первое событие вступления → одно приветствие
+        await _add(session, 77)
+        assert await w.welcome_pending_subscribers(Bot(), session) == 1
+        assert sent == [77]
+        # «косвенные» сигналы после этого (/start, сообщение в чате) и
+        # catch-up после рестарта не должны приветствовать заново
+        for chat in (-100, -999, -55):
+            await _add(session, 77, chat=chat)
+        assert await w.welcome_pending_subscribers(Bot(), session) == 0
+        assert sent == [77]
+
+    @pytest.mark.asyncio
+    async def test_join_second_tracked_chat_rewelcomes_once(self, session):
+        """Реальное вступление в ДРУГОЙ отслеживаемый чат (reset_welcome=True)
+        даёт ровно одно дополнительное приветствие, повтор того же чата — нет."""
+        repo = SubscriberRepository(session)
+        await _add(session, 78)
+        await repo.mark_welcomed(78)
+        await session.commit()
+        # тот же чат ещё раз — сброса нет
+        assert await _add(session, 78, reset=True) is False
+        # другой чат — сброс и ожидание приветствия
+        assert await _add(session, 78, chat=-200, reset=True) is True
+        row = await repo.get(78)
+        assert row.welcomed_at is None and row.chat_id == -200
+        # пока приветствие не доставлено, повторные события не плодят сбросы:
+        # запись уже pending — add вернёт True без изменения welcomed_at
+        assert await _add(session, 78, chat=-300, reset=True) is True
+        assert (await repo.get(78)).welcomed_at is None
+        # после доставки welcome-очередь закрывается, и тот же чат больше
+        # не возвращает пользователя в pending
+        await repo.mark_welcomed(78)
+        await session.commit()
+        assert await _add(session, 78, chat=-200, reset=True) is False
+
+
+async def _add(session, uid, chat=-100, reset=False):
     from app.handlers.welcome import add_pending_subscriber
-    return await add_pending_subscriber(session, uid, -100, first_name="N")
+    return await add_pending_subscriber(session, uid, chat, first_name="N",
+                                        reset_welcome=reset)
 
 
 # ---------------------------------------------------------------------------
@@ -470,4 +529,4 @@ class TestCore:
 
     def test_version(self):
         from app.config import __version__
-        assert __version__ == "1.5.6"
+        assert __version__ == "1.5.7"
