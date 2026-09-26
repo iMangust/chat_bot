@@ -1,20 +1,15 @@
-# Python
+# Python compiled files
 __pycache__/
-*.py[cod]
-*.egg-info/
-.pytest_cache/
-venv/
-.venv/
+*.pyc
 
-# Секреты и локальные конфиги — никогда в git
+# Environment and secrets
 .env
-.env.*
-!.env.example
-*.session
-*.session-journal
-*.sent
+.env.local
+*.env.*
 
-# Локальные БД и логи
+# Logs
+logs/
+*.log
+
+# Database files (if generated)
 *.db
-*.sqlite3
-bot/logs/

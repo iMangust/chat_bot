@@ -23,3 +23,8 @@ telethon>=1.34,<1.35
 # --- Dev / тесты ---
 pytest>=9.1
 pytest-asyncio>=1.4
+
+# --- Веб-оболочка (панель управления, run_gui.bat) ---
+fastapi>=0.116
+uvicorn>=0.35
+websockets>=12.0   # WebSocket-стрим логов в панель

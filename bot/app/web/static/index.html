@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TamaBot — панель управления</title>
+<style>
+:root{
+  --bg:#0b0e14; --bg2:#11151f; --panel:#151a26; --panel2:#1a2030;
+  --border:#232b3d; --text:#dbe2f1; --muted:#7d8aa5;
+  --accent:#7c5cff; --accent2:#3ecfb2; --danger:#ff5c7a; --warn:#ffb347; --ok:#3ecf8e;
+  --mono:'Cascadia Code','JetBrains Mono',Consolas,'Courier New',monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  font-family:'Segoe UI',system-ui,-apple-system,Roboto,sans-serif;
+  background:radial-gradient(1200px 700px at 80% -10%,#1b1440 0%,var(--bg) 55%) fixed,var(--bg);
+  color:var(--text);display:flex;flex-direction:column;overflow:hidden;
+}
+/* ---------- header ---------- */
+header{
+  display:flex;align-items:center;gap:16px;padding:14px 22px;
+  background:rgba(17,21,31,.75);backdrop-filter:blur(10px);
+  border-bottom:1px solid var(--border);z-index:5;
+}
+.logo{font-size:22px;font-weight:700;letter-spacing:.3px;display:flex;align-items:center;gap:10px}
+.logo .paw{font-size:26px;filter:drop-shadow(0 0 8px rgba(124,92,255,.7))}
+.logo small{color:var(--muted);font-weight:400;font-size:12px;margin-left:2px}
+.spacer{flex:1}
+.badge{
+  display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border-radius:999px;
+  font-size:13px;font-weight:600;border:1px solid var(--border);background:var(--panel);
+}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--muted)}
+.running .dot{background:var(--ok);box-shadow:0 0 8px var(--ok);animation:pulse 1.6s infinite}
+.starting .dot,.stopping .dot{background:var(--warn);box-shadow:0 0 8px var(--warn);animation:pulse 1s infinite}
+.stopped .dot{background:var(--danger);box-shadow:0 0 8px var(--danger)}
+@keyframes pulse{50%{opacity:.4}}
+.btn{
+  border:1px solid var(--border);background:var(--panel);color:var(--text);
+  padding:8px 16px;border-radius:10px;font-size:13.5px;font-weight:600;cursor:pointer;
+  transition:.15s;display:inline-flex;align-items:center;gap:7px;
+}
+.btn:hover{border-color:var(--accent);transform:translateY(-1px)}
+.btn:disabled{opacity:.45;cursor:not-allowed;transform:none}
+.btn.primary{background:linear-gradient(135deg,var(--accent),#5a3fd6);border-color:transparent;color:#fff}
+.btn.danger{color:var(--danger)}
+.btn.danger:hover{border-color:var(--danger)}
+/* ---------- layout ---------- */
+main{flex:1;display:flex;min-height:0}
+nav{
+  width:210px;padding:18px 10px;display:flex;flex-direction:column;gap:4px;
+  border-right:1px solid var(--border);background:rgba(17,21,31,.5);
+}
+.nav-item{
+  display:flex;align-items:center;gap:11px;padding:11px 14px;border-radius:11px;
+  cursor:pointer;color:var(--muted);font-size:14.5px;font-weight:600;transition:.15s;border:1px solid transparent;
+}
+.nav-item:hover{color:var(--text);background:var(--panel)}
+.nav-item.active{color:#fff;background:linear-gradient(135deg,rgba(124,92,255,.25),rgba(124,92,255,.08));border-color:rgba(124,92,255,.4)}
+.views{flex:1;min-width:0;display:flex;flex-direction:column}
+.view{display:none;flex:1;min-height:0;overflow:auto;padding:22px 26px}
+.view.active{display:block}
+.view.logs-view.active{display:flex;flex-direction:column;padding:0;overflow:hidden}
+h2{font-size:18px;margin-bottom:16px;font-weight:700}
+h2 span{color:var(--muted);font-weight:400;font-size:13px;margin-left:8px}
+/* ---------- cards ---------- */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:14px}
+.card{
+  background:linear-gradient(180deg,var(--panel),var(--bg2));border:1px solid var(--border);
+  border-radius:16px;padding:18px;transition:.2s;
+}
+.card:hover{border-color:#31405e}
+.card .label{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px}
+.card .value{font-size:20px;font-weight:700;line-height:1.3;word-break:break-word}
+.card .sub{color:var(--muted);font-size:12.5px;margin-top:6px;font-family:var(--mono)}
+.ok{color:var(--ok)} .bad{color:var(--danger)} .warn{color:var(--warn)}
+.wide{grid-column:1/-1}
+.job-row{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px dashed var(--border);font-size:13.5px}
+.job-row:last-child{border-bottom:none}
+.job-row .jid{font-family:var(--mono);color:var(--accent2)}
+.err-box{margin-top:14px;background:rgba(255,92,122,.08);border:1px solid rgba(255,92,122,.4);
+  border-radius:12px;padding:12px 16px;font-size:13.5px;color:#ffb3c0;display:none}
+/* ---------- logs ---------- */
+.log-toolbar{
+  display:flex;align-items:center;gap:8px;padding:12px 18px;border-bottom:1px solid var(--border);
+  background:rgba(17,21,31,.7);flex-wrap:wrap;
+}
+.chip{padding:5px 12px;border-radius:999px;border:1px solid var(--border);background:var(--panel);
+  font-size:12px;font-weight:600;cursor:pointer;color:var(--muted);user-select:none;transition:.15s}
+.chip.on{color:#fff;border-color:var(--accent);background:rgba(124,92,255,.22)}
+.search{flex:1;min-width:160px;max-width:340px}
+input,select,textarea{
+  background:var(--bg2);border:1px solid var(--border);color:var(--text);
+  border-radius:10px;padding:9px 12px;font-size:13.5px;outline:none;width:100%;
+  font-family:inherit;transition:border .15s;
+}
+input:focus,select:focus{border-color:var(--accent)}
+.logs-wrap{flex:1;overflow:auto;padding:14px 18px;font-family:var(--mono);font-size:12.8px;line-height:1.55;background:#0a0d13}
+.log-line{white-space:pre-wrap;word-break:break-word;padding:1px 0}
+.lv-DEBUG{color:#5b6b85}.lv-INFO{color:#9fd8ef}.lv-SUCCESS{color:#6fe3a5}
+.lv-WARNING{color:#ffc76b}.lv-ERROR{color:#ff7d92}.lv-CRITICAL{color:#fff;background:#a3213a;display:inline-block;padding:0 4px;border-radius:4px}
+.ws-state{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:6px}
+/* ---------- settings ---------- */
+.settings-head{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+.env-path{font-family:var(--mono);font-size:12px;color:var(--muted)}
+.save-bar{
+  position:sticky;top:0;z-index:4;display:none;gap:10px;align-items:center;
+  background:rgba(124,92,255,.12);border:1px solid rgba(124,92,255,.5);
+  border-radius:12px;padding:10px 16px;margin-bottom:16px;
+}
+.save-bar.visible{display:flex}
+.group{margin-bottom:22px}
+.group-title{font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--accent2);margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.set-row{
+  display:grid;grid-template-columns:260px 1fr;gap:14px;align-items:center;
+  padding:10px 14px;border:1px solid var(--border);border-radius:12px;margin-bottom:8px;background:var(--panel);
+}
+.set-row.changed{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+.set-key{font-family:var(--mono);font-size:12.5px;font-weight:600}
+.set-help{color:var(--muted);font-size:11.5px;margin-top:3px;line-height:1.35}
+.set-val{display:flex;align-items:center;gap:8px}
+.set-val input,.set-val select{flex:1}
+.reset-one{border:none;background:none;color:var(--muted);cursor:pointer;font-size:15px;padding:4px}
+.reset-one:hover{color:var(--danger)}
+.toggle{position:relative;width:44px;height:24px;flex-shrink:0}
+.toggle input{display:none}
+.toggle span{position:absolute;inset:0;background:var(--border);border-radius:999px;transition:.2s;cursor:pointer}
+.toggle span::after{content:"";position:absolute;left:3px;top:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:.2s}
+.toggle input:checked+span{background:var(--accent)}
+.toggle input:checked+span::after{left:23px}
+.secret-btn{border:1px solid var(--border);background:var(--bg2);color:var(--muted);border-radius:8px;padding:8px 10px;cursor:pointer;font-size:12px;white-space:nowrap}
+/* ---------- toast ---------- */
+#toasts{position:fixed;right:18px;bottom:18px;display:flex;flex-direction:column;gap:8px;z-index:50}
+.toast{background:var(--panel2);border:1px solid var(--border);border-left:4px solid var(--accent);
+  padding:12px 16px;border-radius:12px;font-size:13.5px;max-width:420px;box-shadow:0 8px 30px rgba(0,0,0,.5);
+  animation:slidein .25s}
+.toast.err{border-left-color:var(--danger)} .toast.warn{border-left-color:var(--warn)} .toast.ok{border-left-color:var(--ok)}
+@keyframes slidein{from{transform:translateX(30px);opacity:0}}
+footer{padding:7px 22px;border-top:1px solid var(--border);font-size:11.5px;color:var(--muted);display:flex;gap:18px;background:rgba(17,21,31,.6)}
+::-webkit-scrollbar{width:10px;height:10px}
+::-webkit-scrollbar-thumb{background:#2a3348;border-radius:6px}
+::-webkit-scrollbar-track{background:transparent}
+@media(max-width:900px){nav{width:64px}.nav-item span.txt{display:none}.set-row{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo"><span class="paw">🐾</span>TamaBot<small id="ver">v…</small></div>
+  <div id="statusBadge" class="badge stopped"><span class="dot"></span><span id="statusText">—</span></div>
+  <div id="uptimeText" style="color:var(--muted);font-size:13px"></div>
+  <div class="spacer"></div>
+  <button class="btn primary" id="btnStart">▶ Запустить</button>
+  <button class="btn danger" id="btnStop">■ Остановить</button>
+  <button class="btn" id="btnRestart">⟳ Перезапустить</button>
+</header>
+
+<main>
+  <nav>
+    <div class="nav-item active" data-view="dash">📊 <span class="txt">Обзор</span></div>
+    <div class="nav-item" data-view="logs">📜 <span class="txt">Логи</span></div>
+    <div class="nav-item" data-view="settings">⚙️ <span class="txt">Настройки</span></div>
+  </nav>
+
+  <div class="views">
+    <!-- ================= Dashboard ================= -->
+    <section class="view active" id="view-dash">
+      <h2>Панель статуса <span>обновляется автоматически</span></h2>
+      <div class="grid">
+        <div class="card"><div class="label">Состояние бота</div><div class="value" id="cState">—</div><div class="sub" id="cSince"></div></div>
+        <div class="card"><div class="label">Аптайм</div><div class="value" id="cUptime">—</div><div class="sub" id="cPolling"></div></div>
+        <div class="card"><div class="label">Бот (Telegram)</div><div class="value" id="cBot">не запущен</div><div class="sub" id="cToken"></div></div>
+        <div class="card"><div class="label">База данных</div><div class="value" style="font-size:14px" id="cDb">—</div></div>
+        <div class="card"><div class="label">Redis (FSM/кулдауны)</div><div class="value" style="font-size:14px" id="cRedis">—</div></div>
+        <div class="card"><div class="label">Admin / чаты</div><div class="value" style="font-size:14px" id="cAdmin">—</div><div class="sub" id="cChats"></div></div>
+        <div class="card wide"><div class="label">Фоновые задачи планировщика</div><div id="cJobs" style="font-size:13.5px;color:var(--muted)">нет данных</div></div>
+      </div>
+      <div class="err-box" id="errBox"></div>
+    </section>
+
+    <!-- ================= Logs ================= -->
+    <section class="view logs-view" id="view-logs">
+      <div class="log-toolbar">
+        <span class="chip on" data-lv="DEBUG">DEBUG</span>
+        <span class="chip on" data-lv="INFO">INFO</span>
+        <span class="chip on" data-lv="SUCCESS">SUCCESS</span>
+        <span class="chip on" data-lv="WARNING">WARN</span>
+        <span class="chip on" data-lv="ERROR">ERROR</span>
+        <input class="search" id="logSearch" placeholder="🔎 поиск по логам…">
+        <label style="font-size:12px;color:var(--muted);display:flex;gap:5px;align-items:center">
+          <input type="checkbox" id="autoscroll" checked style="width:auto"> автопрокрутка
+        </label>
+        <select id="liveLevel" style="width:auto">
+          <option value="">live-уровень: из .env</option>
+          <option value="DEBUG">DEBUG (подробно)</option>
+          <option value="INFO">INFO</option>
+          <option value="WARNING">WARNING</option>
+        </select>
+        <button class="btn" id="btnClear">Очистить</button>
+        <button class="btn" id="btnDownload">⬇ Скачать</button>
+        <span class="ws-state"><span class="dot" id="wsDot"></span><span id="wsText">подключение…</span></span>
+      </div>
+      <div class="logs-wrap" id="logs"></div>
+    </section>
+
+    <!-- ================= Settings ================= -->
+    <section class="view" id="view-settings">
+      <div class="settings-head">
+        <h2 style="margin:0">Настройки (.env)</h2>
+        <span class="env-path" id="envPath"></span>
+      </div>
+      <div class="save-bar" id="saveBar">
+        <b id="saveCount">Изменено: 0</b>
+        <div class="spacer"></div>
+        <button class="btn" id="btnDiscard">Отменить</button>
+        <button class="btn primary" id="btnSave">💾 Сохранить</button>
+      </div>
+      <div id="groups"></div>
+    </section>
+  </div>
+</main>
+
+<footer>
+  <span>TamaBot Control Panel</span>
+  <span id="footStatus">—</span>
+  <span>логи также пишутся в bot/logs/bot_YYYY-MM-DD.log</span>
+</footer>
+<div id="toasts"></div>
+
+<script>
+"use strict";
+const $=s=>document.querySelector(s);
+const state={status:null,draft:{},settings:[],logFilter:new Set(["DEBUG","INFO","SUCCESS","WARNING","ERROR"]),paused:false};
+
+/* ---------------- toasts ---------------- */
+function toast(msg,type="ok",ms=4200){
+  const t=document.createElement("div");t.className="toast "+type;t.textContent=msg;
+  $("#toasts").appendChild(t);setTimeout(()=>t.remove(),ms);
+}
+
+/* ---------------- navigation ---------------- */
+document.querySelectorAll(".nav-item").forEach(n=>n.addEventListener("click",()=>{
+  document.querySelectorAll(".nav-item").forEach(x=>x.classList.remove("active"));
+  document.querySelectorAll(".view").forEach(x=>x.classList.remove("active"));
+  n.classList.add("active");$("#view-"+n.dataset.view).classList.add("active");
+  if(n.dataset.view==="logs"){state.paused=false;}
+  if(n.dataset.view==="settings"&&!state.settings.length)loadSettings();
+}));
+
+/* ---------------- status polling ---------------- */
+const STATE_LABEL={running:"работает",stopped:"остановлен",starting:"запуск…",stopping:"остановка…"};
+function fmtUp(sec){sec=Math.floor(sec);const h=Math.floor(sec/3600),m=Math.floor(sec%3600/60),s=sec%60;
+  return (h?h+"ч ":"")+(h||m?m+"м ":"")+s+"с";}
+async function refreshStatus(){
+  try{
+    const r=await fetch("/api/status");state.status=await r.json();renderStatus();
+    $("#footStatus").textContent="сервер доступен";
+  }catch(e){$("#footStatus").textContent="нет связи с сервером…";}
+}
+function renderStatus(){
+  const st=state.status;if(!st)return;
+  const badge=$("#statusBadge");badge.className="badge "+st.state;
+  $("#statusText").textContent=STATE_LABEL[st.state]||st.state;
+  $("#uptimeText").textContent=st.state==="running"?"аптайм "+fmtUp(st.uptimeSec):"";
+  $("#ver").textContent="v"+(st.version||"");
+  $("#btnStart").disabled=st.state!=="stopped";
+  $("#btnStop").disabled=st.state==="stopped";
+  $("#btnRestart").disabled=st.state==="starting"||st.state==="stopping";
+  $("#cState").innerHTML=st.state==="running"?'<span class="ok">● работает</span>'
+    :st.state==="stopped"?'<span class="bad">● остановлен</span>':'<span class="warn">● '+st.state+'</span>';
+  $("#cSince").textContent=st.startedAt?("с "+new Date(st.startedAt*1000).toLocaleString()):"—";
+  $("#cUptime").textContent=st.state==="running"?fmtUp(st.uptimeSec):"—";
+  $("#cBot").textContent=st.bot?("@"+(st.bot.username||st.bot.first_name)):"не запущен";
+  const s=st.settings||{};
+  $("#cToken").textContent=s.botTokenSet?"BOT_TOKEN задан":"⚠ BOT_TOKEN не задан";
+  $("#cToken").className="sub "+(s.botTokenSet?"ok":"warn");
+  $("#cDb").textContent=s.databaseUrl||"—";
+  $("#cRedis").textContent=s.redisUrl||"—";
+  $("#cAdmin").textContent=(s.adminIds&&s.adminIds.length)?s.adminIds.join(", "):"— без админов";
+  $("#cChats").textContent=(s.trackedChatIds&&s.trackedChatIds.length)?("чаты: "+s.trackedChatIds.join(", ")):"чаты: все чаты бота";
+  const jobs=$("#cJobs");
+  if(st.jobs&&st.jobs.length){jobs.innerHTML=st.jobs.map(j=>
+    `<div class="job-row"><span class="jid">${j[0]}</span><span>следующий запуск: ${j[1]}</span></div>`).join("");}
+  else jobs.innerHTML='<span style="color:var(--muted)">нет активных задач (бот остановлен)</span>';
+  const eb=$("#errBox");
+  if(st.lastError&&st.state==="stopped"){eb.style.display="block";eb.textContent="⚠ Последняя ошибка: "+st.lastError;}
+  else eb.style.display="none";
+}
+refreshStatus();setInterval(refreshStatus,2000);
+
+/* ---------------- controls ---------------- */
+async function control(action){
+  const b=$("#btn"+({start:"Start",stop:"Stop",restart:"Restart"})[action]);
+  b.disabled=true;
+  try{
+    const r=await fetch("/api/control",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({action})});
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.detail||r.status);
+    toast({start:"▶ Бот запущен",stop:"■ Бот остановлен",restart:"⟳ Бот перезапущен"}[action],"ok");
+  }catch(e){toast("Ошибка: "+e.message,"err",7000);}
+  refreshStatus();
+}
+$("#btnStart").onclick=()=>control("start");
+$("#btnStop").onclick=()=>control("stop");
+$("#btnRestart").onclick=()=>control("restart");
+
+/* ---------------- logs (websocket) ---------------- */
+const logsEl=$("#logs");let ws=null,retry=0;
+function levelOf(line){const m=line.match(/\|\s*(DEBUG|INFO|SUCCESS|WARNING|ERROR|CRITICAL)\s*\|/);return m?m[1]:"INFO";}
+function appendLine(line){
+  const lv=levelOf(line);
+  if(!state.logFilter.has(lv)&&lv!=="CRITICAL")return;
+  const q=$("#logSearch").value.trim().toLowerCase();
+  if(q&&!line.toLowerCase().includes(q))return;
+  const div=document.createElement("div");div.className="log-line lv-"+lv;div.textContent=line;
+  logsEl.appendChild(div);
+  while(logsEl.childElementCount>4000)logsEl.removeChild(logsEl.firstChild);
+  if($("#autoscroll").checked&&!state.paused)logsEl.scrollTop=logsEl.scrollHeight;
+}
+logsEl.addEventListener("wheel",()=>{if(logsEl.scrollTop+logsEl.clientHeight<logsEl.scrollHeight-40)state.paused=true;});
+function connectWs(){
+  const proto=location.protocol==="https:"?"wss":"ws";
+  ws=new WebSocket(`${proto}://${location.host}/ws/logs`);
+  ws.onopen=()=>{retry=0;$("#wsText").textContent="в прямом эфире";$("#wsDot").style.background="var(--ok)";};
+  ws.onmessage=e=>{
+    const d=JSON.parse(e.data);
+    if(d.type==="bulk")d.lines.forEach(appendLine);
+    else appendLine(d.line);
+  };
+  ws.onclose=()=>{
+    $("#wsText").textContent="переподключение…";$("#wsDot").style.background="var(--danger)";
+    setTimeout(connectWs,Math.min(15000,1000*Math.pow(2,retry++)));
+  };
+}
+connectWs();
+document.querySelectorAll(".chip[data-lv]").forEach(c=>c.addEventListener("click",()=>{
+  const lv=c.dataset.lv;
+  if(state.logFilter.has(lv)){state.logFilter.delete(lv);c.classList.remove("on");}
+  else{state.logFilter.add(lv);c.classList.add("on");}
+}));
+$("#logSearch").addEventListener("input",()=>{state.paused=true;});
+$("#btnClear").onclick=()=>{logsEl.innerHTML="";};
+$("#btnDownload").onclick=async()=>{
+  try{
+    const lines=[...logsEl.children].map(x=>x.textContent).join("\n");
+    const blob=new Blob([lines],{type:"text/plain;charset=utf-8"});
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);
+    a.download="tamabot_logs_"+new Date().toISOString().slice(0,10)+".txt";a.click();
+  }catch(e){toast("Не удалось скачать: "+e.message,"err");}
+};
+$("#liveLevel").addEventListener("change",async e=>{
+  const v=e.target.value;
+  try{
+    const r=await fetch("/api/loglevel",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({level:v||"INFO"})});
+    if(!r.ok)throw new Error((await r.json()).detail);
+    toast(v?("Live-уровень логов: "+v+" (без рестарта)"):"Восстановлен уровень из .env","ok");
+  }catch(err){toast("Ошибка: "+err.message,"err");}
+});
+
+/* ---------------- settings ---------------- */
+const GROUPS=[
+ {title:"🔑 Telegram",keys:["BOT_TOKEN","ADMIN_IDS","TRACKED_CHAT_IDS","CHANNEL_USERNAME","CHANNEL_CHAT_ID"]},
+ {title:"🗄 База данных и Redis",keys:["DATABASE_URL","REDIS_URL"]},
+ {title:"📡 Способ запуска",keys:["IS_DEV","POLLING_TIMEOUT","POLLING_LIMIT","WEBHOOK_URL","WEBHOOK_PORT","WEBHOOK_SECRET_TOKEN"]},
+ {title:"⚖️ Баланс / антифрод",keys:["MIN_MESSAGE_LENGTH","ACTIVITY_COOLDOWN_SEC","REACTIONS_CAP_PER_DAY","XP_PER_MESSAGE","XP_LEVEL_BASE","COINS_PER_MESSAGE_CAP","INVITE_REWARD_COINS","WEATHER_ENABLED"]},
+ {title:"🔔 Уведомления / вовлечение",keys:["TZ_OFFSET_HOURS","DAILY_REPORT_HOUR_UTC","MORNING_REMINDER_HOUR_UTC","EVENING_REMINDER_HOUR_UTC","PET_WARNING_MIN_HOURS","STREAK_WARN_THRESHOLD_SEC"]},
+ {title:"👋 Приветствие канала",keys:["WELCOME_CHANNEL_ENABLED","CHANNEL_WELCOME_TEXT","CHANNEL_SCAN_MINUTES"]},
+ {title:"🧢 Мерч",keys:["MERCH_ENABLED","MERCH_URL","MERCH_ITEMS"]},
+ {title:"🤖 MTProto (Telethon / юзербот)",keys:["API_ID","API_HASH","PHONE","TELEGRAM_PASSWORD","SESSION_STRING","MTPROTO_SESSION","ANSWER_MODE","MTPROTO_AUTOSYNC","MTPROTO_SYNC_MINUTES"]},
+ {title:"🛠 Прочее",keys:["LOG_LEVEL"]},
+];
+// алиасы из .env.example → поля Settings (для подписей)
+const ALIAS_OF={API_ID:"TELEGRAM_API_ID",API_HASH:"TELEGRAM_API_HASH",PHONE:"TELEGRAM_PHONE",
+  SESSION_STRING:"MTPROTO_SESSION_STRING",ANSWER_MODE:"MTPROTO_ANSWER_MODE",CHANNEL_USERNAME:"CHANNEL_USERNAME"};
+const EXTRA={ // ключи-алиасы, которых нет среди полей, но они валидны
+  API_ID:{type:"int"},API_HASH:{type:"secret-str"},PHONE:{type:"str"},
+  SESSION_STRING:{type:"secret-str"},ANSWER_MODE:{type:"enum",opts:["off","user","hybrid"]},
+};
+async function loadSettings(){
+  try{
+    const r=await fetch("/api/settings");
+    if(!r.ok)throw new Error(await r.text());
+    const d=await r.json();state.settings=d.items;
+    $("#envPath").textContent=d.path+(d.exists?"":" (файла ещё нет)");
+    renderSettings();
+  }catch(e){toast("Не удалось загрузить настройки: "+e.message,"err",7000);}
+}
+function itemByKey(k){
+  let it=state.settings.find(x=>x.key===k);
+  if(it)return it;
+  const alias=EXTRA[k];
+  if(alias){
+    const base=ALIAS_OF[k]?state.settings.find(x=>x.key===ALIAS_OF[k]):null;
+    return {key:k,type:alias.type==="secret-str"?"str":(alias.type||"str"),opts:alias.opts,
+      isSecret:alias.type==="secret-str",value:base?base.value:"",comment:base?base.comment:"",default:base?base.default:""};
+  }
+  return null;
+}
+function renderSettings(){
+  const wrap=$("#groups");wrap.innerHTML="";
+  for(const g of GROUPS){
+    const items=g.keys.map(itemByKey).filter(Boolean);
+    if(!items.length)continue;
+    const div=document.createElement("div");div.className="group";
+    div.innerHTML=`<div class="group-title">${g.title}</div>`;
+    for(const it of items)div.appendChild(renderRow(it));
+    wrap.appendChild(div);
+  }
+  updateSaveBar();
+}
+function renderRow(it){
+  const row=document.createElement("div");row.className="set-row";row.dataset.key=it.key;
+  const help=document.createElement("div");
+  help.innerHTML=`<div class="set-key">${it.key}</div><div class="set-help">${escapeHtml(it.comment||it.title||"")}</div>`;
+  const val=document.createElement("div");val.className="set-val";
+  let input;
+  if(it.type==="bool"){
+    const lab=document.createElement("label");lab.className="toggle";
+    input=document.createElement("input");input.type="checkbox";
+    input.checked=(curVal(it)==="true");
+    const sp=document.createElement("span");lab.append(input,sp);val.appendChild(lab);
+    const txt=document.createElement("span");txt.style.cssText="font-size:12px;color:var(--muted)";
+    txt.textContent=input.checked?"вкл":"выкл";
+    input.addEventListener("change",()=>{txt.textContent=input.checked?"вкл":"выкл";onChange(it.key,input.checked?"true":"false",row);});
+    val.appendChild(txt);
+  }else if(it.key==="LOG_LEVEL"||(it.key==="ANSWER_MODE")){
+    input=document.createElement("select");
+    const opts=it.key==="LOG_LEVEL"?["DEBUG","INFO","WARNING","ERROR"]:it.opts;
+    for(const o of opts){const el=document.createElement("option");el.value=o;el.textContent=o;input.appendChild(el);}
+    input.value=curVal(it)||opts[0];
+    input.addEventListener("change",()=>onChange(it.key,input.value,row));
+    val.appendChild(input);
+  }else{
+    input=document.createElement("input");
+    const cur=curVal(it);
+    input.type=(it.isSecret&&cur)?"password":"text";
+    input.value=(it.isSecret&&cur)?cur:cur;
+    input.placeholder=it.default!==undefined&&it.default!==""?("по умолчанию: "+it.default):"пусто";
+    input.addEventListener("input",()=>onChange(it.key,input.value,row));
+    val.appendChild(input);
+    if(it.isSecret){
+      const btn=document.createElement("button");btn.className="secret-btn";btn.textContent="👁";
+      btn.onclick=()=>{input.type=input.type==="password"?"text":"password";};
+      val.appendChild(btn);
+    }
+  }
+  const reset=document.createElement("button");reset.className="reset-one";reset.title="Вернуть значение из файла";reset.textContent="↺";
+  reset.onclick=()=>{delete state.draft[it.key];input.value=it.value||"";
+    if(it.type==="bool")input.checked=(curVal(it)==="true");
+    row.classList.remove("changed");updateSaveBar();};
+  val.appendChild(reset);
+  row.append(help,val);
+  if(state.draft[it.key]!==undefined)row.classList.add("changed");
+  return row;
+}
+function curVal(it){return state.draft[it.key]!==undefined?state.draft[it.key]:(it.value||"");}
+function onChange(key,value,row){
+  const it=itemByKey(key);
+  if(String(value)!==String(it.value||"")){state.draft[key]=value;row.classList.add("changed");}
+  else{delete state.draft[key];row.classList.remove("changed");}
+  updateSaveBar();
+}
+function updateSaveBar(){
+  const n=Object.keys(state.draft).length;
+  $("#saveBar").classList.toggle("visible",n>0);
+  $("#saveCount").textContent="Изменено: "+n;
+}
+$("#btnDiscard").onclick=()=>{state.draft={};renderSettings();};
+$("#btnSave").onclick=async()=>{
+  try{
+    const r=await fetch("/api/settings",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({updates:state.draft})});
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.detail||r.status);
+    state.draft={};await loadSettings();
+    (d.warnings||[]).forEach(w=>toast("⚠ "+w,"warn",8000));
+    if(d.restartRequired){
+      toast("💾 Сохранено. Эти параметры применяются при старте — перезапустите бота.","warn",9000);
+      if(confirm("Сохранено ✔\n\nДля новых значений нужен рестарт бота. Перезапустить сейчас?"))
+        control("restart");
+    }else toast("💾 Сохранено — применится на лету.","ok");
+  }catch(e){toast("Не сохранено: "+e.message,"err",8000);}
+};
+function escapeHtml(s){return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+
+/* live level select init from status */
+setInterval(()=>{if(state.status&&state.status.settings&&!$("#liveLevel").value)
+  $("#liveLevel").options[0].textContent="live-уровень: "+(state.status.settings.logLevel||"INFO");},5000);
+</script>
+</body>
+</html>

@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import time
 from collections import deque
@@ -20,13 +21,14 @@ from pathlib import Path
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.fsm.state import State
 from aiogram.types import BotCommand, BotCommandScopeAllChatAdministrators, BotCommandScopeAllGroupChats, BotCommandScopeAllPrivateChats
 from loguru import logger
 
 from app.config import get_settings
 from app.db.models import Base
 from app.db.session import DbMiddleware, engine, session_factory
-from app.handlers import (arena, errors, games, merch,
+from app.handlers import (admin, arena, errors, games, merch,
                           settings as settings_handlers, shop, social, start,
                           stats, tamagotchi, tracker, welcome)
 from app.handlers.shop import seed_items
@@ -65,6 +67,46 @@ class UiLogHandler:
 
 
 ui_log_handler = UiLogHandler()
+
+
+def _detach_router(router: Dispatcher) -> None:
+    """Открепить все дочерние роутеры от диспетчера (рекурсивно).
+
+    aiogram 3.x в ``Router.parent_router`` (setter) запрещает повторное
+    прикрепление: «Router is already attached to …». Без отвязки второй
+    runtime.start() (кнопка «Запустить/Перезапустить» в панели) падал именно
+    на этом. Хендлеры при этом не дублируются: они остаются зарегистрированными
+    в самих роутерах — меняем только ссылку на родителя.
+    """
+    stack = [router]
+    while stack:
+        node = stack.pop()
+        for sub in list(getattr(node, "sub_routers", ())):
+            stack.append(sub)
+            with contextlib.suppress(Exception):
+                node.sub_routers.remove(sub)
+            with contextlib.suppress(Exception):
+                sub._parent_router = None
+
+
+def _reset_router_state(dp: Dispatcher) -> None:
+    """Открепить роутеры от диспетчера и подчистить его кэши."""
+    _detach_router(dp)
+    with contextlib.suppress(Exception):
+        dp.resolve_used_update_types()  # пересчитываем кэш используемых апдейтов
+    for chain_name in ("update", "errors"):
+        chain = getattr(dp, chain_name, None)
+        if chain is not None:
+            with contextlib.suppress(Exception):
+                chain.unresolvable_handlers.clear()
+    # FSM-фильтры состояний хранят ссылку на старый Dispatcher
+    for cls in getattr(State, "__subclasses__", lambda: [])():
+        for name, val in list(vars(cls).items()):
+            if isinstance(val, dict):
+                for f in val.values():
+                    with contextlib.suppress(Exception):
+                        if getattr(f, "_dispatcher", None) is dp:
+                            f._dispatcher = None
 
 
 class BotRuntime:
@@ -112,12 +154,16 @@ class BotRuntime:
 
             dp = Dispatcher(storage=storage)
             dp.update.outer_middleware(DbMiddleware())
+            # Глобальный доступ: только ЛС + подписчики канала (как в app.main)
+            from app.middlewares.gate import AccessGateMiddleware
+            dp.update.outer_middleware(AccessGateMiddleware())
             dp.callback_query.outer_middleware(ThrottleMiddleware())
             # страховка на уровне callback-мидлваров (до/вне хендлеров) —
             # юзер не останется с «висящими часами», а админы увидят сбой в логе
             dp.callback_query.outer_middleware(errors.ErrorNotifyMiddleware())
             dp.include_routers(
                 errors.error_router,
+                admin.router,          # /mtproto, /syncnow — ADMIN_IDS (проверка внутри)
                 start.router, welcome.router, tracker.router,
                 tamagotchi.router, games.router, shop.router,
                 merch.router,
@@ -168,6 +214,27 @@ class BotRuntime:
             self.state = "running"
 
             allowed = dp.resolve_used_update_types() + ["message_reaction", "message_reaction_count", "chat_member"]
+
+            # доп. сервисы поверх поллинга — как в on_startup из app.main:
+            # ошибки не валят бота, всё видно в логах оболочки
+            @dp.startup()
+            async def _startup_extras() -> None:
+                with contextlib.suppress(Exception):
+                    from app.services.userbot import start_userbot
+                    await start_userbot(self.bot)
+                with contextlib.suppress(Exception):
+                    from app.services.mtproto_reactions import start_reaction_listener
+                    await start_reaction_listener()
+
+            @dp.shutdown()
+            async def _shutdown_extras() -> None:
+                with contextlib.suppress(Exception):
+                    from app.services.mtproto_reactions import stop_reaction_listener
+                    await stop_reaction_listener()
+                with contextlib.suppress(Exception):
+                    from app.services.userbot import stop_userbot
+                    await stop_userbot()
+
             self._polling_task = asyncio.create_task(
                 dp.start_polling(
                     self.bot,
@@ -227,6 +294,8 @@ class BotRuntime:
         if self.bot is not None:
             await self.bot.session.close()
             self.bot = None
+        if self.dp is not None:
+            _reset_router_state(self.dp)  # отвязываем роутеры — иначе повторный старт упадёт
         self.dp = None
         self.started_at = None
         self.state = "stopped"
@@ -244,6 +313,8 @@ class BotRuntime:
             except Exception:  # noqa: BLE001
                 pass
             self.bot = None
+        if self.dp is not None:
+            _reset_router_state(self.dp)
         self.dp = None
 
     # -------------------------------------------------------------- status
