@@ -495,7 +495,11 @@ class SubscriberRepository:
                 exists.username = username
             if exists.welcomed_at is None:
                 return True
-            if (reset_welcome and chat_id and exists.chat_id != chat_id):
+            if (reset_welcome and chat_id and exists.chat_id != chat_id
+                    and exists.welcome_sent_chat_id != chat_id):
+                # Реальное вступление в ДРУГОЙ чат (не тот, где зарегистрирован,
+                # и не тот, ради которого уже слали приветствие) — разрешаем
+                # ещё одно DM.
                 exists.chat_id = chat_id
                 exists.welcomed_at = None
                 return True
@@ -532,11 +536,14 @@ class SubscriberRepository:
             row.welcomed_at = None
             await self.session.commit()
 
-    async def mark_welcomed(self, user_id: int) -> None:
+    async def mark_welcomed(self, user_id: int, chat_id: int | None = None) -> None:
+        """Отмечает приветствие доставленным; запоминает чат-основание (v1.5.10)."""
         from app.db.models import ChannelSubscriber
         row = await self.session.get(ChannelSubscriber, user_id)
         if row is not None and row.welcomed_at is None:
             row.welcomed_at = utcnow()
+            if chat_id is not None:
+                row.welcome_sent_chat_id = chat_id
 
     async def count(self) -> int:
         from app.db.models import ChannelSubscriber

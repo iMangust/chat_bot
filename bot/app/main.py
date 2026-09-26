@@ -127,6 +127,11 @@ _LIGHT_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("archived_at", "DATETIME"),
         ("archive_reason", "VARCHAR(32)"),
     ],
+    # v1.5.10: по какому чату отправлено приветствие — защита от двойных
+    # welcome-DM для участников канала И группы одновременно
+    "channel_subscribers": [
+        ("welcome_sent_chat_id", "BIGINT"),
+    ],
 }
 
 

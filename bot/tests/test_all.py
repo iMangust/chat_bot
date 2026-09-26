@@ -502,6 +502,56 @@ class TestWelcome:
         await session.commit()
         assert await _add(session, 78, chat=-200, reset=True) is False
 
+    @pytest.mark.asyncio
+    async def test_channel_and_group_membership_single_welcome(self, session, monkeypatch):
+        """Регресс v1.5.10: участник канала И группы получал по welcome-DM
+        на каждое chat_member-событие (сброс welcomed_at при «другом чате»).
+        Теперь приветствие ради конкретного чата запоминается
+        (welcome_sent_chat_id), и возврат в него не сбрасывает отметку."""
+        from app.handlers import welcome as w
+        st = get_settings()
+        monkeypatch.setattr(st, "channel_username", "testchan")
+        monkeypatch.setattr(st, "welcome_channel_enabled", True)
+        from app.middlewares import gate
+        async def _subscribed(*a, **k):
+            return True
+        monkeypatch.setattr(gate, "is_channel_subscribed", _subscribed)
+        sent: list[int] = []
+        class Bot(FakeBot):
+            async def send_message(self, uid, text, **k):
+                sent.append(uid)
+        repo = SubscriberRepository(session)
+
+        def _cm_event(chat_id: int, user_id: int = 90):
+            user = SimpleNamespace(id=user_id, is_bot=False,
+                                   first_name="N", username=None)
+            return SimpleNamespace(
+                chat=SimpleNamespace(id=chat_id, type="channel" if chat_id == -100 else "supergroup"),
+                new_chat_member=SimpleNamespace(user=user, status="member"))
+
+        # событие из канала → ровно одно приветствие
+        await w.on_channel_join(_cm_event(-100), Bot(), session)
+        assert sent == [90], f"первое вступление должно дать одно DM, got {sent}"
+        # то же событие дублируется/повторяется — нового приветствия нет
+        await w.on_channel_join(_cm_event(-100), Bot(), session)
+        assert sent == [90], "повтор канала — без второго DM"
+        # событие из группы: человек УЖЕ зарегистрирован здесь (chat_id записи
+        # = группа после первого flush? нет — запись осталась на канале).
+        # Первое вступление в группу формально даёт право на ещё одно DM —
+        # но если он был пойман сканом/трекером как участник группы ранее
+        # (chat_id записи = группа), возврата в pending нет:
+        await _add(session, 91, chat=-555)          # трекер: пишет в группе
+        await w.welcome_pending_subscribers(Bot(), session)
+        before = len(sent)
+        await w.on_channel_join(_cm_event(-555, user_id=91), Bot(), session)
+        assert len(sent) == before, \
+            "вступление в чат, где пользователь уже учтён, не должно приветствовать заново"
+        # и даже явное повторное событие там же — тишина
+        await w.on_channel_join(_cm_event(-555, user_id=91), Bot(), session)
+        assert len(sent) == before
+        row = await repo.get(91)
+        assert row.welcomed_at is not None
+
 
 async def _add(session, uid, chat=-100, reset=False):
     from app.handlers.welcome import add_pending_subscriber
@@ -530,7 +580,7 @@ class TestCore:
 
     def test_version(self):
         from app.config import __version__
-        assert __version__ == "1.5.9"
+        assert __version__ == "1.5.10"
 
 
 # ---------------------------------------------------------------------------

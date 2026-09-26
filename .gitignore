@@ -1,5 +1,8 @@
+# Python compiled files
 __pycache__/
 *.pyc
+
+# Environment and secrets
 .env
-*.sqlite3
-venv/
+.env.local
+.env.*.local

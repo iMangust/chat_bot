@@ -217,7 +217,7 @@ async def welcome_pending_subscribers(bot: Bot, session: AsyncSession,
         # регистрируем «заготовку» пользователя, чтобы кнопка «Начать»
         # и /start подхватили уже знакомую систему анкету
         await users.get_or_create(sub.user_id, sub.first_name or "друг", sub.username)
-        await subs.mark_welcomed(sub.user_id)
+        await subs.mark_welcomed(sub.user_id, chat_id=sub.chat_id)
         await session.commit()
         sent += 1
         logger.info("channel welcome DM sent to {}", sub.user_id)
@@ -235,23 +235,39 @@ async def on_channel_join(update: ChatMemberUpdated, bot: Bot,
     фильтр молча съедал приветствия. Идемпотентность гарантирует welcomed_at
     (ровно одно приветствие), а welcome_pending_subscribers дополнительно
     сверяет членство в канале через API.
+
+    Важно про рассылку (v1.5.10): если человек состоит в НЕСКОЛЬКИХ
+    отслеживаемых чатах, он получит ОДНО приветствие, а не по DM на каждый
+    чат. Раньше любое chat_member-событие сбрасывало welcomed_at, и участник
+    канала + группы получал два приветствия подряд. Теперь welcome_sent_chat_id
+    фиксирует, ради какого чата уже отправлено приветствие: повторный вход в
+    НЕГО же не сбрасывает ничего; право на ещё один DM даёт только вступление
+    в чат, отличный и от текущего chat_id, и от welcome_sent_chat_id.
     """
     member = update.new_chat_member
     if member.user.is_bot or member.user.id == bot.id:
         return
-    ids = get_settings().tracked_chat_ids
+    st = get_settings()
     # Бот — админ и канала, и группы: chat_member приходит из обоих. Приветствуем
     # события отслеживаемых чатов; при пустом списке tracked — любой канал.
-    if not (update.chat.type == "channel" or not ids or update.chat.id in ids):
-        return
-    # Реальное событие вступления: если человек уже приветствовался ради
-    # ДРУГОГО отслеживаемого чата — разрешаем ещё одно приветствие (один DM
-    # на чат). Сброс делает add_if_new(reset_welcome=True), поэтому отдельный
-    # reset_welcome здесь не нужен и повторных сбросов не допускает.
+    if update.chat.type == "channel":
+        if st.channel_chat_id and update.chat.id != st.channel_chat_id:
+            return  # событие из канала, который мы не отслеживаем
+    else:
+        if st.tracked_chat_ids and update.chat.id not in st.tracked_chat_ids:
+            return  # событие из группы, которая нам не интересна
+    from app.db.repositories import SubscriberRepository
+    existing = await SubscriberRepository(session).get(member.user.id)
+    # Сброс welcomed_at (право на ещё одно приветствие) — только для реального
+    # вступления в ДРУГОЙ чат: не тот, где зарегистрирован сейчас, и не тот,
+    # ради которого уже отправляли приветствие.
+    reset_welcome = bool(existing is None
+                         or (existing.chat_id != update.chat.id
+                             and existing.welcome_sent_chat_id != update.chat.id))
     await add_pending_subscriber(
         session, member.user.id, update.chat.id,
         first_name=member.user.first_name or "", username=member.user.username,
-        reset_welcome=True)
+        reset_welcome=reset_welcome)
     # Доставка: welcome_pending_subscribers сам сверит участие хотя бы в одном
     # обязательном чате через API (см. gate.required_chats) и учтёт welcomed_at.
     await welcome_pending_subscribers(bot, session, limit=5)

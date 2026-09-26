@@ -317,6 +317,10 @@ class ChannelSubscriber(Base):
     first_name: Mapped[str] = mapped_column(String(128), default="")
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     welcomed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # v1.5.10: чат, ради которого отправлено последнее приветствие. Нужно,
+    # чтобы участник канала + группы не получал по DM на каждое событие
+    # chat_member (сброс welcomed_at разрешён только для ДРУГОГО чата).
+    welcome_sent_chat_id: Mapped[int | None] = mapped_column(BigInteger)
 
 
 class ChatSettings(Base):
