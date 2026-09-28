@@ -1,0 +1,32 @@
+# --- Core (актуальные проверенные версии, v1.4.4 — обновлены, тесты 80 passed) ---
+aiogram>=3.31,<4.0          # long polling, callbacks, FSM, реакции (Bot API 7+/9.x)
+SQLAlchemy[asyncio]>=2.1,<2.2  # async ORM; [asyncio] => тянет greenlet (иначе ImportError в conftest на CI)
+aiomysql>=0.3.2             # MySQL-драйвер (prod)
+aiosqlite>=0.22             # SQLite для тестов/dev
+greenlet>=3.0              # async-стек SQLAlchemy (требование conftest на CI)
+redis>=8.1                  # кулдауны/FSM (RESP2 protocol=2 — совместимо со старым Redis/Memurai)
+APScheduler>=3.11,<4.0      # фоновые задачи (деградация, уведомления)
+loguru>=0.7.3               # логирование
+pydantic>=2.13              # модели
+pydantic-settings>=2.15     # конфигурация из .env
+python-dotenv>=1.2          # загрузка .env
+Pillow>=12.3                # карточки профиля (этап 5)
+
+# --- MTProto-синхронизация подписчиков канала (v1.5.11+) ---
+# v1.5.17: ставится ОБЯЗАТЕЛЬНО, если в .env заданы API_ID/API_HASH — бот сам
+# запускает авто-синк участников при старте и периодический дельта-синк.
+# ВАЖНО: версия закреплена (<1.35), т.к. начиная с Telethon 1.35+ у
+# iter_participants()/get_participants() НЕТ параметра request_size (в v1.5.16
+# это давало «unexpected keyword argument» и синк возвращал 0 участников).
+# Код v1.5.17 совместим с обеими сигнатурами, но фиксация убирает сюрпризы.
+telethon>=1.34,<1.35
+
+# --- Dev / тесты ---
+pytest>=9.1
+pytest-asyncio>=1.4
+
+# --- Веб-оболочка (панель управления, run_gui.bat) ---
+fastapi>=0.116
+uvicorn>=0.35
+websockets>=12.0   # WebSocket-стрим логов в панель
+httpx>=0.28        # реальная погода Камчатки (только OpenWeather / openweathermap.org) в карточке питомца
