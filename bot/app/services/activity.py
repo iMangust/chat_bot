@@ -28,22 +28,19 @@ from app.utils.html_text import esc
 from app.utils.redis import set_cooldown
 from app.utils.local_time import now as local_now
 
-
 def _aware(dt: datetime) -> datetime:
     """Приводит datetime из БД к aware-камчатскому (MySQL/DATETIME возвращает naive)."""
     from app.utils.local_time import localize
     return localize(dt)
 
-
 def _day(dt: datetime) -> datetime:
     dt = _aware(dt)
     return dt.replace(hour=0, minute=0, second=0, microsecond=0)
 
-
 class ActivityService:
     def __init__(self, session: AsyncSession, bot=None) -> None:
         self.session = session
-        self.bot = bot  # опционально: для мгновенных уведомлений о ачивках/локапах в ЛС
+        self.bot = bot
         self.users = UserRepository(session)
         self.activity = ActivityRepository(session)
         self.achievements = AchievementService(session)
@@ -70,9 +67,6 @@ class ActivityService:
         user = await self.users.get(user_id)
         if user is None or user.is_banned:
             return None
-        # Автор поста в канале — сам канал (sender_chat): у него нет ЛС и он
-        # не проходил онбординг. Регистрируем «виртуального» автора, чтобы
-        # канальная активность начислялась на статистику канала.
         if not user.onboarded:
             if chat_id == user_id:
                 user.onboarded = True
@@ -80,7 +74,7 @@ class ActivityService:
                     try:
                         chat = await self.bot.get_chat(user_id)
                         user.first_name = (chat.title or chat.username or "")[:128]
-                    except Exception as exc:  # бот не видит канал — оставляем как есть
+                    except Exception as exc:
                         logger.debug("channel author name fetch failed: {}", exc)
                 await self.session.flush()
             else:
@@ -89,7 +83,6 @@ class ActivityService:
         now = local_now()
         length = len(text or "")
 
-        # --- фильтры (логируем всё для антифрод-аналитики) ---
         skip_reason: str | None = None
         if is_command:
             skip_reason = "command"
@@ -112,34 +105,29 @@ class ActivityService:
         if skip_reason is not None:
             return entry
 
-        # --- засчёт: XP + монеты + стрик ---
         await self._credit_referral(user)
 
         xp_gain = self.settings.xp_per_message
-        # небольшие бонусы за «социальные» форматы: голосовые/кружки дороже текста,
-        # reply — взаимодействие. Тип медиа определяет бонус (см. tracker.MEDIA_XP_BONUS).
         if has_media:
             try:
                 from app.handlers.tracker import MEDIA_XP_BONUS
                 xp_gain += MEDIA_XP_BONUS.get(media_type or "", 1)
-            except ImportError as exc:  # трекер не импортируется — дефолтный бонус
+            except ImportError as exc:
                 logger.debug("MEDIA_XP_BONUS import failed, fallback +1: {}", exc)
                 xp_gain += 1
         if is_reply:
             xp_gain += 1
         coins_gain = self.settings.coins_per_message_cap
 
-        # стрик обновляем ДО начисления XP, чтобы ачивки видели актуальное значение
         self._update_streak(user, now)
         new_level, new_xp, leveled_to = self._apply_user_xp(user, xp_gain)
         user.xp = new_xp
         user.level = new_level
         user.coins += coins_gain
-        user.messages_count += 1  # денормализованный счётчик для топов
+        user.messages_count += 1
 
         await self.session.flush()
 
-        # --- пересчёт достижений по активности ---
         counters = await self._counters(user, now)
         unlocked = await self.achievements.check(user_id, counters)
 
@@ -148,13 +136,6 @@ class ActivityService:
         for ach in unlocked:
             logger.bind(notify=True).info("achievement {} unlocked for {}", ach.code, user_id)
 
-        # v1.5.9: НИКАКИХ мгновенных DM за каждое сообщение/стикер. Вся фоновая
-        # активность (XP, монеты, стрики, пересчёт ачивок) проходит молча.
-        # Мгновенное уведомление — только секретная ачивка «Сова» (редкое
-        # событие, см. handlers/tracker.py). Важные события уходят в очередь
-        # NotificationQueue и доставляются планировщиком раз в минуту:
-        #  - левелапы — сюда;
-        #  - достижения — через AchievementService._grant_rewards -> queue_notification.
         if leveled_to:
             from app.services.notifications import queue_levelup
             await queue_levelup(self.session, user_id, leveled_to)
@@ -194,7 +175,7 @@ class ActivityService:
                 f"Приглашено всего: {gained}.",
               parse_mode="HTML",
             )
-        except Exception as exc:  # ЛС закрыты — не критично
+        except Exception as exc:
             logger.debug("referral notify failed for {}: {}", inviter.tg_id, exc)
         logger.info("referral credited: inviter={} invitee={}", inviter.tg_id, user.tg_id)
 
@@ -249,7 +230,6 @@ class ActivityService:
         user = await self.users.get(from_user)
         if user is None or user.is_banned or not user.onboarded:
             return False
-        # суточный лимит засчитанных реакций от одного фейкера к одному цели
         day_start = _day(local_now())
         given_today = (await self.session.execute(
             select(func.count()).select_from(ReactionLog).where(
@@ -268,7 +248,6 @@ class ActivityService:
             return False
 
         user.reactions_given += 1
-        # небольшой XP за социальное действие (без монет — только за сообщения)
         _, user.xp, leveled_to = self._apply_user_xp(user, 1)
         target = await self.users.get(to_user)
         if target is not None and target.tg_id != from_user:
@@ -280,9 +259,6 @@ class ActivityService:
 
         counters = {"reactions_given": user.reactions_given}
         unlocked = await self.achievements.check(from_user, counters)
-        # v1.5.9: никаких мгновенных DM за реакции — левелап уходит в очередь
-        # (доставится планировщиком раз в минуту), достижения уже в очереди
-        # через AchievementService._grant_rewards.
         if leveled_to:
             from app.services.notifications import queue_levelup
             await queue_levelup(self.session, from_user, leveled_to)
@@ -290,9 +266,6 @@ class ActivityService:
             logger.bind(notify=True).info("achievement {} unlocked for {}", ach.code, from_user)
         return True
 
-    # ------------------------------------------------------------------
-    # Вспомогательные методы
-    # ------------------------------------------------------------------
     @staticmethod
     def _apply_user_xp(user: User, gained: int) -> tuple[int, int, list[int]]:
         from app.utils.formatting import apply_xp
@@ -333,12 +306,10 @@ class ActivityService:
             "coins_earned": user.coins,
             "reactions_given": user.reactions_given,
             "reactions_received": user.reactions_received,
-            # пользовательские счётчики (invites и т.п.)
             "invites": await self.users.get_stat(user.tg_id, "invites"),
             "games_won": await self.users.get_stat(user.tg_id, "games_won"),
             "top1_day": await self.users.get_stat(user.tg_id, "top1_day"),
         }
-        # питомец: уровень + агрегаты действий из pet_actions_log (для ачивок тамагочи)
         pet = (await self.session.execute(
             select(Pet).where(Pet.user_id == user.tg_id, Pet.is_archived.is_(False))
         )).scalars().first()
@@ -347,8 +318,6 @@ class ActivityService:
             pets = PetRepository(self.session)
             counters["pet_level"] = pet.level
             counters["pet_feeds"] = await pets.count_actions(pet.id, "feed")
-            # прогулка логируется как "walk" (старт) и "walk_done" (финиш с наградой);
-            # считаем завершённые, плюс "walk" для старых записей без walk_done
             counters["pet_walks"] = (
                 await pets.count_actions(pet.id, "walk_done")
                 + await pets.count_actions(pet.id, "walk")

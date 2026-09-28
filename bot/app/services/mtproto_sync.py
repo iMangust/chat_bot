@@ -35,7 +35,6 @@ from loguru import logger
 
 from app.config import get_settings
 
-
 async def collect_participant_ids() -> list[int]:
     """Список user_id участников всех обязательных чатов (без дублей).
 
@@ -49,11 +48,8 @@ async def collect_participant_ids() -> list[int]:
     from app.services.mtproto_client import holder, resolve_channel_entity
 
     if not holder.is_connected():
-        await holder.get()  # понятная RuntimeError-подсказка, если не настроено
+        await holder.get()
 
-    # v2.0.3: collect_participants_by_chat сужает список чатов до одного,
-    # подменяя gate.required_chats (см. его docstring) — читаем отсюда, чтобы
-    # per-chat сбор не требовал дублирования Telethon-механики.
     from app.middlewares import gate as _gate_mod
     chats = _gate_mod.required_chats()
     if not chats:
@@ -65,24 +61,12 @@ async def collect_participant_ids() -> list[int]:
         target = uname or cid
         try:
             entity = await resolve_channel_entity(target)
-        except Exception as exc:  # noqa: BLE001 — wrong_type/username_not_occupied и т.п.
+        except Exception as exc:
             logger.error("MTProto: не удалось разрешить чат {!r}: {}"
                          " (укажите CHANNEL_USERNAME/public-ссылку)", target, exc)
             continue
         users: set[int] = set()
         total_count = None
-        # v1.5.17: ОСНОВНОЙ источник участников — асинхронный обход
-        # iter_participants()/get_participants() (Telethon возвращает один и тот
-        # же _ParticipantsIter; в раннинге event loop используется __aiter__).
-        # Причины прошлых провалов:
-        #  * iter_participants(..., request_size=200) — Telethon НЕ принимает
-        #    request_size (лог: «got an unexpected keyword argument»), исключение
-        #    глоталось и синк давал 0 при живом канале;
-        #  * GetFullChannel отдаёт лишь выборку из 0-21 id — только на него
-        #    полагаться нельзя.
-        # Для группы со СКРЫТЫМ списком участников сервер ответит
-        # PARTICIPANTS_TOO_LARGE даже админу — это отдельная строка в логе:
-        # лечится включением «Показывать список участников» в настройках группы.
         async def _collect() -> int:
             n = 0
             async for p in client.iter_participants(entity, aggressive=True):
@@ -94,17 +78,16 @@ async def collect_participant_ids() -> list[int]:
         try:
             await _collect()
         except TypeError as exc:
-            # совместимость на случай иной сигнатуры в других версиях Telethon
             logger.debug("MTProto: iter_participants({}) TypeError: {} — "
                          "пробую get_participants()", target, exc)
             try:
                 async for p in client.get_participants(entity):
                     if not getattr(p, "bot", False):
                         users.add(int(p.id))
-            except Exception as exc2:  # noqa: BLE001
+            except Exception as exc2:
                 logger.warning("MTProto: get_participants({}) failed: {}",
                                target, exc2)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             code = getattr(exc, "message", None) or str(exc)
             hint = ""
             if "PARTICIPANTS_TOO_LARGE" in str(code).upper():
@@ -113,14 +96,13 @@ async def collect_participant_ids() -> list[int]:
                         "(Telegram не отдаёт его даже админу MTProto)")
             logger.warning("MTProto: сбор участников {} не удался: {}{}",
                            target, code, hint)
-        # GetFullChannel — как дополнение: точный счётчик + кэш id (ускоряет)
         try:
             full = (await client(GetFullChannelRequest(entity))).full_chat
             total_count = getattr(full, "participants_count", None)
             for u in getattr(full, "participants", []) or []:
                 if not getattr(u, "bot", False):
                     users.add(int(u.id))
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.debug("MTProto: get_full_channel({}) failed: {}", target, exc)
         if not users:
             logger.error(
@@ -136,7 +118,6 @@ async def collect_participant_ids() -> list[int]:
                         total_count if total_count is not None else "?")
         ids |= users
     return sorted(ids)
-
 
 async def collect_participants_by_chat() -> dict[int, set[int]]:
     """Участники каждого обязательного чата отдельно: {chat_id: {user_id}}.
@@ -164,7 +145,7 @@ async def collect_participants_by_chat() -> dict[int, set[int]]:
                 (str(_i), _u)]
             try:
                 ids = await collect_participant_ids()
-            except Exception as exc:  # noqa: BLE001 — чат недоступен: пусто
+            except Exception as exc:
                 logger.warning("MTProto: сбор участников {} сорвался: {}",
                                cid, str(exc)[:120])
                 ids = []
@@ -172,7 +153,6 @@ async def collect_participants_by_chat() -> dict[int, set[int]]:
     finally:
         gate_mod.required_chats = orig
     return out
-
 
 async def sync_subscribers(first_run: bool = False) -> dict:
     """Заносит участников каналов в реестр доступа channel_subscribers.
@@ -202,12 +182,9 @@ async def sync_subscribers(first_run: bool = False) -> dict:
     factory = async_sessionmaker(engine, expire_on_commit=False)
     added = 0
     self_ids: set[int] = {await _self_bot_id()}
-    # v1.5.18: MTProto-аккаунт (он же может быть админом/владельцем чатов)
-    # физически присутствует в каналах — заносить себя в реестр подписчиков
-    # бессмысленно (сервисный аккаунт с ботом не взаимодействует).
     with contextlib.suppress(Exception):
         from app.services.mtproto_client import holder
-        me = holder.me  # кэшируется при подключении (свойство, без await)
+        me = holder.me
         if me is not None:
             self_ids.add(int(me.id))
     try:
@@ -227,7 +204,6 @@ async def sync_subscribers(first_run: bool = False) -> dict:
     result = {"total": total, "added": added}
     logger.info("MTProto sync done: {} (проверено чатов: {})", result, len(per_chat))
     return result
-
 
 async def full_rescan_subscribers() -> dict:
     """v1.5.73: полный автоматический скан ВСЕХ участников обязательных чатов.
@@ -257,7 +233,7 @@ async def full_rescan_subscribers() -> dict:
 
     self_ids: set[int] = {await _self_bot_id()}
     with contextlib.suppress(Exception):
-        me = holder.me  # кэшируется при подключении (свойство, без await)
+        me = holder.me
         if me is not None:
             self_ids.add(int(me.id))
 
@@ -269,14 +245,10 @@ async def full_rescan_subscribers() -> dict:
             target = uname or cid
             members = await iter_all_participants(target)
             if not members:
-                # v1.5.74: честная причина вместо гадания «аккаунт не в чате?» —
-                # её записал mtproto_client (PARTICIPANTS_TOO_LARGE, нет entity,
-                # сбой access_hash…). Без неё rescan молча давал 0 при живом
-                # канале (лог 17:02), хотя дельта-синк тех же людей видел.
                 try:
                     from app.services.mtproto_client import last_scan_error
                     reason = await last_scan_error()
-                except Exception:  # noqa: BLE001
+                except Exception:
                     reason = ""
                 reason = reason or ("MTProto не вернул участников (аккаунт не в "
                                     "чате / PARTICIPANTS_TOO_LARGE / нет доступа)")
@@ -296,7 +268,6 @@ async def full_rescan_subscribers() -> dict:
                                              username=m.get("username")):
                         added += 1
                 else:
-                    # свежие имя/юзернейм — чтобы статистика и гейт были точными
                     changed = False
                     if m.get("first_name") and row.first_name != m["first_name"]:
                         row.first_name = m["first_name"]
@@ -306,19 +277,15 @@ async def full_rescan_subscribers() -> dict:
                         changed = True
                     if changed:
                         updated += 1
-            # человек мог состоять только в ЭТОМ чате, а запись-«подтверждение»
-            # из гейта иметь с chat_id=0 — add_if_new выше уже закрыл это
         await session.commit()
     result = {"seen": total_seen, "added": added, "updated": updated}
     if failures:
-        # v1.5.74: прокидываем причину пустого скана наружу (в /syncnow rescan)
         result["errors"] = failures
     logger.info("📡 MTProto full rescan: {:n} участник(ов) просмотрено, "
                 "{} новых в реестр доступа, {} обновлено{}", total_seen, added,
                 updated,
                 f" (ошибок чатов: {len(failures)})" if failures else "")
     return result
-
 
 async def _self_bot_id() -> int:
     """id основного бота — он не «подписчик», в реестре доступа ему не место."""
@@ -328,12 +295,10 @@ async def _self_bot_id() -> int:
     except (ValueError, IndexError):
         return -1
 
-
 def mtproto_configured() -> bool:
     """Можно ли вообще запускать MTProto-синк (ключи + чем авторизоваться)."""
     from app.services.mtproto_client import credentials_configured, telethon_available
     return telethon_available() and credentials_configured()
-
 
 async def autosync_if_configured(first_run: bool | None = None) -> dict | None:
     """Синк при старте бота: полная синхронизация при первой загрузке базы.
@@ -355,7 +320,6 @@ async def autosync_if_configured(first_run: bool | None = None) -> dict | None:
                 "ПОЛНАЯ" if full else "дельта", known)
     return await sync_subscribers(first_run=full)
 
-
 async def login_and_print_session_string() -> str:
     """Интерактивный логин (--login): телефон → код → 2FA.
 
@@ -363,7 +327,7 @@ async def login_and_print_session_string() -> str:
     безинтерактивного деплоя. Секреты в лог не пишутся.
     """
     from app.services.mtproto_client import holder
-    client = await holder.get()          # сам запросит phone/code/password
+    client = await holder.get()
     string = await client.session.save_to_string()
     me = holder.me
     print("\n✅ Логин успешен:", me.id, me.username or "")
@@ -372,13 +336,12 @@ async def login_and_print_session_string() -> str:
     print(string)
     return string
 
-
 async def main(argv: list[str] | None = None) -> int:
     argv = argv if argv is not None else sys.argv[1:]
     if "--login" in argv:
         try:
             await login_and_print_session_string()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.error("MTProto login failed: {}", exc)
             return 1
         finally:
@@ -388,7 +351,7 @@ async def main(argv: list[str] | None = None) -> int:
     first_run = "--first-run" in argv
     try:
         res = await sync_subscribers(first_run=first_run)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.error("MTProto sync failed: {}", exc)
         return 1
     finally:
@@ -396,7 +359,6 @@ async def main(argv: list[str] | None = None) -> int:
         await holder.disconnect()
     print(f"Участников: {res['total']}, новых в реестре доступа: {res['added']}")
     return 0
-
 
 if __name__ == "__main__":
     with contextlib.suppress(KeyboardInterrupt):

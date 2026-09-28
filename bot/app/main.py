@@ -28,7 +28,6 @@ from app.services.achievements import seed_achievements
 from app.tasks.scheduler import build_scheduler
 from app.utils.redis import close_redis, init_redis
 
-
 def setup_logging(level: str) -> None:
     logger.remove()
     logger.add(sys.stderr, level=level,
@@ -36,7 +35,6 @@ def setup_logging(level: str) -> None:
                       "<cyan>{name}</cyan> - <level>{message}</level>")
     logger.add("logs/bot_{time:YYYY-MM-DD}.log", rotation="1 day", retention="14 days",
                level="DEBUG", encoding="utf-8")
-
 
 def _make_fsm_storage(redis_url: str):
     """FSM-хранилище с совместимостью со старыми Redis (< 6.0).
@@ -66,11 +64,10 @@ def _make_fsm_storage(redis_url: str):
         storage = RedisStorage(redis=Redis(connection_pool=pool))
         logger.info("FSM: RedisStorage (protocol=2/RESP2 — совместимо со старым Redis/Memurai)")
         return storage
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning(f"Redis недоступен для FSM ({exc!r}) — использую MemoryStorage "
                        f"(стейты сбрасываются при рестарте; для dev допустимо)")
         return MemoryStorage()
-
 
 async def probe_fsm_storage(storage):
     """Активная проверка хранилища FSM (PING).
@@ -88,24 +85,22 @@ async def probe_fsm_storage(storage):
         await storage.redis.ping()
         await storage.get_state(key=StorageKey(bot_id=0, chat_id=0, user_id=0))
         return storage
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning(
             f"FSM-хранилище (Redis) проверено и отключено ({type(exc).__name__}: {exc}) — "
             f"перехожу на MemoryStorage (кулдауны стейтов сбрасываются при рестарте)")
         return MemoryStorage()
-
 
 async def _column_exists(conn, table: str, column: str) -> bool:
     """Проверка наличия колонки через inspector (кросс-СУБД, без information_schema вручную)."""
     def _check(sync_conn) -> bool:
         try:
             cols = {c["name"] for c in sa_inspect(sync_conn).get_columns(table)}
-        except Exception:  # таблицы ещё нет — create_all создаст её со свежей схемой
+        except Exception:
             return False
         return column in cols
 
     return bool(await conn.run_sync(_check))
-
 
 async def _index_exists(conn, index_name: str) -> bool:
     def _check(sync_conn) -> bool:
@@ -117,29 +112,16 @@ async def _index_exists(conn, index_name: str) -> bool:
 
     return bool(await conn.run_sync(_check))
 
-
-# описание лёгких миграций: таблица → [(колонка, DDL-тип)]
-# (словарь по таблице один раз: повторный ключ «pets» затирал бы первые
-#  колонки; v2.0: схема channel_subscribers пересоздана целиком — см.
-#  _migrate_channel_subscribers_v20 и alembic-ревизию 0004)
 _LIGHT_COLUMNS: dict[str, list[tuple[str, str]]] = {
-    # история питомцев: у пользователя может быть несколько строк
-    # (архив + текущий), «текущий» выбирается фильтром is_archived=False.
     "pets": [
         ("generation", "INTEGER NOT NULL DEFAULT 1"),
         ("is_archived", "BOOLEAN NOT NULL DEFAULT 0"),
         ("archived_at", "DATETIME"),
         ("archive_reason", "VARCHAR(32)"),
-        # сон/разбужение: время засыпания питомца (честный расчёт накопленной
-        # энергии при принудительном пробуждении). create_all НЕ добавляет
-        # колонки в существующие таблицы — без лёгкой миграции живая БД падала
-        # с OperationalError (1054 Unknown column 'sleep_started_at') на любой
-        # странице питомца.
         ("sleep_started_at", "DATETIME"),
-        ("walk_start_at", "DATETIME"),   # v1.5.71: досрочный возврат с прогулки
+        ("walk_start_at", "DATETIME"),
     ],
 }
-
 
 def _cs_new_ddl(dialect: str) -> str:
     """DDL реестра подписчиков v2.0 (одна строка на человека, PK=user_id)."""
@@ -167,9 +149,6 @@ def _cs_new_ddl(dialect: str) -> str:
                 ever_contacted TINYINT(1) NOT NULL DEFAULT 0,
                 last_contact_at DATETIME(6)
             )"""
-    # SQLite: колонка объявлена TEXT, а не JSON — иначе у раннего SQLite без
-    # json-поддержки SQLAlchemy читает значения как строки и гейт сравнивает
-    # int с str («человек в реестре, но доступа нет» — боёвка 23:41).
     return """
         CREATE TABLE channel_subscribers_new (
             user_id BIGINT NOT NULL PRIMARY KEY,
@@ -181,7 +160,6 @@ def _cs_new_ddl(dialect: str) -> str:
             ever_contacted BOOLEAN NOT NULL DEFAULT 0,
             last_contact_at DATETIME
         )"""
-
 
 def _migrate_sqlite_transfer_v20(
     old_pk_pairs: bool, has_contact: bool, cols: set[str] | None = None
@@ -203,8 +181,6 @@ def _migrate_sqlite_transfer_v20(
     contact_expr = ("MAX(ever_contacted)" if has_contact else "0") if old_pk_pairs \
         else ("ever_contacted" if has_contact else "0")
     if old_pk_pairs:
-        # SQLite: GROUP_CONCAT(DISTINCT) не поддерживается —
-        # сначала уникальные пары (user, chat) в подтаблицу.
         return [
             """
             CREATE TEMP TABLE _cs_chats AS
@@ -243,7 +219,6 @@ def _migrate_sqlite_transfer_v20(
         FROM channel_subscribers""",
     ]
 
-
 async def _migrate_channel_subscribers_v20(engine) -> None:
     """channel_subscribers → схема v2.0: чистый реестр членства для гейта.
 
@@ -269,7 +244,7 @@ async def _migrate_channel_subscribers_v20(engine) -> None:
             return set()
         try:
             return {c["name"] for c in insp.get_columns("channel_subscribers")}
-        except Exception:  # pragma: no cover — таблица исчезла в процессе
+        except Exception:
             return set()
 
     async with engine.begin() as conn:
@@ -277,13 +252,8 @@ async def _migrate_channel_subscribers_v20(engine) -> None:
         try:
             cols = await conn.run_sync(_table_cols)
             if not cols:
-                return  # таблицы ещё нет — create_all создаст свежую схему v2.0
+                return
             if not (cols & {"welcome_status", "welcomed_at", "dm_tries"}):
-                # v2.0.2: колонки уже новые, но тип chats мог остаться JSON из
-                # старой ревизии DDL. На SQLite без компилированной json-
-                # функции SQLAlchemy читает такую колонку СТРОКОЙ; декод
-                # спасает _JsonIntList.process_result_value, но перестроим
-                # таблицу в TEXT детерминированно (идемпотентно по содержимому).
                 if dialect == "sqlite":
                     def _chats_is_json_type(sync_conn) -> bool:
                         insp = sa_inspect(sync_conn)
@@ -309,7 +279,7 @@ async def _migrate_channel_subscribers_v20(engine) -> None:
                             "RENAME TO channel_subscribers"))
                         logger.info("миграция v2.0.2: channel_subscribers.chats "
                                     "перестроена JSON → TEXT")
-                return  # уже v2.0
+                return
             old_pk_pairs = "chat_id" in cols
             has_contact = "ever_contacted" in cols
             contact_expr = ("MAX(ever_contacted)" if old_pk_pairs and has_contact
@@ -329,7 +299,7 @@ async def _migrate_channel_subscribers_v20(engine) -> None:
                 await conn.execute(text(
                     "ALTER TABLE channel_subscribers_new RENAME TO channel_subscribers"))
                 for idx_sql in common_idx:
-                    with contextlib.suppress(Exception):  # MySQL < 8.0.29 без IF NOT EXISTS
+                    with contextlib.suppress(Exception):
                         await conn.execute(text(idx_sql))
 
             if dialect == "sqlite":
@@ -357,7 +327,7 @@ async def _migrate_channel_subscribers_v20(engine) -> None:
                     FROM channel_subscribers o {join}
                     GROUP BY {grp}"""))
                 await _swap_and_finish()
-            else:  # mysql / mariadb
+            else:
                 await conn.execute(text(new_ddl))
                 if old_pk_pairs:
                     chats_expr = """(
@@ -382,10 +352,9 @@ async def _migrate_channel_subscribers_v20(engine) -> None:
                 await _swap_and_finish()
             logger.info("миграция v2.0: channel_subscribers → чистый реестр "
                         "членства (PK=user_id, chats; welcome-колонки удалены)")
-        except Exception as exc:  # noqa: BLE001 — повторная миграция безопасна
+        except Exception as exc:
             logger.warning("миграция channel_subscribers v2.0 пропущена: {}: {}",
                            type(exc).__name__, str(exc)[:200])
-
 
 async def _backfill_subscriber_chats_v202(engine) -> None:
     """Реестр v2.0.2: у строк со пустым ``chats`` заполняем членства из
@@ -426,7 +395,7 @@ async def _backfill_subscriber_chats_v202(engine) -> None:
                     WHERE chat_id IN ({placeholders})
                     GROUP BY user_id, chat_id"""), params)
             rows = list(res.fetchall())
-        except Exception as exc:  # noqa: BLE001 — нет таблицы/колонки: best-effort
+        except Exception as exc:
             logger.info("backfill chats v2.0.2: chat_messages_log недоступны "
                         "({}), пропускаем", type(exc).__name__)
             return
@@ -436,7 +405,7 @@ async def _backfill_subscriber_chats_v202(engine) -> None:
                     WHERE chat_id IN ({placeholders})
                     GROUP BY from_user, chat_id"""), params)
             rows += list(res.fetchall())
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
         if not rows:
             return
@@ -458,8 +427,6 @@ async def _backfill_subscriber_chats_v202(engine) -> None:
                         raise ValueError
                     nums = [int(x) for x in parsed]
                 except (ValueError, TypeError):
-                    # не JSON — вытаскиваем целые числа напрямую; иначе битая
-                    # строка молча превращалась в «чатов нет» (боёвка 23:41)
                     nums = [int(x) for x in _re.findall(r"-?\d+", str(raw))]
             return _json.dumps(sorted(set(nums)))
 
@@ -471,7 +438,6 @@ async def _backfill_subscriber_chats_v202(engine) -> None:
         for uid, raw in rows_empty.all():
             norm = _normalize_chats(raw)
             if norm != "[]":
-                # уже непустой после нормализации (битый текст) — чиним на месте
                 await conn.execute(text(
                     "UPDATE channel_subscribers SET chats = :chats "
                     "WHERE user_id = :uid"),
@@ -483,7 +449,7 @@ async def _backfill_subscriber_chats_v202(engine) -> None:
         for uid, cid in rows:
             by_user.setdefault(int(uid), []).append(int(cid))
         for uid, chats in by_user.items():
-            if uid in have_by_user:   # строка с пустым списком членств
+            if uid in have_by_user:
                 continue
             res = await conn.execute(text(
                 """INSERT OR IGNORE INTO channel_subscribers
@@ -507,7 +473,6 @@ async def _backfill_subscriber_chats_v202(engine) -> None:
             logger.info("миграция v2.0.2: чат(ы) восстановлены из истории "
                         "сообщений/реакций для {} подписчик(ов)", fixed)
 
-
 async def _light_migrations(conn) -> None:
     """Лёгкие инкрементальные миграции для колонок, появившихся после v1.4.6.
 
@@ -524,7 +489,7 @@ async def _light_migrations(conn) -> None:
     """
     from sqlalchemy import text
 
-    dialect = conn.dialect.name  # 'mysql' | 'postgresql' | 'sqlite' | ...
+    dialect = conn.dialect.name
 
     for table, columns in _LIGHT_COLUMNS.items():
         for column, ddl_type in columns:
@@ -533,16 +498,12 @@ async def _light_migrations(conn) -> None:
                 try:
                     await conn.execute(text(sql))
                     logger.info("лёгкая миграция: {}.{} добавлена ({})", table, column, dialect)
-                except Exception as exc:  # noqa: BLE001 — гонка с другим воркером и т.п.
+                except Exception as exc:
                     logger.warning(
                         "лёгкая миграция {} не применена ({}): {}",
                         sql[:80], type(exc).__name__, exc,
                     )
 
-    # Защита «не более одного текущего питомца на пользователя» — частичный
-    # уникальный индекс. Частичные индексы (WHERE) MySQL не поддерживает:
-    # на MySQL/MariaDB целостность обеспечивает фильтр is_archived=False во
-    # всех запросах + проверка в сервисе усыновления.
     idx_name = "uq_pets_current_per_user"
     if dialect in {"postgresql", "sqlite"} and not await _index_exists(conn, idx_name):
         try:
@@ -550,33 +511,20 @@ async def _light_migrations(conn) -> None:
                 f"CREATE UNIQUE INDEX IF NOT EXISTS {idx_name} "
                 "ON pets (user_id) WHERE COALESCE(is_archived, 0) = 0"
             ))
-        except Exception as exc:  # noqa: BLE001 — старая sqlite без partial-индексов и т.п.
+        except Exception as exc:
             logger.debug("частичный индекс {} пропущен: {}", idx_name, type(exc).__name__)
 
-
 async def on_startup(bot: Bot) -> None:
-    # схемы (в проде — Alembic; create_all оставлен для dev-скорости)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await _light_migrations(conn)
-    # v2.0: channel_subscribers → чистый реестр членства (PK=user_id, chats);
-    # welcome-колонки (очереди/статусы/backoff) удаляются за ненадобностью —
-    # бот первым не пишет, доступ = факт подписки (middlewares/gate.py).
     await _migrate_channel_subscribers_v20(engine)
-    # v2.0.2: пустые chats добираем из истории сообщений/реакций — иначе
-    # человек с приватностью («Bot API отдаёт left») остаётся без доступа,
-    # хотя давно состоит в чате и писал там (лог 23:41).
     await _backfill_subscriber_chats_v202(engine)
     async with session_factory() as session:
         await seed_achievements(session)
-        await seed_items(session)   # справочник магазина (идемпотентно)
+        await seed_items(session)
         await session.commit()
-    # Меню команд ("/...") регистрируем ТОЛЬКО для личных чатов.
-    # В группах и каналах взаимодействие с ботом запрещено моделью доступа
-    # (AccessGateMiddleware), поэтому список команд там вводил в заблуждение.
-    # setMyCommands без scope не сбрасывает скоупы — сначала очищаем всё,
-    # иначе старые глобальные команды продолжат отображаться в группах.
-    await bot.delete_my_commands()          # глобальный scope
+    await bot.delete_my_commands()
     await bot.delete_my_commands(scope=BotCommandScopeAllGroupChats())
     await bot.delete_my_commands(scope=BotCommandScopeAllChatAdministrators())
     private_scope = BotCommandScopeAllPrivateChats()
@@ -597,10 +545,6 @@ async def on_startup(bot: Bot) -> None:
         scope=private_scope,
     )
     logger.info("✅ bot started")
-    # v1.5.12: если настроен полный Telegram API (Telethon) — тянем список
-    # участников канала ЦЕЛИКОМ (Bot API его не отдаёт). Первый прогон —
-    # полная синхронизация (старые подписки тоже получат приветствие),
-    # дальше дельта по cron в scheduler. Ошибки MTProto не валят старт бота.
     try:
         from app.services.mtproto_sync import autosync_if_configured
         st = get_settings()
@@ -610,17 +554,15 @@ async def on_startup(bot: Bot) -> None:
                 logger.info("🔄 MTProto autosync: {}", res)
         else:
             asyncio.create_task(autosync_guard())
-    except Exception as exc:  # noqa: BLE001 — без telethon/кредов бот живёт на Bot API
+    except Exception as exc:
         logger.info("MTProto autosync недоступен ({}) — работаю только на Bot API",
                     type(exc).__name__)
-
 
 async def autosync_guard() -> None:
     """Фоновый запасной автосинк (если on_startup пропустил запуск)."""
     with contextlib.suppress(Exception):
         from app.services.mtproto_sync import autosync_if_configured
         await autosync_if_configured()
-
 
 async def main() -> None:
     settings = get_settings()
@@ -635,29 +577,19 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     storage = _make_fsm_storage(settings.redis_url)
-    storage = await probe_fsm_storage(storage)  # PING до поллинга: несовместимый Redis -> MemoryStorage
+    storage = await probe_fsm_storage(storage)
 
     dp = Dispatcher(storage=storage)
-    # мидлвары: сессия БД — глобально, throttle — только на callbacks
     dp.update.outer_middleware(DbMiddleware())
-    # Сбор знаний о членстве (v2.0): chat_member/new_chat_members идут в
-    # реестр ДО фильтрации гейтом (outer-мидлвары выполняются в порядке
-    # регистрации; иначе события групп отрезались бы доступом и не попадали
-    # бы в базу никогда).
     dp.update.outer_middleware(access_handlers.AccessEventsMiddleware())
-    # Глобальный доступ (v2.0): только ЛС + правило «подписан — значит доступ
-    # есть» (TRACKED_CHAT_IDS / канал). Никаких приветствий: бот первым не
-    # пишет. Пассивный трекер активности (tracker.py) работает поверх этого
-    # правила, потому что регистрируется отдельным фильтром по chat.type.
     dp.update.outer_middleware(AccessGateMiddleware())
     dp.callback_query.outer_middleware(ThrottleMiddleware())
-    # страховка на уровне callback-мидлваров (ошибки до/вне хендлеров:
-    # throttle, FSM, БД-сессия) — пользователь получит тост, а не «вечные часы»
     dp.callback_query.outer_middleware(errors.ErrorNotifyMiddleware())
 
     dp.include_routers(
-        errors.error_router,   # страховка: падающий хендлер не «вешает» callback
-        admin.router,          # /mtproto, /syncnow — только ADMIN_IDS (проверка внутри)
+        errors.error_router,
+        admin.router,
+        access_handlers.router,
         start.router,
         tracker.router,
         tamagotchi.router,
@@ -669,16 +601,9 @@ async def main() -> None:
         stats.router,
         settings.router,
     )
-    # Глобальная страховка уровня диспетчера: даже если ошибка возникнет вне
-    # error_router (например, в другом мидлваре), обработчик на месте —
-    # aiogram не будет логировать её как «Unhandled exceptions».
     dp.errors.register(errors.on_error)
 
     scheduler = build_scheduler(bot)
-    # v1.5.16: планировщик стартует СРАЗУ (раньше — только внутри on_startup,
-    # который aiogram вызывает уже ВНУТРИ start_polling; из-за этого первая
-    # MTProto-дельта падала с «Bot is not initialized», т.к. session.start()
-    # ещё не выполнился к моменту add_job(next_run_time=+90s)).
     scheduler.start()
 
     loop = asyncio.get_running_loop()
@@ -690,18 +615,11 @@ async def main() -> None:
     @dp.startup()
     async def _startup() -> None:
         await on_startup(bot)
-        # scheduler.start() идемпотентен; вызываем ещё раз на случай, если
-        # main-путь (webhook) пойдёт в обход блока выше
         with contextlib.suppress(Exception):
             scheduler.start()
-        # v1.5.12: UserBot (полный API, режимы user/hybrid) — ошибки не валят бота
         with contextlib.suppress(Exception):
             from app.services.userbot import start_userbot
             await start_userbot(bot)
-        # v1.5.19: MTProto reaction listener — Bot API НЕ отдаёт боту реакции
-        # на чужие сообщения (посты канала, сообщения других юзеров). User-
-        # аккаунт в тех же чатах видит их сырыми TL-update'ами и засчитывает
-        # через общую логику process_reaction. Без ключей MTProto — no-op.
         with contextlib.suppress(Exception):
             from app.services.mtproto_reactions import start_reaction_listener
             await start_reaction_listener()
@@ -727,15 +645,11 @@ async def main() -> None:
                 bot,
                 timeout=settings.polling_timeout,
                 
-                # реакции приходят только если разрешены явно + бот админ с правом реакций
                 allowed_updates=dp.resolve_used_update_types() + ["message_reaction", "message_reaction_count", "chat_member"],
                 handle_signals=False,
             )
-            # polling завершился сам (например, остановлен извне) —
-            # переводим процесс в штатную финализацию через finally
             stop.set()
         else:
-            # aiogram 3.x: обработчик называется SimpleRequestHandler
             from aiogram.webhook.aiohttp_server import SimpleRequestHandler
             from aiohttp import web
 
@@ -753,14 +667,11 @@ async def main() -> None:
             await site.start()
             logger.info("webhook listening on :{}", settings.webhook_port)
 
-        await stop.wait()  # ждём сигнал завершения
+        await stop.wait()
     finally:
-        # Штатный graceful shutdown: эмитим событие shutdown — хендлер _shutdown
-        # закроет scheduler/Redis/engine/session.
         if not dp.frozen:
             with contextlib.suppress(Exception):
                 await dp.emit_shutdown()
-
 
 if __name__ == "__main__":
     with contextlib.suppress(Exception):

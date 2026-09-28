@@ -5,7 +5,6 @@ import math
 
 from app.config import get_settings
 
-
 def xp_needed_for_level(level: int) -> int:
     """XP, необходимый для перехода с `level` на `level+1`.
 
@@ -14,7 +13,6 @@ def xp_needed_for_level(level: int) -> int:
     """
     base = get_settings().xp_level_base
     return max(int(base * (level ** 1.5)), 1)
-
 
 def apply_xp(level: int, xp: int, gained: int) -> tuple[int, int, list[int]]:
     """Начисляет XP, возвращает (new_level, new_xp, [список новых уровней]).
@@ -29,7 +27,6 @@ def apply_xp(level: int, xp: int, gained: int) -> tuple[int, int, list[int]]:
         new_levels.append(level)
     return level, xp, new_levels
 
-
 def progress_bar(value: float, total: float, length: int = 10) -> str:
     """▰▰▰▰▱▱▱▱▱▱ — прогресс-бар из эмодзи-блоков."""
     if total <= 0:
@@ -37,11 +34,9 @@ def progress_bar(value: float, total: float, length: int = 10) -> str:
     filled = min(length, max(0, round(value / total * length)))
     return "▰" * filled + "▱" * (length - filled)
 
-
 def stat_bar(value: float, length: int = 10) -> str:
     """Прогресс-бар стата питомца (0..100)."""
     return progress_bar(value, 100.0, length)
-
 
 def format_uptime(seconds: float) -> str:
     """Человекочитаемо: '2 ч 5 мин'."""
@@ -54,14 +49,9 @@ def format_uptime(seconds: float) -> str:
         return f"{h} ч"
     return f"{m} мин" if m else "<1 мин"
 
-
 def clamp(v: float, lo: float = 0.0, hi: float = 100.0) -> float:
     return math.floor(min(max(v, lo), hi) * 100) / 100
 
-
-# ---------------------------------------------------------------------------
-# Погода/сезоны: сезонная модификация деградации статов
-# ---------------------------------------------------------------------------
 WEATHER_SEASONS: dict[str, dict] = {
     "winter": {"icon": "❄️", "name": "Зима", "energy_mult": 1.3, "hunger_mult": 1.2,
                "happy_mult": 1.0, "hygiene_mult": 0.8,
@@ -77,14 +67,12 @@ WEATHER_SEASONS: dict[str, dict] = {
                "note": "осенняя хандра: 😊 Счастье тает чуть быстрее"},
 }
 
-# праздничные дни (месяц, день) — доп. бонусы в этот день
 HOLIDAYS: dict[tuple[int, int], tuple[str, str]] = {
     (1, 1): ("🎄", "С Новым годом! Все награды XP сегодня ×1.5"),
     (2, 14): ("💘", "День святого Валентина: игры приносят +50% 😊 Счастья"),
     (10, 31): ("🎃", "Хэллоуин: прогулки находят вдвое больше монет"),
     (12, 31): ("🥂", "Канун Нового года: кормления дают +20% сытости"),
 }
-
 
 def season_for(dt) -> str:
     """Метеорологические сезоны северного полушария."""
@@ -97,21 +85,12 @@ def season_for(dt) -> str:
         return "summer"
     return "autumn"
 
-
-# ---------------------------------------------------------------------------
-# Праздничные события: модификаторы наград за действия в этот день.
-# HOLIDAY_EFFECTS описывает, КАКИЕ механики усиливает праздник; формат —
-# dict по «тегам» действий, значения — множители. Тэги читает TamagotchiService
-# (xp/hunger/play_happy/walk_coins), поэтому новые праздники добавляются
-# без правки кода хендлеров.
-# ---------------------------------------------------------------------------
 HOLIDAY_EFFECTS: dict[tuple[int, int], dict[str, float]] = {
-    (1, 1): {"xp": 1.5},                          # Новый год: все награды XP ×1.5
-    (2, 14): {"play_happy": 1.5},                 # Валентин: игры +50% счастья
-    (10, 31): {"walk_coins": 2.0},                # Хэллоуин: прогулки ×2 монет
-    (12, 31): {"feed_hunger": 1.2},               # Канун НГ: кормления +20% сытости
+    (1, 1): {"xp": 1.5},
+    (2, 14): {"play_happy": 1.5},
+    (10, 31): {"walk_coins": 2.0},
+    (12, 31): {"feed_hunger": 1.2},
 }
-
 
 def holiday_effect_mults(dt=None) -> dict[str, float]:
     """Множители на сегодня (пустой dict — обычный день). День считается по камчатскому времени."""
@@ -119,7 +98,6 @@ def holiday_effect_mults(dt=None) -> dict[str, float]:
         from app.utils.local_time import now as _local_now
         dt = _local_now()
     return HOLIDAY_EFFECTS.get((dt.month, dt.day), {})
-
 
 def weather_info(dt=None) -> dict:
     """Текущая «погода» для карточки питомца и подсказок (сезон/праздник — по камчатскому времени)."""

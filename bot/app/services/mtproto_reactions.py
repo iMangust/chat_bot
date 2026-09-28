@@ -45,35 +45,30 @@ from app.config import get_settings
 from app.services.mtproto_client import resolve_channel_entity
 from app.utils.local_time import now as local_now
 
-# Сырые TL-типы импортируются лениво (telethon опционален).
 _LISTENER_TASK: asyncio.Task | None = None
-# снапшот последних известных реаций: {(chat_id, msg_id): {(uid, emoji_key)}}
 _SNAPSHOTS: dict[tuple[int, int], set[tuple[int, str]]] = {}
-
 
 def _emoji_key(rt) -> str | None:
     """Ключ реакции из TL-объекта ReactionEmoji/ReactionCustomEmoji."""
     try:
         from telethon.tl.types import ReactionEmoji, ReactionCustomEmoji
-    except Exception:  # noqa: BLE001
+    except Exception:
         return getattr(rt, "emoticon", None)
     if isinstance(rt, ReactionEmoji):
         return rt.emoticon
     if isinstance(rt, ReactionCustomEmoji):
-        return "💎"  # premium-реакция — как в Bot API-хендлере
+        return "💎"
     return getattr(rt, "emoticon", None)
-
 
 def _peer_uid(peer) -> int | None:
     """user_id из PeerUser/PeerChannel/PeerChat (каналы не считаем)."""
     try:
         from telethon.tl.types import PeerUser
-    except Exception:  # noqa: BLE001
+    except Exception:
         return getattr(peer, "user_id", None)
     if isinstance(peer, PeerUser):
         return int(peer.user_id)
-    return None  # реакция от имени канала/группы — персонального автора нет
-
+    return None
 
 async def _credit(from_uid: int, chat_id: int, msg_id: int, emoji: str) -> None:
     """Зачесть одну новую реакцию, используя общую логику ActivityService."""
@@ -85,8 +80,6 @@ async def _credit(from_uid: int, chat_id: int, msg_id: int, emoji: str) -> None:
         repo = svc.activity
         to_user = await repo.get_message_author(chat_id, msg_id)
         if to_user is None or to_user == from_uid:
-            # Автор сообщения неизвестен (бот его не видел) или само-реакция.
-            # Для каналов попробуем подтянуть пост через MTProto один раз.
             if to_user is None:
                 to_user = await _backfill_channel_post(chat_id, msg_id)
             if to_user is None or to_user == from_uid:
@@ -99,7 +92,6 @@ async def _credit(from_uid: int, chat_id: int, msg_id: int, emoji: str) -> None:
         if credited:
             logger.info("😀 MTProto-реакция зачтена: {}→{} (msg {})",
                         from_uid, to_user, msg_id)
-
 
 async def _backfill_channel_post(chat_id: int, msg_id: int) -> int | None:
     """Пост канала: получаем автора сообщения через MTProto и пишем в лог.
@@ -131,43 +123,33 @@ async def _backfill_channel_post(chat_id: int, msg_id: int) -> int | None:
             )
             await session.commit()
         return uid
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.debug("MTProto backfill post {}:{} failed: {}",
                      chat_id, msg_id, type(exc).__name__)
         return None
-
 
 def _tracked_ids() -> set[int]:
     ids = get_settings().tracked_chat_ids
     return {abs(int(i)) for i in ids} if ids else set()
 
-
 def _chat_id_of(peer) -> int | None:
     """Peer → отрицательный chat_id в нотации Bot API (-100… для каналов)."""
     try:
         from telethon.tl.types import PeerChannel, PeerChat
-    except Exception:  # noqa: BLE001
+    except Exception:
         return getattr(peer, "channel_id", None) and -(10**13 + int(peer.channel_id))
     if isinstance(peer, PeerChannel):
-        # -100xxxxxxxxxx как у Bot API: префикс «-100» + id канала.
-        # Ошибка v1.5.19 (найдена тестом): -(10**13 + id) сдвигал на 14 цифр
-        # и давал несовпадение с tracked_chat_ids ⇒ listener молчал.
         return int(f"-100{int(peer.channel_id)}")
     if isinstance(peer, PeerChat):
         return -int(peer.chat_id)
     return None
 
-
 def _snapshot_size() -> None:
     """Гигиена памяти: снапшоты старых сообщений понемногу устаревают."""
     global _SNAPSHOTS
     if len(_SNAPSHOTS) > 4096:
-        # отбрасываем половину произвольно — худшее последствие: повторная
-        # реакция после eviction будет засчитана заново только если её сняли
-        # и поставили снова (дедуп ReactionLog всё равно защитит от дабля)
         keep = list(_SNAPSHOTS.items())[len(_SNAPSHOTS) // 2:]
         _SNAPSHOTS = dict(keep)
-
 
 async def handle_message_reactions(update) -> None:
     """UpdateMessageReactions: полный список реакций {кто, какую} на сообщение.
@@ -203,7 +185,6 @@ async def handle_message_reactions(update) -> None:
         with contextlib.suppress(Exception):
             await _credit(uid, chat_id, msg_id, emoji)
 
-
 async def handle_bot_reaction(update) -> None:
     """UpdateBotMessageReaction: дельта-событие о реакции на сообщение БОТА.
 
@@ -225,14 +206,13 @@ async def handle_bot_reaction(update) -> None:
         with contextlib.suppress(Exception):
             await _credit(actor, chat_id, int(update.msg_id), emoji)
 
-
 async def _on_raw_update(event) -> None:
     """Точка входа events.Raw: фильтруем нужные TL-апдейты по типу."""
     try:
         from telethon.tl.types import UpdateBotMessageReaction, UpdateMessageReactions
-    except Exception:  # noqa: BLE001 — telethon не установлен
+    except Exception:
         return
-    update = event  # Raw.build возвращает сам update
+    update = event
     if isinstance(update, UpdateMessageReactions):
         with contextlib.suppress(Exception):
             await handle_message_reactions(update)
@@ -240,9 +220,7 @@ async def _on_raw_update(event) -> None:
         with contextlib.suppress(Exception):
             await handle_bot_reaction(update)
 
-
 _REACTION_TYPES: tuple[type, ...] | None = None
-
 
 def _reaction_types() -> tuple[type, ...]:
     """TL-типы реакций для фильтра events.Raw(types=...).
@@ -258,7 +236,6 @@ def _reaction_types() -> tuple[type, ...]:
                                        UpdateMessageReactions)
         _REACTION_TYPES = (UpdateMessageReactions, UpdateBotMessageReaction)
     return _REACTION_TYPES
-
 
 async def warm_snapshots(client, hours: int = 24) -> int:
     """Prime снапшотов реакций на свежих сообщениях отслеживаемых чатов.
@@ -286,8 +263,6 @@ async def warm_snapshots(client, hours: int = 24) -> int:
                     continue
                 snap: set[tuple[int, str]] = set()
                 for cr in (getattr(m, "reactions", None) or []):
-                    # MessageReactions/ChatReactions: по одному author_id
-                    # (last_viewers — не авторы, их игнорируем)
                     uid = getattr(cr, "sender_id", None) or getattr(cr, "user_id", None)
                     emoji = _emoji_key(getattr(cr, "emotion", None)
                                        or getattr(cr, "emoticon", None)) \
@@ -296,12 +271,11 @@ async def warm_snapshots(client, hours: int = 24) -> int:
                         snap.add((int(uid), emoji))
                 _SNAPSHOTS[key] = snap
                 primed += 1
-        except Exception as exc:  # noqa: BLE001 — один чат не валит prime
+        except Exception as exc:
             logger.debug("MTProto reactions prime {} failed: {}", cid,
                          type(exc).__name__)
     _snapshot_size()
     return primed
-
 
 async def start_reaction_listener() -> asyncio.Task | None:
     """Подписаться на raw-события реакций. None — если MTProto не настроен."""
@@ -312,33 +286,30 @@ async def start_reaction_listener() -> asyncio.Task | None:
         return None
     try:
         client = await holder.get()
-    except Exception as exc:  # noqa: BLE001 — нет сессии: живём на Bot API
+    except Exception as exc:
         logger.warning("MTProto reaction listener не запущен: {}: {}",
                        type(exc).__name__, str(exc)[:160])
         return None
     from telethon import events
 
     @client.on(events.Raw(types=_reaction_types()))
-    async def _on_raw(update) -> None:  # Raw.build возвращает сам TL-update
+    async def _on_raw(update) -> None:
         try:
             await _on_raw_update(update)
-        except Exception as exc:  # noqa: BLE001 — логируем, не глотаем молча
+        except Exception as exc:
             logger.debug("MTProto reaction event error: {}: {}",
                          type(exc).__name__, str(exc)[:200])
 
     _LISTENER_TASK = asyncio.current_task()
     logger.info("😀 MTProto reaction listener активен (реакции на любые "
                 "сообщения в отслеживаемых чатах засчитываются)")
-    # baseline снапшотов: не потерянные новые реакции и без backfill
     try:
         n = await warm_snapshots(client)
         logger.info("😀 MTProto reactions: baseline снапшотов на {} сообщ.", n)
-    except Exception as exc:  # noqa: BLE001 — prime не должен валить листенер
+    except Exception as exc:
         logger.debug("MTProto reactions prime failed: {}: {}",
                      type(exc).__name__, str(exc)[:160])
     return _LISTENER_TASK
 
-
 async def stop_reaction_listener() -> None:
-    # подписки живут на клиенте; при остановке клиента они снимаются сами
     _SNAPSHOTS.clear()

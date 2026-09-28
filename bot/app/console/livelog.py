@@ -22,8 +22,6 @@ from loguru import logger
 from app.config import __version__, get_settings
 from app.console.runtime import runtime
 
-
-# ------------------------------------------------------------- console sink
 def _console_sink(message) -> None:
     """Живой цветной вывод в консоль (то же форматирование, что у aiogram-логов)."""
     record = message.record
@@ -36,13 +34,9 @@ def _console_sink(message) -> None:
             f"\033[90m{record['name']}\033[0m - {color}{record['message']}\033[0m")
     print(line, flush=True)
 
-
 def setup_live_logging(level: str) -> None:
     """Консоль (живая) + файл логов. Отдельно от GUI-настройки в runtime."""
     logger.remove()
-    # Логи пишем в кодировку консоли (bat выставляет chcp 1251 + PYTHONIOENCODING).
-    # Принудительный utf-8 здесь ломал кириллицу на русской Windows — эмодзи
-    # заменяются на '?', но текст остаётся читаемым.
     enc = (os.environ.get("PYTHONIOENCODING") or "cp1251").split(":")[0]
     with contextlib.suppress(Exception):
         if hasattr(sys.stdout, "reconfigure"):
@@ -53,8 +47,6 @@ def setup_live_logging(level: str) -> None:
     logger.add("logs/bot_{time:YYYY-MM-DD}.log", rotation="1 day",
                retention="14 days", level="DEBUG", encoding="utf-8")
 
-
-# --------------------------------------------------------------- title bar
 def set_console_title(title: str) -> bool:
     """Заголовок окна консоли: WinAPI (для run.bat) или ANSI escape (fallback)."""
     try:
@@ -65,9 +57,8 @@ def set_console_title(title: str) -> bool:
         sys.stdout.write(f"\x1b]0;{title}\x07")
         sys.stdout.flush()
         return True
-    except Exception:  # noqa: BLE001 — украшательство, ронять ради него бота нельзя
+    except Exception:
         return False
-
 
 async def _title_updater(stop: asyncio.Event) -> None:
     """Пока бот жив, раз в 5 секунд обновляем заголовок окна статусом."""
@@ -83,8 +74,6 @@ async def _title_updater(stop: asyncio.Event) -> None:
         with contextlib.suppress(asyncio.TimeoutError):
             await asyncio.wait_for(stop.wait(), timeout=5.0)
 
-
-# -------------------------------------------------------------------- main
 async def amain() -> int:
     """Точка live-режима: старт → ожидание сигнала/падения поллинга → стоп."""
     settings = get_settings()
@@ -93,7 +82,7 @@ async def amain() -> int:
 
     try:
         await runtime.start()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.error("не удалось запустить бота: {}", exc)
         return 2
 
@@ -102,7 +91,6 @@ async def amain() -> int:
     for sig in (signal.SIGINT, signal.SIGTERM):
         with contextlib.suppress(NotImplementedError):
             loop.add_signal_handler(sig, stop.set)
-        # Windows: SIGINT приходит как KeyboardInterrupt — его ловит main() ниже
 
     title_task = asyncio.create_task(_title_updater(stop), name="title-updater")
 
@@ -123,7 +111,6 @@ async def amain() -> int:
     await runtime.stop()
     return 0
 
-
 def main() -> None:
     """Синхронная обёртка с graceful shutdown по Ctrl+C и паузой после ошибок."""
     code = 0
@@ -133,7 +120,7 @@ def main() -> None:
         print("\n⛔ Ctrl+C — останавливаю бота…", flush=True)
         with contextlib.suppress(Exception):
             asyncio.run(runtime.stop())
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.critical("нештатное завершение: {}", exc)
         code = 1
     finally:
@@ -143,7 +130,6 @@ def main() -> None:
             with contextlib.suppress(Exception):
                 input("\nНажмите Enter, чтобы закрыть окно…")
         sys.exit(code)
-
 
 if __name__ == "__main__":
     main()

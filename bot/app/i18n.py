@@ -9,11 +9,10 @@ from __future__ import annotations
 
 from typing import Any
 
-DEFAULT_LANG = "ru"  # единственный поддерживаемый язык
+DEFAULT_LANG = "ru"
 
 STRINGS: dict[str, str] = {
 
-    # --- питомец: действия ---
     "pet.eaten": "🍎 Ням-ням{tail}",
     "pet.sleeping_deny": "😴 Питомец спит — не мешай!",
     "pet.too_tired_play": "😩 Питомец слишком устал для игр. Пусть поспит!",
@@ -31,14 +30,8 @@ STRINGS: dict[str, str] = {
     "pet.not_sick": "😀 Питомец здоров, лекарство не нужно.",
     "pet.walk_started": "🚶 Питомец ушёл гулять на {hours} ч. Вернётся в {time} — с новостями!",
     "pet.walk_already": "🚶 Питомец уже гуляет… Вернётся в {time} (через {minutes}).",
-    # v1.5.71: досрочный возврат с прогулки (как «⏰ Разбудить» для сна) —
-    # начисляется только то, что реально успело накопиться за прогулку
     "pet.not_walking": "🏡 Он и не гуляет — дома.",
-    # v1.5.72: строка «накоплено» собирается в end_walk — там видно, были ли
-    # находки/XP вообще (в нейтральном событии монет нет, и писать «+0 монет» — обманывать игрока).
     "pet.walk_returned_early": "🚶 Ты позвал питомца домой! Погулял {hours} ч → {reward} (уже учтено на карточке).",
-    # v1.5.67: прогулка = состояние занятости (как в жизни: покормить/поиграть
-    # можно, а мыться/тренироваться/спать на улице негде)
     "pet.walk_back_line": "🚶 Сейчас на прогулке… Вернётся в {time} (через {minutes}).",
     "pet.walk_deny_sleep": "🚶 {name} гуляет — спать на улице нельзя! Дождись возвращения.",
     "pet.walk_deny_wash": "🚿 {name} гуляет — мыться на прогулке негде! Дождись возвращения.",
@@ -67,7 +60,6 @@ STRINGS: dict[str, str] = {
     "pet.mood_sick": "Больной! Нужно лечение 💊",
     "pet.mood_sleeping": "Спит… не буди 💤",
     "pet.mood_hungry": "Голодный! Дай поесть 🍎",
-    # --- топы/статы ---
     "top.title": "🏅 <b>Топы чата · {period}</b>",
     "top.talkers": "💬 <b>Болтуны</b>",
     "top.reactors": "💖 <b>По полученным реакциям</b>",
@@ -79,21 +71,17 @@ STRINGS: dict[str, str] = {
     "top.award_hint": "<i>/award — итоги прошлой недели с призами 🎁</i>",
     "stats.title": "📊 <b>Твоя статистика</b>",
     "ach.title": "🏆 <b>Достижения</b>",
-    # --- магазин ---
     "shop.title": "🛒 <b>Магазин питомца</b> · у тебя 🪙 {coins}",
     "shop.bought": "Куплено: {icon} {name}!",
     "shop.no_pet": "Нет питомца или пользователя",
     "shop.not_enough": "Не хватает {missing} монет 🪙",
     "inv.empty": "🎒 Инвентарь пуст. Загляни в 🛒 Магазин!",
-    # --- уведомления ---
     "notif.pet_sad": "🐾 {name} {reason}",
     "notif.streak_burned": "🔥 Твоя серия дней сгорела. Начни новую — напиши что-нибудь в чат!",
     "notif.weekly_prize": "🎉 Ты #{place} в недельном топе болтунов! Приз: 🪙 {prize} монет.",
-    # --- misc ---
     "common.no_pet": "🥚 У тебя пока нет питомца. Нажми /start и пройди онбординг!",
     "common.back": "⬅️ Назад",
 }
-
 
 def tf(lang: str | None, key: str, **params: Any) -> str:
     """Перевод по явному «языку» (параметр сохранён для совместимости
@@ -103,7 +91,6 @@ def tf(lang: str | None, key: str, **params: Any) -> str:
         return text.format(**params) if params else text
     except (KeyError, IndexError):
         return text
-
 
 def t(key: str, **params: Any) -> str:
     """Русская строка по ключу."""

@@ -50,7 +50,7 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-_bg_tasks: set = set()  # сильные ссылки на fire-and-forget таски (см. _remember_membership)
+_bg_tasks: set = set()
 
 from aiogram import BaseMiddleware
 from aiogram.enums import ChatType
@@ -60,24 +60,20 @@ from loguru import logger
 
 from app.config import get_settings
 
-SUBSCRIBE_CACHE_SEC = 300        # TTL положительного кэша проверки подписки
-_NEG_TTL_SEC = 15                # короткий кэш «не подписан», чтобы не жечь лимит API
-_GRANTED_KEY = "sub_granted"     # ключ в context данных хендлера
+SUBSCRIBE_CACHE_SEC = 300
+_NEG_TTL_SEC = 15
+_GRANTED_KEY = "sub_granted"
 
-_pos_cache: dict[Any, float] = {}  # user_id -> monotonic-срок жизни «подписан»
-_neg_cache: dict[Any, float] = {}  # user_id -> monotonic-срок жизни «не подписан»
-_warned_no_admin: set[str] = set()  # каналы, по которым уже били в лог/админу
-_warned_no_gating: set[str] = set()  # «гейт выключен» (чат не настроен) — разово
+_pos_cache: dict[Any, float] = {}
+_neg_cache: dict[Any, float] = {}
+_warned_no_admin: set[str] = set()
+_warned_no_gating: set[str] = set()
 
-# v2.0.4 (подробный дебаг): диагностика последнего отказа гейта для команды
-# /accessdebug — {user_id, api, mt} (пополняется в _mtproto_and_scan_fallback).
 gate_last_reason: dict[str, Any] = {}
-
 
 class _SyntheticPrivateChat:
     """Заглушка чата: приватный тип для ЛС-колбэков без message.chat."""
     type = ChatType.PRIVATE
-
 
 def required_chats() -> list[tuple[str, str]]:
     """Чаты, подписка хотя бы на ОДИН из которых обязательна: [(id, username)].
@@ -112,7 +108,6 @@ def required_chats() -> list[tuple[str, str]]:
         chats.append((str(st.channel_chat_id or ""), st.channel_username or ""))
     return chats
 
-
 def subscribe_kb() -> "Any":
     """Клавиатура для неподписанных: ссылка на канал + проверка подписки."""
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -120,14 +115,11 @@ def subscribe_kb() -> "Any":
     rows = []
     ch = st.channel_username or ""
     if not ch:
-        # юзернейма канала нет — ведём на первый отслеживаемый чат по ID
         for cid, uname in required_chats():
             if uname:
                 ch = uname
                 break
             if cid.startswith("-100"):
-                # t.me/+<внутренний id> — рабочая ссылка-приглашение для
-                # приватных каналов/групп без юзернейма
                 ch = f"+{cid[4:]}"
                 break
     if ch:
@@ -137,7 +129,6 @@ def subscribe_kb() -> "Any":
                                       callback_data="gate:check")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
-
 def reset_subscribe_cache(user_id: int | None = None) -> None:
     """Сбрасывает кэш проверки подписки (по пользователю или весь целиком)."""
     if user_id is None:
@@ -146,7 +137,6 @@ def reset_subscribe_cache(user_id: int | None = None) -> None:
     else:
         _pos_cache.pop(user_id, None)
         _neg_cache.pop(user_id, None)
-
 
 async def _notify_admin(bot, text_key: str, uid: str, text: str) -> None:
     """Предупреждает админа (ADMIN_IDS) о проблеме конфигурации гейта.
@@ -161,9 +151,8 @@ async def _notify_admin(bot, text_key: str, uid: str, text: str) -> None:
         return
     try:
         await bot.send_message(ids[0], text)
-    except Exception as exc:  # noqa: BLE001 — нотификация не должна валить гейт
+    except Exception as exc:
         logger.warning("gate admin notice for {} failed to send: {}", uid, exc)
-
 
 async def known_subscriber_in_db(user_id: int) -> bool:
     """Числится ли пользователь в реестре с ПОДТВЕРЖДЁННЫМ членством.
@@ -172,7 +161,6 @@ async def known_subscriber_in_db(user_id: int) -> bool:
     источники (MTProto / живой скан / fail-open).
     """
     return bool(await known_subscriber_ids([user_id]))
-
 
 async def known_subscriber_ids(user_ids: list[int] | set[int]) -> set[int]:
     """Множество id из user_ids, у которых в channel_subscribers есть НЕПУСТОЙ
@@ -203,10 +191,9 @@ async def known_subscriber_ids(user_ids: list[int] | set[int]) -> set[int]:
                 ChannelSubscriber.user_id.in_(ids))
             rows = (await session.execute(stmt)).all()
         return {int(uid) for uid, chats in rows if list(chats or [])}
-    except Exception as exc:  # noqa: BLE001 — фолбэк не должен ломать доступ
+    except Exception as exc:
         logger.debug("gate db-fallback failed for {}: {}", user_ids, exc)
         return set()
-
 
 def _remember_membership(bot, user_id: int, cid: str, source: str) -> None:
     """Фиксирует подтверждённое членство в реестре (фоновая задача).
@@ -224,16 +211,6 @@ def _remember_membership(bot, user_id: int, cid: str, source: str) -> None:
     async def _run() -> None:
         try:
             if source == "bot-api" and cid:
-                # v2.0.6 (боевой лог 10:45): запись идёт НАПРЯМУЮ в БД через
-                # add_membership_sql (SELECT + UPDATE на стороне СУБД), а не
-                # через ORM-UPSERT record_membership: параллельный писатель
-                # (MTProto-скан/событие чата) мог перезаписать строку поверх
-                # stale-снимка и стереть только что доказанное членство.
-                # Реестр — страховочный источник доступа, его полноту терять
-                # нельзя. Ошибки видны в WARNING (доступ при этом уже выдан
-                # из API-ответа). Sessionmaker — тот же, что у всех путей
-                # реестра (app.db.session), иначе запись и чтение разошлись бы
-                # по разным БД.
                 from app.db.repositories import SubscriberRepository
                 from app.db.session import session_factory
                 async with session_factory() as session:
@@ -243,19 +220,16 @@ def _remember_membership(bot, user_id: int, cid: str, source: str) -> None:
                 from app.handlers.access import register_member
                 await register_member(user_id, int(cid) if cid else None,
                                       real_event=True)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("gate: record membership {} ({}) failed: {}",
                            user_id, source, exc)
-    # fire-and-forget: планируем таск и храним сильную ссылку (иначе GC может
-    # собрать корутину до запуска — RuntimeWarning "was never awaited")
     try:
         loop = asyncio.get_running_loop()
-    except RuntimeError:                      # вне event loop (unit-тесты)
+    except RuntimeError:
         loop = None
     if loop is not None:
         _bg_tasks.add(t := loop.create_task(_run()))
         t.add_done_callback(_bg_tasks.discard)
-
 
 async def _live_scan(bot, user_id: int) -> bool:
     """Живой скан участников + повторная проверка реестра.
@@ -274,10 +248,9 @@ async def _live_scan(bot, user_id: int) -> bool:
     try:
         from app.handlers.access import ensure_registry_fresh
         await ensure_registry_fresh(bot, user_id)
-    except Exception as exc:  # noqa: BLE001 — скан не должен ломать проверку
+    except Exception as exc:
         logger.warning("gate: live scan fallback failed for {}: {}", user_id, exc)
     return await known_subscriber_in_db(user_id)
-
 
 def is_subscribed_cached(user_id: int) -> bool | None:
     """Вердикт гейта из кэша без RPC: True/False или None (нет свежей записи)."""
@@ -289,7 +262,6 @@ def is_subscribed_cached(user_id: int) -> bool | None:
     if neg is not None and neg > now:
         return False
     return None
-
 
 async def _mtproto_status(target: str | int, user_id: int):
     """MTProto-проба статуса пользователя. Возвращает ('ok', status) либо
@@ -319,9 +291,8 @@ async def _mtproto_status(target: str | int, user_id: int):
             return ("silent", reason or "MTProto вернул None (нет клиента/прав/"
                                         "entity; точная причина в логе DEBUG)")
         return ("ok", st)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return ("error", f"{type(exc).__name__}: {str(exc)[:120]}")
-
 
 async def _registry_row_state(user_id: int) -> str:
     """Диагностика строки реестра для логов гейта: существует ли, что в chats."""
@@ -333,9 +304,8 @@ async def _registry_row_state(user_id: int) -> str:
         if row is None:
             return "NO ROW"
         return f"row exists, chats={list(row.chats or [])!r}"
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return f"read failed: {type(exc).__name__}: {str(exc)[:80]}"
-
 
 async def is_channel_subscribed(bot, user_id: int) -> bool:
     """True — пользователь подписан хотя бы на ОДИН обязательный чат
@@ -356,8 +326,6 @@ async def is_channel_subscribed(bot, user_id: int) -> bool:
     """
     chats = required_chats()
     if not chats:
-        # Ни один чат не настроен — проверять подписку негде: доступ открыт,
-        # но админ получает разовое предупреждение (правило 2 не работает).
         logger.error("subscription gate disabled: TRACKED_CHAT_IDS/CHANNEL_* are empty — "
                      "anyone can use the bot")
         _notify_no_gating(bot)
@@ -375,21 +343,17 @@ async def is_channel_subscribed(bot, user_id: int) -> bool:
     logger.info("gate: checking subscription for {} in chats {}",
                 user_id, [c[0] or c[1] for c in chats])
     api_error = False
-    api_status: dict[str, str] = {}   # диагностика: чем ответил Bot API по чатам
-    negative_api = False  # Bot API НЕ подтвердил членство (ложно при приватности)
+    api_status: dict[str, str] = {}
+    negative_api = False
     for cid, uname in chats:
         target = f"@{uname}" if uname else cid
-        uid_key = uname or cid   # стабильный ключ «уже предупреждали»
+        uid_key = uname or cid
         try:
             member = await bot.get_chat_member(target, user_id)
         except TelegramForbiddenError as exc:
-            # Бот не админ чата / неверный ID: это настройка, а не сбой
-            # на секунду. Пробуем следующий чат; fail-open + предупреждение.
             api_error = True
             api_status[target] = f"FORBIDDEN ({str(exc)[:60]})"
             if uid_key not in _warned_no_admin:
-                # предупреждение админу — разовое; в лог пишем каждый сбой,
-                # чтобы проблема была видна даже без Telegram-нотификации
                 logger.warning("cannot check subscription for {}: {} — fail-open",
                                target, exc)
             _notify_no_admin(bot, uid_key)
@@ -404,38 +368,22 @@ async def is_channel_subscribed(bot, user_id: int) -> bool:
         if member.status in ("member", "administrator", "creator"):
             _pos_cache[user_id] = time.monotonic() + SUBSCRIBE_CACHE_SEC
             _neg_cache.pop(user_id, None)
-            # быстрый путь: членство подтверждено API — фиксируем в реестре
             _remember_membership(bot, user_id, cid, "bot-api")
             logger.info("gate: allow {} (Bot API '{}' in {})",
                         user_id, member.status, target)
             return True
-        # Любой не-членский статус (left/kicked/restricted/bot/…) трактуется
-        # как «НЕ ПОДТВЕРЖДЕНО», а не как «не подписан»: при приватности так
-        # отдаются состоящие в чате люди. Итог решают страховки ниже.
         negative_api = True
     if api_error and not negative_api:
-        # ни в один чат проверить не удалось — не глушим бота из-за сбоя
         logger.info("gate: allow {} (fail-open: API unavailable — {})",
                     user_id, api_status)
         return True
     if not negative_api:
-        # ВНИМАНИЕ (v2.0.2, лог 23:41): досюда доходят НЕ только при пустом
-        # списке чатов. Telegram отдаёт «бестатусные» служебные аккаунты
-        # (bots/infinite/pseudo) со статусом вида 'bot' — он не member/admin/
-        # creator и раньше молча ставил negative_api=False ⇒ мгновенный DENY
-        # без цепочки страховок. Теперь перед отказом реестр перечитывается
-        # напрямую: запись из MTProto-синка/chat_member обязана спасти доступ.
         if await known_subscriber_in_db(user_id):
             logger.info("gate: allow {} — present in channel_subscribers registry "
                         "(Bot API returned non-membership status: {})",
                         user_id, api_status)
             _pos_cache[user_id] = time.monotonic() + SUBSCRIBE_CACHE_SEC
             return True
-        # v2.0.4 (подробный дебаг): раньше этот путь выдавал молчаливый DENY
-        # без цепочки страховок. Если хотя бы по одному чату API дал СБОЙ
-        # (а не честный 'left'), отрицание недоказуемо — пробуем MTProto и
-        # живой скан, как при приватности. Это лечит случай «бот не админ /
-        # таймаут сети → человек в реестре не найден → заглушка».
         if api_error:
             logger.info("gate: {} — API mixed ({}); running fallback chain",
                         user_id, api_status)
@@ -449,7 +397,6 @@ async def is_channel_subscribed(bot, user_id: int) -> bool:
                 user_id, api_status, await _registry_row_state(user_id))
             return False
 
-    # --- цепочка страховок: Bot API «ослеплён» приватностью ------------------
     if await _mtproto_and_scan_fallback(bot, user_id, chats, api_status):
         return True
     _neg_cache[user_id] = time.monotonic() + _NEG_TTL_SEC
@@ -458,7 +405,6 @@ async def is_channel_subscribed(bot, user_id: int) -> bool:
         "| MTProto/live-scan: см. строки выше",
         user_id, api_status, await _registry_row_state(user_id))
     return False
-
 
 async def _mtproto_and_scan_fallback(bot, user_id: int,
                                      chats: list[tuple[str, str]],
@@ -478,21 +424,17 @@ async def _mtproto_and_scan_fallback(bot, user_id: int,
     mtproto_client._LAST_SCAN_ERROR), и бот честно говорит об этом вместо
     ложного «не подписан».
     """
-    # 1) Реестр достоверных сигналов членства — дешёвый SELECT раньше
-    #    дорогого RPC (в прошлой версии MTProto-проба шла внутри цикла и
-    #    падала молча, а до реестра дело не доходило вовсе).
     if await known_subscriber_in_db(user_id):
         logger.info("gate: allow {} — not visible via Bot API (privacy?) "
                     "but present in channel_subscribers registry", user_id)
         _pos_cache[user_id] = time.monotonic() + SUBSCRIBE_CACHE_SEC
         return True
-    # 2) MTProto-глаза по конкретному пользователю.
     mt_notes: list[str] = []
     for cid, uname in chats:
         mt_target = uname or cid
         s_mt = str(mt_target).lstrip("@")
         if not (s_mt.startswith("-100") or s_mt.lstrip("-").isdigit()):
-            continue   # @username без числового id — резолвить нечем
+            continue
         kind, st = await _mtproto_status(mt_target, user_id)
         if kind == "error":
             mt_notes.append(f"{mt_target}: ИСКЛЮЧЕНИЕ {st}")
@@ -513,14 +455,10 @@ async def _mtproto_and_scan_fallback(bot, user_id: int,
         logger.warning("gate: MTProto probe did not confirm {} ({}); "
                        "trying live participants scan",
                        user_id, "; ".join(mt_notes))
-    # 3) Живой скан всех участников (разовый, дебаунс на чат): лечит случай
-    #    «подписчик старый, его событий мы не поймали, дельта-синк ещё не
-    #    проходил» — человека заносят в реестр и пропускают сразу.
     if await _live_scan(bot, user_id):
         logger.info("gate: allow {} — found by live participants scan", user_id)
         _pos_cache[user_id] = time.monotonic() + SUBSCRIBE_CACHE_SEC
         return True
-    # 4) Диагностика полноты скана (только ради честного лога, доступ не даёт).
     with contextlib.suppress(Exception):
         from app.handlers.access import last_scan_stats
         from app.services.mtproto_client import chat_participants_count
@@ -538,12 +476,10 @@ async def _mtproto_and_scan_fallback(bot, user_id: int,
                     "пагинация). Отказ может быть ЛОЖНЫМ: включите показ списка "
                     "участников в группе или проверьте, что MTProto-аккаунт "
                     "состоит в чатах", seen, expect)
-    # v2.0.4: причины отказа доступны не только в логах — /accessdebug <id>
-    # показывает этот снимок админу прямо в ЛС.
     try:
         from app.handlers.access import last_scan_stats as _lss
         seen, total = _lss()
-    except Exception:  # noqa: BLE001
+    except Exception:
         seen = total = None
     gate_last_reason.clear()
     gate_last_reason.update({
@@ -556,14 +492,12 @@ async def _mtproto_and_scan_fallback(bot, user_id: int,
     })
     return False
 
-
 async def last_scan_error_safe() -> str:
     """Причина молчания MTProto для диагностики (никогда не бросает)."""
     with contextlib.suppress(Exception):
         from app.services.mtproto_client import last_scan_error
         return await last_scan_error() or ""
     return ""
-
 
 def _notify_no_admin(bot, uid: str) -> None:
     """Разово предупреждает админа, что бот не может проверять чат."""
@@ -576,12 +510,11 @@ def _notify_no_admin(bot, uid: str) -> None:
             f"⚠️ Не могу проверять доступ ({uid}): бот должен быть "
             "администратором канала с правом «Добавлять администраторов» "
             "(Add Admins). Пока доступ работает в режиме разрешения (fail-open)."))
-    except RuntimeError:   # нет running loop — не помечаем «уже предупреждали»
+    except RuntimeError:
         _warned_no_admin.discard(uid)
         return
     _bg_tasks.add(t)
     t.add_done_callback(_bg_tasks.discard)
-
 
 def _notify_no_gating(bot) -> None:
     key = "no-gating"
@@ -600,9 +533,7 @@ def _notify_no_gating(bot) -> None:
     _bg_tasks.add(t)
     t.add_done_callback(_bg_tasks.discard)
 
-
 _ENTRY_COMMANDS = {"start", "help"}
-
 
 def _is_entry_command(message: Message, bot_username: str = "") -> bool:
     """Команда входа (/start, /help) — работает и для неподписанных.
@@ -624,7 +555,6 @@ def _is_entry_command(message: Message, bot_username: str = "") -> bool:
     if named and bot_username:
         return named.lower().lstrip("@") == bot_username.lower().lstrip("@")
     return True
-
 
 async def _resolve_bot_username(bot) -> str:
     """Юзернейм бота (для распознавания адресных команд «/start@NameBot»).
@@ -648,14 +578,12 @@ async def _resolve_bot_username(bot) -> str:
         me = await bot.get_me()
         if getattr(me, "username", None):
             resolved = me.username.lower().lstrip("@")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.debug("gate: get_me failed (username unknown): {}", exc)
     _BOT_USERNAME_CACHE[key] = resolved
     return resolved
 
-
 _BOT_USERNAME_CACHE: dict[int, str] = {}
-
 
 def _addressed_to_this_bot(text: str, bot_username: str) -> bool:
     """/start@OtherBot — команда ДРУГОМУ боту из общего чата.
@@ -668,10 +596,9 @@ def _addressed_to_this_bot(text: str, bot_username: str) -> bool:
     """
     body = text[1:].split()[0] if text.startswith("/") else ""
     if "@" not in body:
-        return True                      # голая команда — адресована всем
+        return True
     name = body.split("@", 1)[1].lower()
     return not bot_username or name == bot_username.lower().lstrip("@")
-
 
 def _is_serviceable_group_message(event) -> bool:
     """Групповое сообщение, которое ведут служебные (безмолвные) хендлеры.
@@ -690,14 +617,12 @@ def _is_serviceable_group_message(event) -> bool:
     return not (event.pinned_message or event.new_chat_title
                 or event.new_chat_photo or event.delete_chat_photo)
 
-
 def _target_user(event) -> User | None:
     if isinstance(event, CallbackQuery):
         return event.from_user
     if isinstance(event, Message):
         return event.from_user
     return None
-
 
 class AccessGateMiddleware(BaseMiddleware):
     """Outer-middleware на все апдейты: приватные чаты + подписка на канал."""
@@ -711,10 +636,6 @@ class AccessGateMiddleware(BaseMiddleware):
         if not isinstance(event, (Message, CallbackQuery)):
             return await handler(event, data)
 
-        # у callback-запросов чат лежит на исходном сообщении — проверяем его,
-        # иначе кнопка из группы просочилась бы к хендлерам. Если сообщение
-        # отправлено в канал (forward) и чата нет вовсе, берём чат автора
-        # колбэка; если и там пусто — не блокируем апдейт молча.
         chat = getattr(event, "chat", None) or getattr(
             getattr(event, "message", None), "chat", None)
         if chat is None and isinstance(event, CallbackQuery):
@@ -724,12 +645,6 @@ class AccessGateMiddleware(BaseMiddleware):
             return await handler(event, data)
 
         if chat.type != ChatType.PRIVATE:
-            # Правило 1: бот отвечает строго в ЛС, в группах/каналах молчит.
-            # В диспетчер пропускаются только служебные хендлеры, которые
-            # НИЧЕГО не пишут в чат: пассивный трекер активности и учёт
-            # новых участников. Все текстовые сообщения, команды и callback'и
-            # в группах глотаются здесь — так «/start» или кнопка в группе не
-            # вызывают никакого ответа.
             if not isinstance(event, Message):
                 with contextlib.suppress(Exception):
                     await event.answer()
@@ -740,36 +655,23 @@ class AccessGateMiddleware(BaseMiddleware):
 
         user = _target_user(event)
         if user is None:
-            return await handler(event, data)   # служебные ЛС-апдейты без автора
+            return await handler(event, data)
         if user.is_bot:
-            return None                          # боты не взаимодействуют с ботом
+            return None
 
         try:
             subscribed = await is_channel_subscribed(data["bot"], user.id)
-        except Exception as exc:  # noqa: BLE001 — любая ошибка проверки => доступ открыт
+        except Exception as exc:
             logger.warning("subscription gate crashed for {}: {} — allow", user.id, exc)
             subscribed = True
 
-        # v2.0.6 (боевой лог 10:45): «gate: allow», а бот молчит. Причин было
-        # две, обе закрыты:
-        #  * адресная форма «/start@Sasha_Ovs_bot» (её присылают кнопки
-        #    «Начать» deep-link/меню команд) больше не считается чужой —
-        #    см. _is_entry_command; она штатный вход даже для неподписанных;
-        #  * команды ДРУГИМ ботам (/start@OtherBot из общей группы) раньше
-        #    глушились молча; теперь пропускаются диспетчеру — наши хендлеры
-        #    сами их отфильтруют, а человек не остаётся без ответа от нужного
-        #    бота из-за нашего гейта.
         text = getattr(event, "text", None) or ""
         bot_name = await _resolve_bot_username(data["bot"]) \
             if text.startswith("/") else ""
         if isinstance(event, Message) and text.startswith("/") \
                 and not _addressed_to_this_bot(text, bot_name):
-            return await handler(event, data)   # команда другому боту — не наше дело
+            return await handler(event, data)
 
-        # Правило 2: без подписки на канал взаимодействие запрещено. Команды
-        # /start и /help работают всегда — иначе неподписанный не сможет
-        # начать (сценарий «только что установил бота»). Остальные кнопки и
-        # текст — только после подтверждения подписки.
         exempt = isinstance(event, Message) and _is_entry_command(event, bot_name)
         if not exempt and not subscribed:
             ch = get_settings().channel_username

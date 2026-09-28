@@ -32,7 +32,7 @@ from app.services.weather import (STAT_LEGEND as _STAT_LEGEND,
 from app.utils.local_time import now as local_now
 
 router = Router(name="tamagotchi")
-_aware_dt = _aware  # алиас: walk_until из БД может быть naive (SQLite) — нормализуем
+_aware_dt = _aware
 
 class AdoptConfirm(StatesGroup):
     """Двухшаговое подтверждение «усыновить нового» (v1.5.22).
@@ -43,28 +43,19 @@ class AdoptConfirm(StatesGroup):
     """
     confirm = State()
 
-
 async def _get_pet(session: AsyncSession, tg_id: int) -> Pet | None:
     return await PetRepository(session).get_by_user(tg_id)
 
-
-# Страница хаба питомца, с которой пользователь пришёл на подэкран:
-# кнопки «🏠 Меню» / «⬅️ Назад» возвращают туда, откуда пришли,
-# а не на «нулевую» страницу. Запоминается per-chat.
-
 _PET_PAGE_CTX: dict[int, int] = {}
-
 
 def pet_page_for(chat_id: int) -> int:
     """Последняя открытая страница хаба для этого чата (0 по умолчанию)."""
     return _PET_PAGE_CTX.get(int(chat_id), 0) % max(1, pet_page_count())
 
-
 def set_pet_page(chat_id: int, page: int) -> int:
     page %= max(1, pet_page_count())
     _PET_PAGE_CTX[int(chat_id)] = page
     return page
-
 
 def _collect_walk_result(svc: TamagotchiService, pet: Pet, session: AsyncSession):
     """Если срок прогулки истёк — возвращаем текст события и начисления.
@@ -76,10 +67,9 @@ def _collect_walk_result(svc: TamagotchiService, pet: Pet, session: AsyncSession
     if pet.walk_until is None:
         return None
     if local_now() < _aware_dt(pet.walk_until):
-        return None   # ещё гуляет
+        return None
     text, coins, xp = svc.finish_walk_event(pet)
     return text, coins, xp
-
 
 HELP_TEXT = (
     "🐾 <b>Как устроен бот: полный гид</b>\n\n"
@@ -169,7 +159,6 @@ HELP_TEXT = (
     "Есть вопрос? Просто напиши в чат — или снова /start 🙂"
 )
 
-
 def _split_html(text: str, limit: int = 4000) -> list[str]:
     """Режет длинный текст на сообщения <=limit, НЕ разрывая HTML-теги.
 
@@ -198,7 +187,6 @@ def _split_html(text: str, limit: int = 4000) -> list[str]:
             return
         part = close_part("\n".join(cur), open_stack)
         chunks.append(part)
-        # открытые теги переносим в следующий чанк
         cur = [reopen(open_stack)] if open_stack else []
         cur_len = len(cur[0]) if cur else 0
 
@@ -208,7 +196,6 @@ def _split_html(text: str, limit: int = 4000) -> list[str]:
             flush()
         cur.append(line)
         cur_len += add
-        # обновляем стек открытых тегов по строке
         for m in tag_re.finditer(line):
             name = m.group(1)
             if m.group(0).startswith("</"):
@@ -219,7 +206,6 @@ def _split_html(text: str, limit: int = 4000) -> list[str]:
     flush()
     return [c for c in (ch.strip("\n") for ch in chunks) if c]
 
-
 @router.message(Command("help"), F.chat.type == "private")
 async def cmd_help(message: Message) -> None:
     """Справка отправляется пачкой: весь гид заведомо длиннее лимита 4096."""
@@ -227,11 +213,10 @@ async def cmd_help(message: Message) -> None:
     try:
         for chunk in _split_html(HELP_TEXT):
             await message.answer(chunk, parse_mode="HTML")
-    except Exception:  # noqa: BLE001 — если HTML всё же где-то сломан, шлём текстом
+    except Exception:
         plain = strip_html_tags(HELP_TEXT)
         for chunk in split_message(plain):
             await message.answer(chunk)
-
 
 @router.message(Command("weather", "погода"), F.chat.type == "private")
 async def cmd_weather(message: Message) -> None:
@@ -239,10 +224,8 @@ async def cmd_weather(message: Message) -> None:
     from app.services.weather import kamchatka_weather, weather_hint_block_fresh
     try:
         w = await kamchatka_weather()
-        # v1.5.69: легенда пяти статов печатается только здесь (полный разбор
-        # по запросу /weather); в карточке питомца она больше не дублируется.
         hint = await weather_hint_block_fresh(walk=True, show_legend=True)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         await message.answer(f"🌦️ Погода временно недоступна ({type(exc).__name__}).")
         return
     text = f"🌦️ Погода на Камчатке: {w['icon']} {w['name']}\n{w['note']}"
@@ -251,12 +234,9 @@ async def cmd_weather(message: Message) -> None:
     else:
         text += "\n\n⚠️ Реальные данные недоступны — действует сезонная модель," \
                 " погодные эффекты и риски простуды отключены."
-    # v1.5.56: подвал об источнике и ссылка на страницу OpenWeather для
-    # ручной сверки — в weather_source_line().
     from app.services.weather import weather_source_line
     text += "\n\n" + weather_source_line()
     await message.answer(text)
-
 
 @router.message(Command("pet"), F.chat.type == "private")
 async def cmd_pet(message: Message, session: AsyncSession) -> None:
@@ -274,7 +254,6 @@ async def cmd_pet(message: Message, session: AsyncSession) -> None:
                       reply_markup=pet_hub(pet_page_for(message.chat.id),
                                            sleeping=pet.is_sleeping,
                                            walking=svc.on_walk(pet)))
-
 
 @router.callback_query(F.data == "menu:pet")
 async def pet_screen(cb: CallbackQuery, session: AsyncSession) -> None:
@@ -298,12 +277,10 @@ async def pet_screen(cb: CallbackQuery, session: AsyncSession) -> None:
                                                    walking=svc.on_walk(pet)))
     await cb.answer()
 
-
 @router.callback_query(F.data == "pet:noop")
 async def pet_hub_noop(cb: CallbackQuery) -> None:
     """Клик по неразрывной подписи страницы хаба — просто снять «часики»."""
     await cb.answer()
-
 
 @router.callback_query(F.data == "pet:page:0")
 @router.callback_query(F.data.startswith("pet:page:"))
@@ -317,8 +294,6 @@ async def pet_page_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     svc = TamagotchiService(session)
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
-        # питомец — опция. Без него показываем не «ошибку», а экран
-        # с приглашением завести (или просто вернуться в меню).
         await safe_edit_or_answer(cb.message,
             "🥚 У тебя пока нет питомца — но играть всё равно можно!\n\n"
             "• 🏅 Топы и 📊 Статы работают без питомца;\n"
@@ -348,7 +323,6 @@ async def pet_page_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     )
     await cb.answer()
 
-
 @router.callback_query(F.data == "pet:revive")
 async def act_revive(cb: CallbackQuery, session: AsyncSession) -> None:
     """💖 Реанимация (v1.4.7): платная, цена растёт 200→400→600, максимум 3 раза.
@@ -370,7 +344,6 @@ async def act_revive(cb: CallbackQuery, session: AsyncSession) -> None:
     user = await users.get(cb.from_user.id)
     cost = svc.revive_cost(pet)
     if cost < 0:
-        # жизни кончились: сразу предлагаем усыновление
         await safe_edit_or_answer(
             cb.message,
             f"{await svc.render_async(pet)}\n\n" + t("pet.no_more_lives", name=esc(pet.name)),
@@ -396,7 +369,6 @@ async def act_revive(cb: CallbackQuery, session: AsyncSession) -> None:
         reply_markup=pet_hub(pet_page_for(cb.message.chat.id)))
     await cb.answer(f"⭐ −{cost}")
 
-
 @router.callback_query(F.data == "pet:adopt_confirm", AdoptConfirm.confirm)
 async def pet_adopt_confirm(cb: CallbackQuery, session: AsyncSession,
                             state: FSMContext) -> None:
@@ -417,7 +389,6 @@ async def pet_adopt_confirm(cb: CallbackQuery, session: AsyncSession,
         reply_markup=species_picker())
     await cb.answer()
 
-
 @router.callback_query(F.data == "pet:adopt_cancel", AdoptConfirm.confirm)
 async def pet_adopt_cancel(cb: CallbackQuery, session: AsyncSession,
                            state: FSMContext) -> None:
@@ -431,7 +402,6 @@ async def pet_adopt_cancel(cb: CallbackQuery, session: AsyncSession,
                               reply_markup=pet_hub(pet_page_for(cb.message.chat.id)))
     await cb.answer("Отменено 👍")
 
-
 @router.callback_query(F.data == "pet:adopt")
 async def pet_adopt_screen(cb: CallbackQuery, session: AsyncSession,
                            state: FSMContext) -> None:
@@ -439,7 +409,6 @@ async def pet_adopt_screen(cb: CallbackQuery, session: AsyncSession,
     повторное нажатие) и открываем пикер вида."""
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
-        # нет текущего — просто заводим с нуля (тот же флоу, что онбординг)
         from app.keyboards.inline import species_picker
         return await safe_edit_or_answer(
             cb.message,
@@ -459,13 +428,11 @@ async def pet_adopt_screen(cb: CallbackQuery, session: AsyncSession,
         reply_markup=adopt_confirm_kb())
     await cb.answer()
 
-
 def _species_picker_text() -> str:
     """тот же экран выбора вида, что в онбординге (единый источник — start.py),
     чтобы «любит/не любит» и бонусы нигде не разъезжались и были по-русски."""
     from app.handlers.start import species_picker_text
     return species_picker_text()
-
 
 @router.callback_query(F.data == "pet:history")
 async def pet_history_screen(cb: CallbackQuery, session: AsyncSession) -> None:
@@ -488,7 +455,6 @@ async def pet_history_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     await safe_edit_or_answer(cb.message, text,
                               reply_markup=pet_history_kb(has_current=current is not None))
     await cb.answer()
-
 
 async def _after_action(cb: CallbackQuery, session: AsyncSession, result_text: str,
                         *, fx: str | None = None, stat: str | None = None) -> None:
@@ -528,13 +494,8 @@ async def _after_action(cb: CallbackQuery, session: AsyncSession, result_text: s
                                  walking=svc.on_walk(pet)),
         )
     finally:
-        # ВАЖНО: коммит в finally — Telegram-редактирование не откатить, а без
-        # явного commit'а при сетевом исключении сессия откатится в middleware:
-        # юзер увидел бы награду/новые статы, которых нет в БД (рассинхрон UI).
         await session.commit()
 
-    # 🏆 Достижения тамагочи пересчитывались только при сообщении в группе —
-    # кормление/игра из ЛС не двигали прогресс (pet_feeds стоял на 0, v1.5.24).
     try:
         from app.services.activity import ActivityService
         from app.services.achievements import AchievementService
@@ -551,12 +512,11 @@ async def _after_action(cb: CallbackQuery, session: AsyncSession, result_text: s
 
     if fx:
         from app.utils.fx import apply_effect
-        toast = result_text.split("\n")[0].strip()  # первая строка результата — в тост
+        toast = result_text.split("\n")[0].strip()
         await apply_effect(cb, fx, stat=stat,
                            toast_override=toast[:200] or None)
     else:
         await cb.answer()
-
 
 @router.callback_query(F.data == "pet:feed")
 async def act_feed(cb: CallbackQuery, session: AsyncSession) -> None:
@@ -564,13 +524,11 @@ async def act_feed(cb: CallbackQuery, session: AsyncSession) -> None:
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
         return await cb.answer()
-    # бесплатная «базовая еда» (хлеб); вкусняшки — из инвентаря (магазин)
     result = await svc.feed(pet, {"hunger": 15})
-    fed = "Ням-ням" in result  # не считать кормлением попытки «на кулдауне»
+    fed = "Ням-ням" in result
     if fed:
         await PetRepository(session).log_action(pet.id, "feed")
     await _after_action(cb, session, result, fx="feed" if fed else None)
-
 
 @router.callback_query(F.data == "pet:play")
 async def act_play(cb: CallbackQuery, session: AsyncSession) -> None:
@@ -582,12 +540,11 @@ async def act_play(cb: CallbackQuery, session: AsyncSession) -> None:
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
         return await cb.answer()
-    win_chance = 0.45 + pet.agility * 0.01  # тренировки реально повышают шанс
+    win_chance = 0.45 + pet.agility * 0.01
     won = random.random() < min(win_chance, 0.85)
     result = await svc.play(pet, won)
     await PetRepository(session).log_action(pet.id, "play", value=int(won))
     await _after_action(cb, session, result, fx="win" if won else "lose")
-
 
 @router.callback_query(F.data == "pet:sleep")
 async def act_sleep(cb: CallbackQuery, session: AsyncSession) -> None:
@@ -597,14 +554,11 @@ async def act_sleep(cb: CallbackQuery, session: AsyncSession) -> None:
         return await cb.answer()
     pet_was_sleeping = pet.is_sleeping
     if pet.is_sleeping:
-        # во сне та же кнопка уже «Разбудить» (см. pet_hub(sleeping=...));
-        # повторный клик по старой кнопке — просто разбудить.
         result = await svc.wake(pet)
     else:
         result = await svc.sleep(pet, hours=8)
     await PetRepository(session).log_action(pet.id, "sleep")
     await _after_action(cb, session, result, fx="wake" if pet_was_sleeping else "sleep")
-
 
 @router.callback_query(F.data == "pet:wake")
 async def act_wake(cb: CallbackQuery, session: AsyncSession) -> None:
@@ -617,7 +571,6 @@ async def act_wake(cb: CallbackQuery, session: AsyncSession) -> None:
     await PetRepository(session).log_action(pet.id, "wake")
     await _after_action(cb, session, result, fx="wake")
 
-
 @router.callback_query(F.data == "pet:wash")
 async def act_wash(cb: CallbackQuery, session: AsyncSession) -> None:
     svc = TamagotchiService(session)
@@ -628,13 +581,12 @@ async def act_wash(cb: CallbackQuery, session: AsyncSession) -> None:
     await PetRepository(session).log_action(pet.id, "wash")
     await _after_action(cb, session, result, fx="wash")
 
-
 @router.callback_query(F.data == "pet:train")
 async def train_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
         return await cb.answer()
-    set_pet_page(cb.message.chat.id, 0)  # тренировки — страница «Уход»
+    set_pet_page(cb.message.chat.id, 0)
     sp = SPECIES_DATA.get(_species_key(pet), SPECIES_DATA["cat"])
     lines = [
         f"🏋️ <b>Тренировки {pet.name}</b>\n",
@@ -645,7 +597,6 @@ async def train_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     ]
     await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=train_menu())
     await cb.answer()
-
 
 @router.callback_query(F.data.startswith("pet:train:"))
 async def act_train(cb: CallbackQuery, session: AsyncSession) -> None:
@@ -660,22 +611,18 @@ async def act_train(cb: CallbackQuery, session: AsyncSession) -> None:
         await PetRepository(session).log_action(pet.id, "train", value=1)
     await _after_action(cb, session, result, fx="train" if trained else None, stat=stat)
 
-
 @router.callback_query(F.data == "pet:walk")
 async def act_walk(cb: CallbackQuery, session: AsyncSession) -> None:
     svc = TamagotchiService(session)
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
         return await cb.answer()
-    # 🌦️ Прогноз для прогулки — по РЕАЛЬНОЙ погоде прямо сейчас (свежий запрос
-    # к api.openweathermap.org; при сбое тихо возвращаем "" и отправляем без превью).
     forecast = await walk_forecast_line()
     result = await svc.start_walk(pet, hours=2)
-    walked = "ушёл гулять" in result  # не считать прогулкой «уже гуляет»/крит/сон
+    walked = "ушёл гулять" in result
     if walked:
         await PetRepository(session).log_action(pet.id, "walk")
         if forecast:
-            # v1.5.36: развёрнутые плюсы/минусы погоды для этой прогулки
             hint = weather_hint_block(walk=True, pet=pet)
             result = f"{result}\n{forecast}"
             if hint and hint.split("\n", 1)[0] not in forecast:
@@ -683,7 +630,6 @@ async def act_walk(cb: CallbackQuery, session: AsyncSession) -> None:
     elif forecast and ("🌧️" in forecast or "❄️" in forecast):
         result = f"{result}\n💡 Совет: {forecast.split('—', 1)[-1].strip()}"
     await _after_action(cb, session, result, fx="walk" if walked else None)
-
 
 @router.callback_query(F.data == "pet:end_walk")
 async def act_end_walk(cb: CallbackQuery, session: AsyncSession) -> None:
@@ -697,13 +643,8 @@ async def act_end_walk(cb: CallbackQuery, session: AsyncSession) -> None:
     if pet is None:
         return await cb.answer()
     result = await svc.end_walk(pet)
-    returned = not svc.on_walk(pet)   # «не гуляет»/«уже вернулся» — не считать кликом
+    returned = not svc.on_walk(pet)
     if returned:
         await PetRepository(session).log_action(pet.id, "walk_done")
-    # fx="wake" — тост и реакция на ВОЗВРАЩЕНИЕ с прогулки (🌳-тост «На
-    # прогулку!» здесь вводил бы в заблуждение); эффект прогулки ставит
-    # act_walk при уходе.
     await _after_action(cb, session, result, fx="wake" if returned else None)
-
-
 

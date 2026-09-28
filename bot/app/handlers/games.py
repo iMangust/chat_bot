@@ -33,16 +33,13 @@ router = Router(name="games")
 
 RPS_EMOJI = {"rock": "🪨", "scissors": "✂️", "paper": "📄"}
 
-
 class Games(StatesGroup):
     guessing = State()
     rps = State()
     blackjack = State()
 
-
 async def _get_pet(session: AsyncSession, tg_id: int):
     return await PetRepository(session).get_by_user(tg_id)
-
 
 @router.callback_query(F.data == "pet:games")
 async def games_screen(cb: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
@@ -53,7 +50,7 @@ async def games_screen(cb: CallbackQuery, state: FSMContext, session: AsyncSessi
                                   reply_markup=pet_hub(2))
         await cb.answer()
         return
-    set_pet_page(cb.message.chat.id, 2)  # игры — страница «Досуг»
+    set_pet_page(cb.message.chat.id, 2)
     sp = SPECIES_DATA.get(_species_key(pet), SPECIES_DATA["cat"])
     await state.clear()
     await safe_edit_or_answer(cb.message, 
@@ -66,10 +63,6 @@ async def games_screen(cb: CallbackQuery, state: FSMContext, session: AsyncSessi
     )
     await cb.answer()
 
-
-# ---------------------------------------------------------------------------
-# Игра 1: угадай число (секрет живёт только в FSM)
-# ---------------------------------------------------------------------------
 @router.callback_query(F.data == "game:guess")
 async def start_guess(cb: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     pet = await _get_pet(session, cb.from_user.id)
@@ -86,7 +79,6 @@ async def start_guess(cb: CallbackQuery, state: FSMContext, session: AsyncSessio
         reply_markup=guess_hint_keyboard(lo, hi),
     )
     await cb.answer()
-
 
 @router.callback_query(Games.guessing, F.data.startswith("guess:"))
 async def do_guess_cb(cb: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
@@ -109,7 +101,6 @@ async def do_guess_cb(cb: CallbackQuery, state: FSMContext, session: AsyncSessio
     await safe_edit_or_answer(cb.message, f"{result}{hint}\n\n" + await svc.render_async(pet),
                                reply_markup=games_menu())
     await cb.answer()
-
 
 @router.message(Games.guessing, F.text & F.text.strip().isdigit())
 async def do_guess_msg(message: Message, state: FSMContext, session: AsyncSession) -> None:
@@ -135,10 +126,6 @@ async def do_guess_msg(message: Message, state: FSMContext, session: AsyncSessio
     await message.answer(f"{result}{hint}", reply_markup=games_menu(),
                            parse_mode="HTML")
 
-
-# ---------------------------------------------------------------------------
-# Игра 2: камень-ножницы-бумага
-# ---------------------------------------------------------------------------
 @router.callback_query(F.data == "game:rps")
 async def start_rps(cb: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     pet = await _get_pet(session, cb.from_user.id)
@@ -151,7 +138,6 @@ async def start_rps(cb: CallbackQuery, state: FSMContext, session: AsyncSession)
         reply_markup=rps_keyboard(),
     )
     await cb.answer()
-
 
 @router.callback_query(Games.rps, F.data.startswith("rps:"))
 async def play_rps(cb: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
@@ -183,15 +169,9 @@ async def play_rps(cb: CallbackQuery, state: FSMContext, session: AsyncSession) 
     await apply_effect(cb, "win" if won else ("play" if draw else "lose"),
                        toast_override=outcome[:200])
 
-
-# ---------------------------------------------------------------------------
-# Игра 3: «21» (блэкджек). Питомец — дилер; античит: колода подписана в FSM.
-# ---------------------------------------------------------------------------
 BJ_DECK = [(r, s) for r in range(2, 11) for s in ("♠", "♥", "♦", "♣")]
 
-
 BJ_LABELS = {2: "2", 3: "3", 4: "4", 5: "5", 6: "6", 7: "7", 8: "8", 9: "9", 10: "10", 11: "Т"}
-
 
 def _bj_norm(cards) -> list[tuple[int, str]]:
     """Карты из FSM (Redis/JSON round-trip) приходят как list[list].
@@ -206,7 +186,6 @@ def _bj_norm(cards) -> list[tuple[int, str]]:
         except (TypeError, ValueError, IndexError):
             continue
     return out
-
 
 def _bj_value(cards: list[tuple[int, str]]) -> int:
     """Очки руки: туз = 11, пока не перебор; иначе 1."""
@@ -223,21 +202,14 @@ def _bj_value(cards: list[tuple[int, str]]) -> int:
         aces -= 1
     return total
 
-
 def _bj_render(cards: list[tuple[int, str]], hidden: bool = False) -> str:
     cards = _bj_norm(cards)
     if hidden and cards:
-        # ВАЖНО: одна карта, но списком! Раньше сюда летел сам кортеж
-        # ("♠", 4)… точнее (4, "♠") — и for r, s in cards распаковывал
-        # символы строки → labels["♠"] → KeyError/TypeError на каждом
-        # ходе «Ещё» (unhandled error while processing update: TypeError).
         return f"{_card_str([cards[0]])} + 🂠"
     return _card_str(cards)
 
-
 def _card_str(cards: list[tuple[int, str]]) -> str:
     return " ".join(BJ_LABELS.get(r, "?") + s for r, s in _bj_norm(cards)) or "—"
-
 
 @router.callback_query(F.data == "game:blackjack")
 async def start_blackjack(cb: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
@@ -248,7 +220,6 @@ async def start_blackjack(cb: CallbackQuery, state: FSMContext, session: AsyncSe
     rng = random.Random()
     deck = BJ_DECK[:]
     rng.shuffle(deck)
-    # 🧠 интеллект питомца = «хитрость» дилера: умный чаще пасует на 17, глупый тянет до 18+
     dealer_stay = 17 + min(3, pet.intellect // 6)
     player = [deck.pop(), deck.pop()]
     dealer = [deck.pop(), deck.pop()]
@@ -262,7 +233,6 @@ async def start_blackjack(cb: CallbackQuery, state: FSMContext, session: AsyncSe
         reply_markup=twentyone_keyboard(),
     )
     await cb.answer()
-
 
 async def _bj_finish(cb: CallbackQuery, state: FSMContext, session: AsyncSession,
                      player: list, dealer: list) -> None:
@@ -293,14 +263,10 @@ async def _bj_finish(cb: CallbackQuery, state: FSMContext, session: AsyncSession
         f"{outcome}\n\n{result}",
         reply_markup=games_menu(),
     )
-    # v1.5.52: в «21» результат приходит РЕДАКТИРОВАНИЕМ того же сообщения —
-    # вешать на него эмодзи-реакцию нельзя (пользователь жаловался: «после
-    # результата ставится реакция»). Оставляем только тост под кнопкой.
     try:
         await cb.answer(outcome[:200])
     except TelegramAPIError:
         pass
-
 
 @router.callback_query(Games.blackjack, F.data == "bj:hit")
 async def bj_hit(cb: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
@@ -323,19 +289,16 @@ async def bj_hit(cb: CallbackQuery, state: FSMContext, session: AsyncSession) ->
     )
     await cb.answer(f"🃏 У тебя {pv} · в колоде ещё {len(deck)} карт")
 
-
 @router.callback_query(Games.blackjack, F.data == "bj:stand")
 async def bj_stand(cb: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     data = await state.get_data()
     deck, player = list(data.get("deck") or []), list(data.get("player") or [])
     dealer = list(data.get("dealer") or [])
     stay = int(data.get("stay", 17))
-    while _bj_value(dealer) < stay and deck:   # «глупый» дилер тянет дольше — шанс на его перебор
+    while _bj_value(dealer) < stay and deck:
         dealer.append(deck.pop())
     await _bj_finish(cb, state, session, player, dealer)
 
-
-# ---------------------------------------------------------------------------
 async def bump_games_won(session: AsyncSession, tg_id: int) -> None:
     """Счётчик побед для ачивки games_won_10 («Игумен»)."""
     users = UserRepository(session)

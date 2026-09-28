@@ -13,7 +13,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Pet, PetFriend
 
-
 async def list_friends(session: AsyncSession, pet_id: int) -> list[Pet]:
     """Питомцы-друзья (в обе стороны связи)."""
     rows = (await session.execute(
@@ -24,7 +23,6 @@ async def list_friends(session: AsyncSession, pet_id: int) -> list[Pet]:
     )).scalars()
     return list(rows)
 
-
 async def are_friends(session: AsyncSession, a_id: int, b_id: int) -> bool:
     row = (await session.execute(
         select(PetFriend.id).where(
@@ -34,9 +32,7 @@ async def are_friends(session: AsyncSession, a_id: int, b_id: int) -> bool:
     )).scalar_one_or_none()
     return row is not None
 
-
 MAX_FRIENDS = 5
-
 
 async def make_friends(session: AsyncSession, pet: Pet, other: Pet) -> tuple[bool, str]:
     """Заводит дружбу. Возвращает (успех, сообщение для экрана)."""
@@ -50,13 +46,11 @@ async def make_friends(session: AsyncSession, pet: Pet, other: Pet) -> tuple[boo
         return False, f"У {pet.name} уже {MAX_FRIENDS} друзей — максимум!"
     if len(theirs) >= MAX_FRIENDS:
         return False, f"У {other.name} уже {MAX_FRIENDS} друзей — максимум!"
-    # дубликаты в обе стороны (для простоты чтения списка)
     session.add(PetFriend(pet_id=pet.id, friend_pet_id=other.id))
     session.add(PetFriend(pet_id=other.id, friend_pet_id=pet.id))
     pet.happiness = min(100.0, pet.happiness + 3)
     other.happiness = min(100.0, other.happiness + 3)
     return True, f"💞 {pet.name} и {other.name} теперь друзья!"
-
 
 async def unfriend(session: AsyncSession, pet_id: int, other_id: int) -> None:
     await session.execute(delete(PetFriend).where(
@@ -65,7 +59,6 @@ async def unfriend(session: AsyncSession, pet_id: int, other_id: int) -> None:
             (PetFriend.pet_id == other_id) & (PetFriend.friend_pet_id == pet_id),
         )
     ))
-
 
 async def suggest_friend(session: AsyncSession, pet: Pet) -> Pet | None:
     """Рекомендует питомца: уровень +-2, не друг, не сам себя."""
@@ -79,7 +72,6 @@ async def suggest_friend(session: AsyncSession, pet: Pet) -> Pet | None:
     if not candidates:
         return None
     return random.choice(candidates[:10])
-
 
 def render_friend_list(pet: Pet, friends: list[Pet]) -> str:
     lines = [f"🐾 <b>Друзья {pet.name}</b> ({len(friends)}/{MAX_FRIENDS})\n"]

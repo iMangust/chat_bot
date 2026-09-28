@@ -27,25 +27,22 @@ from app.config import get_settings
 
 _TELETHON_IMPORT_ERROR: str | None = None
 
-
 def telethon_available() -> bool:
     global _TELETHON_IMPORT_ERROR
     if _TELETHON_IMPORT_ERROR is not None:
         return _TELETHON_IMPORT_ERROR == ""
     try:
-        import telethon  # noqa: F401
+        import telethon
         _TELETHON_IMPORT_ERROR = ""
         return True
     except ImportError:
         _TELETHON_IMPORT_ERROR = "no"
         return False
 
-
 def credentials_configured() -> bool:
     """Есть ли api_id+api_hash (минимум для подключения при готовой сессии)."""
     st = get_settings()
     return bool(st.telegram_api_id and st.telegram_api_hash)
-
 
 def session_configured() -> bool:
     """Есть ли чем авторизоваться: строковая сессия или существующий файл."""
@@ -55,7 +52,6 @@ def session_configured() -> bool:
         return True
     p = Path(st.mtproto_session or "")
     return p.with_suffix(".session").is_file() or p.is_file()
-
 
 class MtprotoClientHolder:
     """Ленинный синглтон Telethon-клиента."""
@@ -78,7 +74,7 @@ class MtprotoClientHolder:
             return False
         try:
             return bool(await c.is_user_authorized())
-        except Exception:  # noqa: BLE001
+        except Exception:
             return False
 
     async def get(self) -> Any:
@@ -98,7 +94,6 @@ class MtprotoClientHolder:
                     "(или API_ID) и TELEGRAM_API_HASH (API_HASH) — "
                     "https://my.telegram.org → API development tools")
             from telethon import TelegramClient
-            # session_string приоритетнее файла; '' невалиден — не передаём
             session = st.mtproto_session_string or st.mtproto_session or "mtproto_sync"
             client = TelegramClient(session, st.telegram_api_id,
                                     st.telegram_api_hash)
@@ -126,7 +121,6 @@ class MtprotoClientHolder:
             me = await client.get_me()
             self._client = client
             self._me = me
-            # НЕ логируем телефон/ключи — только публичный id/username
             logger.info("MTProto: подключено (user id={} @{})",
                         me.id, me.username or "-")
             return client
@@ -150,25 +144,20 @@ class MtprotoClientHolder:
         if self._client is not None:
             try:
                 await self._client.disconnect()
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.debug("MTProto disconnect: {}", exc)
             self._client = None
             self._me = None
 
-
 holder = MtprotoClientHolder()
 
-
-# Кэш диалогов для резолва id→entity (iter_dialogs — дорогой запрос).
 _DIALOGS_CACHE: dict[tuple[str, int], Any] = {}
 _DIALOGS_CACHE_TS: float = 0.0
-
 
 def _inner_id(chat_id: int | str) -> int:
     """Bot API id (-100xxxxxxxxxx) → внутренний id канала (Telethon)."""
     s = str(chat_id)
     return int(s[4:]) if s.startswith("-100") else int(s)
-
 
 def _participants_filter():
     """Совместимый со всеми Telethon фильтр «все участники» (v1.5.65).
@@ -182,35 +171,29 @@ def _participants_filter():
     """
     import inspect
 
-    from telethon import types  # v1.5.65: локальный импорт — имя types не глобальное
+    from telethon import types
 
     cls = types.ChannelParticipantsSearch
     params = inspect.signature(cls.__init__).parameters
     kwargs = {}
-    for field in ("query", "name"):          # новый API → старый API → без поля
+    for field in ("query", "name"):
         if field in params:
             kwargs = {field: ""}
             break
     try:
         return cls(**kwargs)
-    except Exception:  # noqa: BLE001
+    except Exception:
         return types.ChannelParticipantsRecent()
-
 
 def _participants_limit() -> int:
     """Максимальная страница выборки участников (лимит API — 200)."""
     return 200
 
-
-# Диагностика последнего сбора участников (v1.5.74): почему список пустел —
-# «аккаунт не в чате», PARTICIPANTS_TOO_LARGE, сбой access_hash и т.п.
 _LAST_SCAN_ERROR: str = ""
-
 
 async def last_scan_error() -> str:
     """Последняя диагностика сбора участников (для честных логов/команды)."""
     return _LAST_SCAN_ERROR or ""
-
 
 def _peer_inner_id(entity: Any) -> int | None:
     """Внутренний id канала/группы из Peer-объекта entity.peer."""
@@ -223,7 +206,6 @@ def _peer_inner_id(entity: Any) -> int | None:
             except (TypeError, ValueError):
                 return None
     return None
-
 
 async def chat_participants_count(chat_id: int | str) -> int | None:
     """Точное число участников чата глазами MTProto (GetFullChannel/GetFullChat).
@@ -241,12 +223,11 @@ async def chat_participants_count(chat_id: int | str) -> int | None:
         inner = _inner_id(chat_id)
         try:
             entity = await resolve_channel_entity(chat_id)
-        except Exception:  # noqa: BLE001
+        except Exception:
             entity = None
         if entity is None:
             return None
         peers = _peer_inner_id(entity)
-        # канал (-100…) → GetFullChannel; малая группа (-<chat_id>) → GetFullChat
         s = str(chat_id).strip()
         is_small_group = (not s.startswith("-100")) and s.startswith("-")
         full = None
@@ -255,14 +236,14 @@ async def chat_participants_count(chat_id: int | str) -> int | None:
                 full = await client(GetFullChatRequest(peers or inner))
             else:
                 full = await client(GetFullChannelRequest(entity))
-        except Exception:  # noqa: BLE001 — пробуем другой запрос
+        except Exception:
             try:
                 full = await client(GetFullChannelRequest(entity))
-            except Exception:  # noqa: BLE001
+            except Exception:
                 return None
         counts = getattr(full, "counts", None)
         total = getattr(counts, "participants_count", None)
-        if total is None:      # разные TL-версии кладут счётчик по-разному
+        if total is None:
             for path in (("chat_full", "participants_count"), ("full_chat", None)):
                 obj = getattr(full, path[0], None)
                 cand = getattr(obj, "participants_count", None) if obj is not None else None
@@ -270,11 +251,10 @@ async def chat_participants_count(chat_id: int | str) -> int | None:
                     total = cand
                     break
         return int(total) if total is not None else None
-    except Exception as exc:  # noqa: BLE001 — диагностика не должна ронять код
+    except Exception as exc:
         logger.debug("MTProto: chat_participants_count({}) failed: {}",
                      chat_id, str(exc)[:120])
         return None
-
 
 async def iter_all_participants(chat_id: int | str):
     """Все НЕ-боты-участники чата глазами MTProto-аккаунта (v1.5.74).
@@ -296,20 +276,20 @@ async def iter_all_participants(chat_id: int | str):
     _LAST_SCAN_ERROR = ""
     try:
         client = await holder.get()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         _LAST_SCAN_ERROR = f"MTProto-клиент недоступен: {str(exc)[:120]}"
         return []
     entity = None
     try:
         entity = await resolve_channel_entity(chat_id)
-    except Exception as exc:  # noqa: BLE001 — пробуем числовой id как username
+    except Exception as exc:
         _LAST_SCAN_ERROR = f"не удалось разрешить чат {chat_id!r}: {str(exc)[:120]}"
         s = str(chat_id).strip()
         if not (s.startswith("-") or s.isdigit()):
             try:
                 entity = await client.get_entity(s if s.startswith("@") else f"@{s}")
                 _LAST_SCAN_ERROR = ""
-            except Exception:  # noqa: BLE001
+            except Exception:
                 entity = None
     if entity is None:
         if not _LAST_SCAN_ERROR:
@@ -323,7 +303,7 @@ async def iter_all_participants(chat_id: int | str):
     def _add(u) -> None:
         try:
             uid = int(u.id)
-        except Exception:  # noqa: BLE001
+        except Exception:
             return
         if getattr(u, "bot", False) or uid in seen_ids:
             return
@@ -332,25 +312,18 @@ async def iter_all_participants(chat_id: int | str):
                     "first_name": getattr(u, "first_name", "") or "",
                     "username": getattr(u, "username", None)})
 
-    # Основной путь: Telethon сам жонглирует access_hash'ами и страницами.
-    # v1.5.75 (лог 17:19): в Telethon 1.34 get_participants() — обычная async
-    # функция, возвращающая list (НЕ асинхронный генератор), поэтому
-    # «async for» по ней падал TypeError: 'async for' requires an object with
-    # __aiter__ method, got coroutine. Пробуем оба протокола: вызов как
-    # корутину (await → список) и как итератор (async for). iter_participants
-    # — гарантированный асинхронный итератор во всех версиях.
     collected = False
 
     async def _collect(coro_or_iter) -> None:
         """Собрать участников: список (await) OR async-итератор."""
         obj = coro_or_iter
         if hasattr(obj, "__await__") and not hasattr(obj, "__aiter__"):
-            obj = await obj                      # get_participants() → list
+            obj = await obj
         if hasattr(obj, "__aiter__"):
             async for u in obj:
                 _add(u)
         else:
-            for u in obj:                        # уже готовый список
+            for u in obj:
                 _add(u)
 
     for attempt, factory in enumerate((
@@ -361,10 +334,10 @@ async def iter_all_participants(chat_id: int | str):
             await _collect(factory())
             collected = True
             break
-        except TypeError as exc:  # иная сигнатура у другой версии Telethon
+        except TypeError as exc:
             logger.debug("MTProto: participants-вызов #%d TypeError: %s",
                          attempt, str(exc)[:120])
-        except Exception as exc:  # noqa: BLE001 — код ошибки важен для лога
+        except Exception as exc:
             code = str(getattr(exc, "message", None) or exc)
             if "PARTICIPANTS_TOO_LARGE" in code.upper():
                 _LAST_SCAN_ERROR = ("PARTICIPANTS_TOO_LARGE: у группы выключен "
@@ -381,9 +354,8 @@ async def iter_all_participants(chat_id: int | str):
         _LAST_SCAN_ERROR = ""
         return out
 
-    # Запасной путь: сырые страницы (для моков тестов и старых Telethon).
     try:
-        from telethon import functions, types  # local import — имена не глобальные
+        from telethon import functions, types
 
         inner = _inner_id(chat_id)
         chan = entity if not isinstance(entity, (int, str)) else None
@@ -424,13 +396,12 @@ async def iter_all_participants(chat_id: int | str):
             if got == 0 or offset >= total:
                 break
         _LAST_SCAN_ERROR = ""
-    except Exception as exc:  # noqa: BLE001 — наружу не бросаем никогда
+    except Exception as exc:
         if not _LAST_SCAN_ERROR:
             _LAST_SCAN_ERROR = f"GetParticipantsRequest: {str(exc)[:120]}"
         logger.debug("MTProto: iter_all_participants({}) failed: {}",
                      chat_id, str(exc)[:150])
     return out
-
 
 async def get_chat_member_status(chat_id: int | str, user_id: int) -> str | None:
     """Статус участника глазами MTProto-аккаунта — фолбэк для Bot API.
@@ -460,7 +431,6 @@ async def get_chat_member_status(chat_id: int | str, user_id: int) -> str | None
         client = await holder.get()
         inner = _inner_id(chat_id)
 
-        # --- основной путь: полный обход участников (все страницы) ----------
         people = await iter_all_participants(chat_id)
         if people:
             for p in people:
@@ -469,24 +439,19 @@ async def get_chat_member_status(chat_id: int | str, user_id: int) -> str | None
                         return "member"
                 except (KeyError, TypeError, ValueError):
                     continue
-            # скан прошёл успешно, но человека в списке нет — честное 'left'
             return "left"
-        # iter_all_participants вернул пусто (клиент не в чате / недоступен) —
-        # пробуем одиночную страницу ниже, чтобы не терять шанс.
 
-        # --- запасной путь: одна страница (моки тестов, старые Telethon) ----
-        # entity/access_hash канала: из кэша диалогов (или резолва username)
         entity = None
         access_hash = 0
         try:
             ent = _DIALOGS_CACHE.get(("c", inner))
             if ent is None:
-                await resolve_channel_entity(chat_id)   # наполняет кэш
+                await resolve_channel_entity(chat_id)
                 ent = _DIALOGS_CACHE.get(("c", inner))
             if ent is not None:
                 entity = ent
                 access_hash = getattr(ent, "access_hash", 0) or 0
-        except Exception:  # noqa: BLE001 — ниже fallback на InputChannel
+        except Exception:
             pass
         if entity is None:
             s = str(chat_id).strip()
@@ -512,34 +477,21 @@ async def get_chat_member_status(chat_id: int | str, user_id: int) -> str | None
             if cls == "ChannelParticipantCreator":
                 return "creator"
             if cls == "ChannelParticipantSelf":
-                # аккаунт userbot'а — не проверяем его через гейт
                 return "left"
             if cls == "ChannelParticipantBanned":
-                # v1.5.65: у TL-объекта флаг выхода — p.left (может быть None);
-                # раньше читали несуществующее p.rights => NameError/'None' и
-                # restricted-участники не распознавались.
                 left = bool(getattr(p, "left", False))
                 if not left:
-                    # v1.5.64: «ограниченный» (restricted) участник — он
-                    # СОСТОИТ в чате (просто с урезанными правами). Bot API
-                    # отдаёт таких как status='restricted', и при скрытом
-                    # аккаунте это выглядело как «нет прав». MTProto видит
-                    # честно: человек в канале/группе => считаем member.
                     return "member"
-                return "left"  # реально забанен/выгнан (kicked)
+                return "left"
             if cls == "ChannelParticipant":
                 return "member"
-            return "left"  # Empty и пр. — явно не участник
-        # пользователя нет среди первых N ответов: если он хотя бы виден в
-        # users — это анонимный участник (в списке отсутствует только из-за
-        # лимита выборки); считаем его состоящим
+            return "left"
         if int(user_id) in users:
             return "member"
         return "left"
-    except Exception as exc:  # noqa: BLE001 — фолбэк не должен ронять гейт
+    except Exception as exc:
         logger.debug("MTProto member status {}→{} failed: {}", chat_id, user_id, exc)
         return None
-
 
 async def resolve_channel_entity(target: str | int) -> Any:
     """Entity канала/группы по username или внутреннему id (-100...).
@@ -566,7 +518,7 @@ async def resolve_channel_entity(target: str | int) -> Any:
     elif s.startswith("-"):
         want_chat_id = int(s[1:])
     elif s.isdigit():
-        want_channel_inner = int(s)   # голый id канала
+        want_channel_inner = int(s)
     else:
         return await client.get_entity(s if s.startswith("@") else f"@{s}")
 
@@ -581,7 +533,6 @@ async def resolve_channel_entity(target: str | int) -> Any:
                 new_cache[("c", int(ent.id))] = ent
             elif isinstance(ent, Chat):
                 new_cache[("g", int(ent.id))] = ent
-        # атомарная подмена: параллельные резолвы не видят «полупустой» кэш
         _DIALOGS_CACHE.clear()
         _DIALOGS_CACHE.update(new_cache)
         _DIALOGS_CACHE_TS = now_m
@@ -593,11 +544,6 @@ async def resolve_channel_entity(target: str | int) -> Any:
         ent = _DIALOGS_CACHE.get(("g", want_chat_id))
         if ent is not None:
             return ent
-    # Fallback (продакшен v1.5.29): в iter_dialogs могут не попадать чаты с
-    # архивом/непрочитанными спецификой, а также каналы, где у аккаунта нет
-    # прав на список. Пробуем прямой GetChannelDifference по реконструированному
-    # PeerChannel — Telegram вернёт entities в ответе, и мы достанем оттуда
-    # нужный объект (тот же путь, что использует mtproto_sync при успехе).
     if want_channel_inner is not None:
         try:
             from telethon.tl.types import InputChannel as _IC
@@ -605,8 +551,6 @@ async def resolve_channel_entity(target: str | int) -> Any:
                 GetChannelsRequest as _GetChannels,
             )
             from telethon.errors import ChannelPrivateError
-            # Прямой GetChannels по реконструированному InputChannel —
-            # надёжнее iter_dialogs для чатов вне видимого списка диалогов.
             resp = await client(_GetChannels(
                 [_IC(channel_id=want_channel_inner, access_hash=0)]))
             for ent in getattr(resp, "chats", []) or []:
@@ -615,7 +559,7 @@ async def resolve_channel_entity(target: str | int) -> Any:
         except ChannelPrivateError:
             raise RuntimeError(f"Чат {target}: аккаунт не имеет доступа "
                                "(приватный канал?)")
-        except Exception:  # noqa: BLE001 — любой отказ → штатная ошибка ниже
+        except Exception:
             pass
         ent = _DIALOGS_CACHE.get(("c", want_channel_inner))
         if ent is not None:

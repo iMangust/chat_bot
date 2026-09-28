@@ -37,7 +37,6 @@ from app.services.tamagotchi import (
 from app.utils.formatting import xp_needed_for_level
 from app.utils.local_time import now as local_now
 
-
 def _fmt_age(dt) -> str:
     """Возраст '23 дня' / '5 мес.' / '1 год 2 мес.' по локальному (камч.) времени."""
     dt = _aware(dt)
@@ -52,7 +51,6 @@ def _fmt_age(dt) -> str:
     years, m = divmod(months, 12)
     return f"{years} г {m} мес." if m else f"{years} г"
 
-
 def vitals(pet: Pet) -> list[tuple[str, float]]:
     return [
         ("Сытость", pet.hunger),
@@ -61,7 +59,6 @@ def vitals(pet: Pet) -> list[tuple[str, float]]:
         ("Гигиена", pet.hygiene),
         ("Здоровье", pet.health),
     ]
-
 
 def vital_advice(pet: Pet) -> list[str]:
     """Короткие подсказки по критичным витальным статам (<35%)."""
@@ -78,7 +75,6 @@ def vital_advice(pet: Pet) -> list[str]:
         tips.append("хворает — нужно лечение")
     return tips
 
-
 def stat_contribs(pet: Pet) -> list[tuple[str, int, str]]:
     """Характеристики + человекочитаемый вклад в механику."""
     return [
@@ -86,7 +82,6 @@ def stat_contribs(pet: Pet) -> list[tuple[str, int, str]]:
         ("Ловкость", pet.agility, "уклонения в дуэлях"),
         ("Интеллект", pet.intellect, "угадывание в РКН, выдержка в 21"),
     ]
-
 
 def pet_statuses(pet: Pet) -> list[str]:
     """Активные состояния: сон (сколько осталось), прогулка, болезнь."""
@@ -114,30 +109,27 @@ def pet_statuses(pet: Pet) -> list[str]:
         out.append(f"🤒 Болеет {_fmt_age(pet.sick_since)}")
     return out
 
-
 async def collect(session: AsyncSession, tg_id: int) -> dict | None:
     """Полный «пакет» данных для рендера. None — пользователя ещё нет в БД."""
     user = (await session.execute(select(User).where(User.tg_id == tg_id))).scalar_one_or_none()
     if user is None:
         return None
     pet = (await session.execute(
-        select(Pet).where(Pet.user_id == tg_id, Pet.is_archived == False)  # noqa: E712
+        select(Pet).where(Pet.user_id == tg_id, Pet.is_archived == False)
     )).scalar_one_or_none()
 
     data: dict = {"user": user, "pet": pet}
 
-    # --- активность -----------------------------------------------------
     try:
         from app.services.activity import ActivityService, ActivityRepository
         stats = await ActivityService(session).personal_stats(tg_id)
         daily = await ActivityRepository(session).daily_counts(tg_id, days=7)
-    except Exception as exc:  # pragma: no cover - защита живой БД
+    except Exception as exc:
         logger.warning("card: activity stats skipped: {}", exc)
         stats, daily = {}, {}
     data["stats"] = stats
     data["daily"] = daily
 
-    # --- достижения ------------------------------------------------------
     try:
         unlocked = (await session.execute(
             select(func.count()).select_from(UserAchievement)
@@ -146,27 +138,25 @@ async def collect(session: AsyncSession, tg_id: int) -> dict | None:
         )).scalar_one()
         total_ach = (await session.execute(
             select(func.count()).select_from(Achievement)
-            .where(Achievement.is_hidden == False)  # noqa: E712
+            .where(Achievement.is_hidden == False)
         )).scalar_one()
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc:
         logger.warning("card: achievements count skipped: {}", exc)
         unlocked = total_ach = 0
     data["achievements"] = (int(unlocked or 0), int(total_ach or 0))
 
-    # --- место в рейтинге уровней ----------------------------------------
     try:
         ahead = (await session.execute(
             select(func.count(User.tg_id)).where(User.level > user.level)
         )).scalar_one()
         total_players = (await session.execute(
-            select(func.count(User.tg_id)).where(User.is_banned == False)  # noqa: E712
+            select(func.count(User.tg_id)).where(User.is_banned == False)
         )).scalar_one()
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc:
         logger.warning("card: rank skipped: {}", exc)
         ahead = total_players = 0
     data["rank"] = (int(ahead or 0) + 1, int(total_players or 0))
 
-    # --- питомец ----------------------------------------------------------
     if pet is not None:
         sp = SPECIES_DATA.get(_species_key(pet), SPECIES_DATA["cat"])
         color_key, worn = TamagotchiService(None).customization(pet)
@@ -193,7 +183,7 @@ async def collect(session: AsyncSession, tg_id: int) -> dict | None:
             )).scalar_one_or_none()
             data["duel"] = (row.wins if row else 0, row.losses if row else 0,
                             row.score if row else 0)
-        except Exception as exc:  # pragma: no cover
+        except Exception as exc:
             logger.warning("card: duel stats skipped: {}", exc)
             data["duel"] = (0, 0, 0)
         try:
@@ -203,17 +193,17 @@ async def collect(session: AsyncSession, tg_id: int) -> dict | None:
                 .group_by(PetActionLog.action)
             )).all()
             data["care"] = {a: int(c) for a, c in rows}
-        except Exception as exc:  # pragma: no cover
+        except Exception as exc:
             logger.warning("card: care log skipped: {}", exc)
             data["care"] = {}
         try:
             avg_len = (await session.execute(
                 select(func.avg(ChatMessageLog.length))
                 .join(User, User.tg_id == ChatMessageLog.user_id)
-                .where(ChatMessageLog.user_id == tg_id, ChatMessageLog.is_counted == True)  # noqa: E712
+                .where(ChatMessageLog.user_id == tg_id, ChatMessageLog.is_counted == True)
             )).scalar()
             data["avg_len"] = round(float(avg_len or 0))
-        except Exception as exc:  # pragma: no cover
+        except Exception as exc:
             logger.warning("card: avg length skipped: {}", exc)
             data["avg_len"] = 0
     else:
@@ -222,13 +212,10 @@ async def collect(session: AsyncSession, tg_id: int) -> dict | None:
         data["care"] = {}
         data["avg_len"] = 0
 
-    # --- погода/праздник (кэш; сеть не блокирует рендер надолго) ----------
     try:
         from app.services.weather import kamchatka_weather, weather_effect
         info = await kamchatka_weather()
         data["weather"] = f"{info.get('icon', '')} {info.get('name', '')}".strip()
-        # v1.5.50: в подсказки карточки добавляем актуальные погодные эффекты
-        # (плюсы/минусы для питомца прямо сейчас — см. weather_effects_lines)
         eff = weather_effect()
         if eff and data.get("pet_info") is not None:
             try:
@@ -241,25 +228,24 @@ async def collect(session: AsyncSession, tg_id: int) -> dict | None:
                         body = body[1:].strip()
                     wt = f"погода ({info.get('name', '')}): {body}"
                     data["pet_info"]["advice"] = list(data["pet_info"].get("advice") or []) + [wt]
-            except Exception as exc2:  # pragma: no cover
+            except Exception as exc2:
                 logger.warning("card: weather advice skipped: {}", exc2)
-    except Exception as exc:  # pragma: no cover
+    except Exception as exc:
         logger.warning("card: weather skipped: {}", exc)
         data["weather"] = ""
     try:
         from app.utils.formatting import HOLIDAYS
         hol = HOLIDAYS.get((local_now().month, local_now().day))
         data["holiday"] = f"{hol[0]} {hol[1]}" if hol else ""
-    except Exception:  # pragma: no cover
+    except Exception:
         data["holiday"] = ""
 
-    # --- пользовательские счётчики (invites / победы в играх) -------------
     try:
         from app.db.repositories import UserRepository
         users = UserRepository(session)
         data["invites"] = await users.get_stat(tg_id, "invites")
         data["games_won"] = await users.get_stat(tg_id, "games_won")
-    except Exception:  # pragma: no cover
+    except Exception:
         data["invites"] = data["games_won"] = 0
 
     data["user_info"] = {

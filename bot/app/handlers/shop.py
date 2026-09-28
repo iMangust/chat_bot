@@ -32,14 +32,9 @@ from app.utils.safe_edit import safe_edit_or_answer
 
 router = Router(name="shop")
 
-# Страница магазина per-chat: cb.data frozen (v1.5.18), поэтому после покупки
-# перерендер возвращает юзера на ту же страницу, где он купил товар, а не
-# сбрасывает на первую (баг v1.5.24: «купил — улетел на стр. 1»).
 _SHOP_PAGE_CTX: dict[int, int] = {}
 
-
 ITEMS_SEED = [
-    # ---------------- 🍞 Еда (быстрое насыщение) --------------------------
     dict(code="food_bread", name="Хлеб", icon="🍞", type="food", price=5,
          effect={"hunger": 15}, description="Просто, дёшево, сердито."),
     dict(code="food_apple", name="Яблоко", icon="🍎", type="food", price=10,
@@ -60,7 +55,6 @@ ITEMS_SEED = [
     dict(code="food_sushi", name="Сендвич сёмги", icon="🍣", type="food", price=45,
          effect={"hunger": 42, "happiness": 8, "intellect": 1},
          description="Дальневосточный деликатес: ум +1."),
-    # ---------------- 🎯 Ужин с баффом (съел → временный эффект) ----------
     dict(code="food_feast", name="Праздничный ужин", icon="🦞", type="food", price=70,
          effect={"hunger": 60, "happiness": 10,
                  "buff": {"type": "food_feast", "mult": 0.25, "duration": 1800,
@@ -71,7 +65,6 @@ ITEMS_SEED = [
                  "buff": {"type": "happy_pct", "mult": 0.20, "duration": 3600,
                           "label": "Медовое настроение"}},
          description="Здоровье +8 и час игры дают +20% счастья."),
-    # ---------------- 🥤 Напитки (бодрость и временные бафы) --------------
     dict(code="drink_water", name="Водичка", icon="💧", type="drink", price=4,
          effect={"energy": 5, "hygiene": -2}, description="Просто попить."),
     dict(code="drink_juice", name="Сок", icon="🧃", type="drink", price=10,
@@ -99,14 +92,12 @@ ITEMS_SEED = [
                  "buff": {"type": "xp_pct", "mult": 0.15, "duration": 3600,
                           "label": "Ягодная ясность"}},
          description="⚡+15 и час все дела дают +15% XP."),
-    # ---------------- 🎾 Игрушки -------------------------------------------
     dict(code="toy_ball", name="Мячик", icon="⚽", type="toy", price=30,
          effect={"happiness": 10}, description="Игрушка: играет сам, чуть поднимает счастье."),
     dict(code="toy_laser", name="Лазерная указка", icon="🔦", type="toy", price=80,
          effect={"happiness": 20, "agility": 1}, description="Кошачий экстаз."),
     dict(code="toy_puzzle", name="Головоломка", icon="🧩", type="toy", price=60,
          effect={"happiness": 12, "intellect": 1}, description="Ум растёт, лапы не устают."),
-    # ---------------- 💊 Лекарства -----------------------------------------
     dict(code="med_pill", name="Лекарство", icon="💊", type="medicine", price=35,
          effect={"health": 35}, description="Лечит болезни."),
     dict(code="med_vitamins", name="Витамины", icon="🧪", type="medicine", price=60,
@@ -114,10 +105,6 @@ ITEMS_SEED = [
     dict(code="med_syrup", name="Сироп от кашля", icon="🍯", type="medicine", price=45,
          effect={"health": 25}, description="Мягкое лечение, быстрее ставит на лапы."),
 ]
-
-# Мерч не хранится в таблице Items: он вынесен в отдельный раздел
-# 🧢 Мерч канала (app/handlers/merch.py) и живёт из конфига/дефолтной витрины.
-
 
 async def seed_items(session: AsyncSession) -> int:
     existing = {r for r in (await session.execute(select(Item.code))).scalars()}
@@ -134,23 +121,21 @@ async def seed_items(session: AsyncSession) -> int:
         await session.flush()
     return created
 
-
 def shop_keyboard(items: list[Item], user_coins: int) -> "InlineKeyboardBuilder | None":
     b = InlineKeyboardBuilder()
     for it in items:
         if it.type == "merch":
-            continue  # старый мерч в БД игнорируем — он в отдельном разделе
+            continue
         afford = "🪙" if user_coins >= it.price else "🔒"
         b.button(text=f"{afford} {it.icon} {html.escape(it.name)} · {it.price}",
                  callback_data=f"buy:{it.id}")
     b.adjust(1)
     return b
 
-
 @router.callback_query(F.data == "pet:shop")
 @router.callback_query(F.data.startswith("shop:page:"))
-@router.callback_query(F.data.startswith("shop:back"))   # совместимость со старыми клавиатурами
-@router.callback_query(F.data.startswith("shop:next"))   # в сообщениях пользователей (баг v1.5.48)
+@router.callback_query(F.data.startswith("shop:back"))
+@router.callback_query(F.data.startswith("shop:next"))
 async def shop_screen(cb: CallbackQuery, session: AsyncSession,
                       page: int | None = None) -> None:
     """Экран магазина. page — явный номер страницы (используется после
@@ -160,7 +145,7 @@ async def shop_screen(cb: CallbackQuery, session: AsyncSession,
     но старые инстансы сообщений могли содержать ``shop:back`` / ``shop:next``
     (относительные) — они обрабатываются здесь же, иначе клик по ним не имеет
     обработчика и кнопка «не работает» (жалоба пользователя v1.5.48)."""
-    set_pet_page(cb.message.chat.id, 1)  # «Назад» из магазина вернёт на стр. «Вещи»
+    set_pet_page(cb.message.chat.id, 1)
     users = UserRepository(session)
     user = await users.get(cb.from_user.id)
     if user is None:
@@ -173,18 +158,12 @@ async def shop_screen(cb: CallbackQuery, session: AsyncSession,
         items = list((await session.execute(
             select(Item).where(Item.type != "merch").order_by(Item.type, Item.price)
         )).scalars())
-    # магазин листается постранично (≤6 товаров на страницу), текст показывает
-    # только товары текущей страницы — кнопки и список всегда синхронны.
-    # Страница: явный аргумент page (после покупки) либо из callback_data
-    # (shop:page:<n>).
     if page is None:
         data = cb.data or ""
         try:
             if data.startswith("shop:page:"):
                 page = int(data.split(":")[2])
             elif data.startswith("shop:back") or data.startswith("shop:next"):
-                # относительное листание из старых инстансов клавиатуры —
-                # отталкиваемся от запомненной страницы этого чата
                 cur = _SHOP_PAGE_CTX.get(cb.message.chat.id, 0)
                 page = cur - 1 if data.startswith("shop:back") else cur + 1
             else:
@@ -192,7 +171,6 @@ async def shop_screen(cb: CallbackQuery, session: AsyncSession,
         except (IndexError, ValueError):
             page = 0
     else:
-        # защита: page мог прийти строкой из callback-парсинга
         try:
             page = int(page)
         except (TypeError, ValueError):
@@ -200,18 +178,6 @@ async def shop_screen(cb: CallbackQuery, session: AsyncSession,
     grouped = [it for t in ("food", "drink", "toy", "medicine")
                for it in items if it.type == t] + \
               [it for it in items if it.type not in ("food", "drink", "toy", "medicine")]
-    # ВАЖНО: страницы режет paged_pages — тот же алгоритм, что у кнопок.
-    # Раньше текст резался по 6 «в ряд», а paged_keyboard раскладывал кнопки
-    # по 2 в ряд и резал по-своему: счётчик показывал «стр. 1/4», а ◀️/▶️
-    # уходили в clamp — листание магазина было невозможно (баг v1.5.24).
-    # total_pages = len(paged_pages(...)) — пустые строки-заполнители тоже
-    # учитываются, поэтому индекс строки grouped == индекс кнопки на странице.
-    #
-    # КЛЮЧЕВОЕ (v1.5.48): контентные кнопки строятся ДО подсчёта страниц и
-    # передаются в paged_keyboard готовыми `pages`. Раньше кнопки строились
-    # только из chunk текущей страницы, а paged_keyboard перерезал их ЗАНОВО:
-    # при page=0 он видел 6 кнопок → total=1 → ◀️/▶️ не создавались вовсе
-    # («нет возможности проматывать страницы» — жалоба пользователя).
     content_buttons = [
         InlineKeyboardButton(
             text=f"{'🪙' if user.coins >= it.price else '🔒'} {it.icon} {html.escape(it.name)} · {it.price}🪙",
@@ -237,24 +203,18 @@ async def shop_screen(cb: CallbackQuery, session: AsyncSession,
     lines.append("")
     lines.append("<i>🪙 — по карману, 🔒 — не хватает монет</i>")
 
-    # КЛЮЧЕВОЕ (v1.5.48): передаём ГОТОВЫЕ страницы всех товаров — иначе
-    # paged_keyboard режет заново только chunk текущей страницы, видит 6
-    # кнопок → total=1 → ◀️/▶️ не создавались вовсе (листание магазина было
-    # невозможно — жалоба пользователя).
     kb, page = paged_keyboard(
         content_buttons, prefix="shop", title="🛒 Магазин", page=page,
         back_cb="menu:main", pages=all_pages,
     )
-    _SHOP_PAGE_CTX[cb.message.chat.id] = page  # помним страницу для возврата после покупки
+    _SHOP_PAGE_CTX[cb.message.chat.id] = page
     await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=kb)
     await cb.answer()
-
 
 @router.callback_query(F.data.in_({"shop:noop", "inv:noop"}))
 async def shop_noop(cb: CallbackQuery) -> None:
     """Клик по неразрывной подписи страницы — просто снять «часики»."""
     await cb.answer()
-
 
 @router.callback_query(F.data.startswith("buy:"))
 async def buy_item(cb: CallbackQuery, session: AsyncSession) -> None:
@@ -272,7 +232,6 @@ async def buy_item(cb: CallbackQuery, session: AsyncSession) -> None:
     if item is None:
         return await cb.answer("Предмет не найден", show_alert=True)
     if item.type == "merch":
-        # мерч вынесен в отдельный раздел — показываем витрину, монеты не трогаем
         from app.handlers.merch import merch_screen
         await cb.answer()
         return await merch_screen(cb)
@@ -280,10 +239,6 @@ async def buy_item(cb: CallbackQuery, session: AsyncSession) -> None:
         await cb.answer(f"Не хватает {item.price - user.coins} монет 🪙", show_alert=True)
         return
 
-    # v1.5.18: НЕ присваиваем cb.data — объекты aiogram frozen (pydantic),
-    # мутация «после покупки» кидала ValidationError на каждом buy:/use:.
-    # Страницу возврата передаём параметром в shop_screen.
-    # защита от двойного списания при быстрых дабл-кликах: UPDATE ... WHERE coins>=price
     from sqlalchemy import update
     res = await session.execute(
         update(User).where(User.tg_id == user.tg_id, User.coins >= item.price)
@@ -301,18 +256,12 @@ async def buy_item(cb: CallbackQuery, session: AsyncSession) -> None:
         session.add(PetInventory(pet_id=pet.id, item_id=item.id, quantity=1))
     await session.flush()
     await pets.log_action(pet.id, "buy", value=item.price, meta={"item": item.code})
-    await session.commit()   # фиксируем списание сразу (res.rowcount уже проверен)
+    await session.commit()
     logger.info("user {} bought {} for {}", user.tg_id, item.code, item.price)
     await cb.answer(f"🛒 Куплено: {item.icon} {item.name}!", show_alert=False)
-    # реакция-«покупка» на сообщении витрины (best-effort, см. app/utils/fx.py)
-    # единый безопасный путь: типизированный SetMessageReaction через cb.bot
     from app.utils.fx import EFFECTS, react_to_message
     await react_to_message(cb, EFFECTS["coin"].primary[0])
-    # перерендерим магазин, чтобы цены-замки обновились (страницу передаём
-    # аргументом: cb.data — frozen, мутировать нельзя, v1.5.18). Возвращаем
-    # на ТО ЖЕ страницу, где была покупка (не сбрасываем на первую).
     await shop_screen(cb, session, page=_SHOP_PAGE_CTX.get(cb.message.chat.id, 0))
-
 
 @router.callback_query(F.data == "pet:inv")
 @router.callback_query(F.data.startswith("inv:page:"))
@@ -337,11 +286,6 @@ async def inventory_screen(cb: CallbackQuery, session: AsyncSession) -> None:
         page = int(cb.data.split(":")[2]) if cb.data.startswith("inv:page:") else 0
     except (IndexError, ValueError):
         page = 0
-    # КЛЮЧЕВОЕ (v1.5.48, как в магазине): контентные кнопки строятся для ВСЕХ
-    # предметов, страницы режет paged_pages, и они передаются в paged_keyboard
-    # готовыми. Раньше total считался по плейсхолдерам, а кнопки резались
-    # заново только из chunk → при page=0 ◀️/▶️ не создавались (листание
-    # инвентаря было невозможно).
     content_buttons = []
     for inv, item in rows:
         content_buttons.append(InlineKeyboardButton(
@@ -361,7 +305,6 @@ async def inventory_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     )
     await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=kb)
     await cb.answer()
-
 
 @router.callback_query(F.data.startswith("use:"))
 async def use_item(cb: CallbackQuery, session: AsyncSession) -> None:
@@ -385,14 +328,11 @@ async def use_item(cb: CallbackQuery, session: AsyncSession) -> None:
 
     svc = TamagotchiService(session)
     buff_note = ""
-    # v1.5.68: лекарства на прогулке не дают (как мыться/тренироваться) —
-    # проверяем ДО heal(), чтобы таблетка не списывалась впустую.
     if item.type == "medicine" and svc.on_walk(pet):
         return await cb.answer(t("pet.walk_deny_medicine", name=pet.name),
                                show_alert=True)
     if item.type in ("food", "drink"):
         result = await svc.feed(pet, {k: v for k, v in item.effect.items()})
-        # если накормили реально (не кулдаун/сон) — покажем активные бафы
         buffs = svc.active_buffs(pet)
         if buffs:
             labels = [b.get("label") or b["type"]
@@ -412,13 +352,10 @@ async def use_item(cb: CallbackQuery, session: AsyncSession) -> None:
                     setattr(pet, stat, clamp(getattr(pet, stat) + delta))
                 result = f"{item.icon} {item.name} применён!"
     elif item.type == "toy":
-        result = await svc.play(pet, won=False)  # игрушка = пассивная игра без проигрыша
+        result = await svc.play(pet, won=False)
     else:
         result = "❓ Этот предмет пока нельзя использовать."
 
-    # v1.5.68: если применение отклонено (спит/на прогулке/критическое состояние/
-    # кулдаун/здоров), предмет НЕ списываем и действие не логируем — иначе еда
-    # «исчезала» во сне, а по кнопке «Разбудить» в ответе кормление не срабатывало.
     denied_markers = ("😴", "🚨", "⏳", "😀 Питомец здоров", "запыхался",
                       "пока нельзя")
     if any(m in result for m in denied_markers):
@@ -433,11 +370,7 @@ async def use_item(cb: CallbackQuery, session: AsyncSession) -> None:
         await safe_edit_or_answer(cb.message, f"{result}{buff_note}\n\n" + await svc.render_async(pet),
                                   reply_markup=pet_hub(1))
     finally:
-        # коммит в finally: edit уже неотменить, а без commit'а при сетевом
-        # сбое middleware откатит сессию — предмет исчез бы из UI, но остался
-        # в инвентаре (рассинхрон).
         await session.commit()
-    # визуальный эффект по типу предмета: 🎁/❤️‍🩹/🥳 вместо тихого ack
     fx_kind = {"food": "feed", "drink": "item", "medicine": "heal",
                "toy": "play"}.get(item.type, "item")
     from app.utils.fx import apply_effect

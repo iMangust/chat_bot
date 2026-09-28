@@ -38,7 +38,6 @@ from app.services.achievements import seed_achievements
 from app.tasks.scheduler import build_scheduler
 from app.utils.redis import close_redis, init_redis
 
-
 class UiLogHandler:
     """Sink loguru: буфер последних строк + колбэк слушателю.
 
@@ -49,12 +48,12 @@ class UiLogHandler:
 
     def __init__(self, maxlen: int = 1000) -> None:
         self.buffer: deque[str] = deque(maxlen=maxlen)
-        self._callback = None  # callable(str) -> None; ставится слушателем
+        self._callback = None
 
     def set_callback(self, callback) -> None:
         self._callback = callback
 
-    def __call__(self, message) -> None:  # loguru sink protocol
+    def __call__(self, message) -> None:
         record = message.record
         line = (f"{record['time']:HH:mm:ss} | {record['level'].name:<7} | "
                 f"{record['name']} - {record['message']}")
@@ -63,12 +62,10 @@ class UiLogHandler:
         if cb is not None:
             try:
                 cb(line)
-            except Exception:  # noqa: BLE001 — логгер не должен ронять UI
+            except Exception:
                 pass
 
-
 ui_log_handler = UiLogHandler()
-
 
 def _detach_router(router: Dispatcher) -> None:
     """Открепить все дочерние роутеры от диспетчера (рекурсивно).
@@ -89,18 +86,16 @@ def _detach_router(router: Dispatcher) -> None:
             with contextlib.suppress(Exception):
                 sub._parent_router = None
 
-
 def _reset_router_state(dp: Dispatcher) -> None:
     """Открепить роутеры от диспетчера и подчистить его кэши."""
     _detach_router(dp)
     with contextlib.suppress(Exception):
-        dp.resolve_used_update_types()  # пересчитываем кэш используемых апдейтов
+        dp.resolve_used_update_types()
     for chain_name in ("update", "errors"):
         chain = getattr(dp, chain_name, None)
         if chain is not None:
             with contextlib.suppress(Exception):
                 chain.unresolvable_handlers.clear()
-    # FSM-фильтры состояний хранят ссылку на старый Dispatcher
     for cls in getattr(State, "__subclasses__", lambda: [])():
         for name, val in list(vars(cls).items()):
             if isinstance(val, dict):
@@ -109,12 +104,11 @@ def _reset_router_state(dp: Dispatcher) -> None:
                         if getattr(f, "_dispatcher", None) is dp:
                             f._dispatcher = None
 
-
 class BotRuntime:
     """Запуск и остановка бота по требованию (singleton — :data:`runtime`)."""
 
     def __init__(self) -> None:
-        self.state: str = "stopped"          # stopped | starting | running | stopping
+        self.state: str = "stopped"
         self.started_at: float | None = None
         self.bot: Bot | None = None
         self.dp: Dispatcher | None = None
@@ -123,13 +117,11 @@ class BotRuntime:
         self._loop: asyncio.AbstractEventLoop | None = None
         self.last_error: str | None = None
 
-    # ------------------------------------------------------------------ run
     async def start(self) -> None:
         """Полный старт: Redis → БД → сиды → роутеры → поллинг."""
         if self.state != "stopped":
             raise RuntimeError(f"бот уже в состоянии {self.state!r}")
         settings = get_settings()
-        # при запуске из bat-файла токен можно передать переменной окружения
         token = os.environ.get("TAMABOT_TOKEN_OVERRIDE") or settings.bot_token
         if not token or token == "test":
             raise RuntimeError("BOT_TOKEN не задан — проверьте .env или запустите через run.bat")
@@ -144,29 +136,21 @@ class BotRuntime:
                 token=token,
                 default=DefaultBotProperties(parse_mode=ParseMode.HTML),
             )
-            # ВАЖНО: используем общий конструктор из app.main — он принудительно
-            # ставит protocol=2 (RESP2) и оборачивает ConnectionPool в Redis
-            # (RedisStorage принимает именно Redis, а не пул). Дополнительно
-            # probe_fsm_storage делает PING до поллинга: если Memurai/Redis
-            # старый или недоступен — тихо деградируем на MemoryStorage.
             from app.main import _make_fsm_storage, probe_fsm_storage
             storage = _make_fsm_storage(settings.redis_url)
             storage = await probe_fsm_storage(storage)
 
             dp = Dispatcher(storage=storage)
             dp.update.outer_middleware(DbMiddleware())
-            # сбор знаний о членстве ДО гейта (как в app.main, v2.0)
             dp.update.outer_middleware(access_handlers.AccessEventsMiddleware())
-            # Глобальный доступ: только ЛС + подписчики канала (как в app.main)
             from app.middlewares.gate import AccessGateMiddleware
             dp.update.outer_middleware(AccessGateMiddleware())
             dp.callback_query.outer_middleware(ThrottleMiddleware())
-            # страховка на уровне callback-мидлваров (до/вне хендлеров) —
-            # юзер не останется с «висящими часами», а админы увидят сбой в логе
             dp.callback_query.outer_middleware(errors.ErrorNotifyMiddleware())
             dp.include_routers(
                 errors.error_router,
-                admin.router,          # /mtproto, /syncnow — ADMIN_IDS (проверка внутри)
+                admin.router,
+                access_handlers.router,
                 start.router, tracker.router,
                 tamagotchi.router, games.router, shop.router,
                 merch.router,
@@ -175,12 +159,8 @@ class BotRuntime:
             )
             dp.errors.register(errors.on_error)
 
-            # схемы + справочники (идемпотентно)
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
-            # v2.0/v2.0.2: миграция реестра подписчиков и добивка пустых chats
-            # из истории — иначе управляемый запуск из оболочки оставлял живую
-            # БД на старой схеме welcome-колонок (гейт не видел членства).
             from app.main import _backfill_subscriber_chats_v202, _migrate_channel_subscribers_v20
             await _migrate_channel_subscribers_v20(engine)
             await _backfill_subscriber_chats_v202(engine)
@@ -189,9 +169,7 @@ class BotRuntime:
                 await seed_items(session)
                 await session.commit()
 
-            # Команды видимы только в ЛС (совпадает с on_startup из app.main):
-            # в группах взаимодействие с ботом запрещено гейтом доступа.
-            await self.bot.delete_my_commands()          # глобальный scope
+            await self.bot.delete_my_commands()
             await self.bot.delete_my_commands(scope=BotCommandScopeAllGroupChats())
             await self.bot.delete_my_commands(scope=BotCommandScopeAllChatAdministrators())
             await self.bot.set_my_commands(
@@ -211,9 +189,6 @@ class BotRuntime:
                 scope=BotCommandScopeAllPrivateChats(),
             )
 
-            # проверка токена/связи с Telegram API до старта поллинга —
-            # иначе при неверном токене или сетевом проблеме getUpdates просто
-            # ретраит молча и выглядит как «завис»
             me = await self.bot.get_me()
             logger.info(f"подключено к @{me.username} (id={me.id})")
 
@@ -225,8 +200,6 @@ class BotRuntime:
 
             allowed = dp.resolve_used_update_types() + ["message_reaction", "message_reaction_count", "chat_member"]
 
-            # доп. сервисы поверх поллинга — как в on_startup из app.main:
-            # ошибки не валят бота, всё видно в логах оболочки
             @dp.startup()
             async def _startup_extras() -> None:
                 with contextlib.suppress(Exception):
@@ -257,11 +230,9 @@ class BotRuntime:
             self._polling_task.add_done_callback(self._on_polling_done)
             logger.info("✅ bot started (управляемый запуск из оболочки)")
             logger.info("📡 слушаю обновления (long polling)… напишите боту /start в ЛС")
-            # при сетевых проблемах aiogram ретраит getUpdates молча — включаем
-            # DEBUG для aiogram, чтобы такие ситуации было видно в логах
             import logging as _logging
             _logging.getLogger("aiogram").setLevel(_logging.DEBUG)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             await self._cleanup_partial()
             self.state = "stopped"
             self.last_error = str(exc)
@@ -279,7 +250,6 @@ class BotRuntime:
                 asyncio.ensure_future(self._cleanup_partial(), loop=self._loop)
             self.state = "stopped"
 
-    # ---------------------------------------------------------------- stop
     async def stop(self) -> None:
         """Graceful shutdown: планировщик → поллинг → Redis/engine/session."""
         if self.state not in ("running", "starting"):
@@ -289,14 +259,14 @@ class BotRuntime:
         if self._scheduler is not None:
             try:
                 self._scheduler.shutdown(wait=False)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
             self._scheduler = None
         if self._polling_task is not None:
             self._polling_task.cancel()
             try:
                 await self._polling_task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            except (asyncio.CancelledError, Exception):
                 pass
             self._polling_task = None
         await close_redis()
@@ -305,7 +275,7 @@ class BotRuntime:
             await self.bot.session.close()
             self.bot = None
         if self.dp is not None:
-            _reset_router_state(self.dp)  # отвязываем роутеры — иначе повторный старт упадёт
+            _reset_router_state(self.dp)
         self.dp = None
         self.started_at = None
         self.state = "stopped"
@@ -315,19 +285,18 @@ class BotRuntime:
         try:
             await close_redis()
             await engine.dispose()
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass
         if self.bot is not None:
             try:
                 await self.bot.session.close()
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
             self.bot = None
         if self.dp is not None:
             _reset_router_state(self.dp)
         self.dp = None
 
-    # -------------------------------------------------------------- status
     @property
     def uptime_sec(self) -> float:
         if self.started_at is None:
@@ -344,10 +313,7 @@ class BotRuntime:
             out.append((job.id, nxt.strftime("%d.%m %H:%M:%S") if nxt else "—"))
         return out
 
-
-# Глобальный экземпляр для GUI (один процесс — один бот).
 runtime = BotRuntime()
-
 
 def setup_file_logging(level: str = "INFO") -> Path:
     """Настроить loguru: консоль подавляется (её перехватывает оболочка),

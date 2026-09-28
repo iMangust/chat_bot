@@ -29,9 +29,8 @@ from loguru import logger
 
 from app.config import get_settings
 
-_MIN_SEND_INTERVAL = 3.0        # антифлуд: не чаще одного ответа в 3 сек
+_MIN_SEND_INTERVAL = 3.0
 _last_sent: float = 0.0
-
 
 def _throttled() -> bool:
     global _last_sent
@@ -40,7 +39,6 @@ def _throttled() -> bool:
         return True
     _last_sent = now
     return False
-
 
 async def start_userbot(bot) -> asyncio.Task | None:
     """Поднимает Telethon-клиент и вешает респондер. None — если не настроен."""
@@ -55,7 +53,7 @@ async def start_userbot(bot) -> asyncio.Task | None:
         return None
     try:
         client = await holder.get()
-    except Exception as exc:  # noqa: BLE001 — нет сессии/кредов: тихо живём на Bot API
+    except Exception as exc:
         logger.warning("UserBot не запущен: {}: {} (нужен --login или "
                        "MTPROTO_SESSION_STRING)", type(exc).__name__, str(exc)[:180])
         return None
@@ -65,9 +63,6 @@ async def start_userbot(bot) -> asyncio.Task | None:
 
     @client.on(events.NewMessage(incoming=True, func=lambda e: not e.is_private))
     async def _on_incoming(event: events.NewMessage.Event) -> None:
-        # Юзербот НЕ исполняет игровую логику — она целиком на боте (гейт, XP,
-        # команды). Здесь только «человеческое» присутствие: реакция-подтверждение
-        # на стикеры/мемы в отслеживаемых чатах, чтобы активность была видна.
         msg: TLMessage = event.message
         if msg.out or (msg.sender and getattr(msg.sender, "bot", False)):
             return
@@ -85,14 +80,12 @@ async def start_userbot(bot) -> asyncio.Task | None:
             return
         try:
             await client.send_message(chat_id, "👍")
-        except Exception as exc:  # noqa: BLE001 — флудконтроль Telegram и т.п.
+        except Exception as exc:
             logger.debug("UserBot reply skipped: {}", type(exc).__name__)
 
     logger.info("🤖 UserBot активен (режим {}) — отвечаю от аккаунта id={}",
                 mode, holder.me.id if holder.me else "?")
-    # клиент держит соединение сам (встроенный loop-адаптер Telethon)
     return asyncio.current_task()
-
 
 async def stop_userbot() -> None:
     from app.services.mtproto_client import holder

@@ -17,14 +17,12 @@ from app.services.notifications import queue_notification
 from app.utils.html_text import esc as _esc
 
 MEDALS = {1: "🥇", 2: "🥈", 3: "🥉"}
-WEEKLY_PRIZES = {1: 500, 2: 250, 3: 100}  # монеты за 1/2/3 место недели
-
+WEEKLY_PRIZES = {1: 500, 2: 250, 3: 100}
 
 def _aware(dt: datetime | None) -> datetime | None:
     if dt is None:
         return None
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-
 
 async def top_messages(session: AsyncSession, since: datetime | None,
                        limit: int = 10) -> list[tuple[User, int]]:
@@ -41,7 +39,6 @@ async def top_messages(session: AsyncSession, since: datetime | None,
          .group_by(User.tg_id).order_by(cnt.desc()).limit(limit))
     return [(u, c) for u, c in (await session.execute(q)).all() if c > 0]
 
-
 async def top_reactions(session: AsyncSession, since: datetime | None,
                         limit: int = 10) -> list[tuple[User, int]]:
     """Топ по полученным реакциям."""
@@ -56,7 +53,6 @@ async def top_reactions(session: AsyncSession, since: datetime | None,
          .where(ReactionLog.created_at >= since)
          .group_by(User.tg_id).order_by(cnt.desc()).limit(limit))
     return [(u, c) for u, c in (await session.execute(q)).all() if c > 0]
-
 
 async def top_reactions_given(session: AsyncSession, since: datetime | None,
                               limit: int = 10) -> list[tuple[User, int]]:
@@ -73,7 +69,6 @@ async def top_reactions_given(session: AsyncSession, since: datetime | None,
          .group_by(User.tg_id).order_by(cnt.desc()).limit(limit))
     return [(u, c) for u, c in (await session.execute(q)).all() if c > 0]
 
-
 async def top_karma(session: AsyncSession, since: datetime | None,
                     limit: int = 10) -> list[tuple[User, int]]:
     """«Добрый» топ (v1.4.7): забота об общении — ответы + упоминания."""
@@ -88,7 +83,6 @@ async def top_karma(session: AsyncSession, since: datetime | None,
          .group_by(User.tg_id).order_by(karma.desc()).limit(limit))
     return [(u, int(k)) for u, k in (await session.execute(q)).all() if k and int(k) > 0]
 
-
 async def top_emotional(session: AsyncSession, since: datetime | None,
                         limit: int = 10) -> list[tuple[User, int]]:
     """«Самый эмоциональный» (v1.4.7): сумма поставленных + полученных реакций."""
@@ -102,7 +96,6 @@ async def top_emotional(session: AsyncSession, since: datetime | None,
             total[u.tg_id] = (u, c)
     ranked = sorted(total.values(), key=lambda x: -x[1])[:limit]
     return [(u, c) for u, c in ranked if c > 0]
-
 
 async def overall_top(session: AsyncSession, since: datetime | None,
                       limit: int = 10) -> list[tuple[User, float, dict[str, int]]]:
@@ -128,14 +121,10 @@ async def overall_top(session: AsyncSession, since: datetime | None,
             places.setdefault(u.tg_id, {})[name] = i
     out: list[tuple[User, float, dict[str, int]]] = []
     for uid, per in places.items():
-        # среднее по секциям, где пользователь засветился; бонус за широту:
-        # отсутствие в секции = место n+1 (штраф, чтобы «всё понемногу»
-        # выигрывало у «чемпион в одном»)
         score = sum(per.get(s, n + 1) for s in sections) / len(sections)
         out.append((users[uid], round(score, 2), per))
     out.sort(key=lambda x: x[1])
     return out[:limit]
-
 
 async def top_levels(session: AsyncSession, limit: int = 10) -> list[tuple[User, int]]:
     users = list((await session.execute(
@@ -144,14 +133,12 @@ async def top_levels(session: AsyncSession, limit: int = 10) -> list[tuple[User,
     )).scalars())
     return [(u, u.level) for u in users]
 
-
 async def top_streaks(session: AsyncSession, limit: int = 10) -> list[tuple[User, int]]:
     users = list((await session.execute(
         select(User).where(User.streak_days > 0)
         .order_by(User.streak_days.desc()).limit(limit)
     )).scalars())
     return [(u, u.streak_days) for u in users]
-
 
 async def top_pets(session: AsyncSession, limit: int = 10) -> list[tuple[Pet, str]]:
     rows = (await session.execute(
@@ -160,7 +147,6 @@ async def top_pets(session: AsyncSession, limit: int = 10) -> list[tuple[Pet, st
         .order_by(Pet.level.desc(), Pet.xp.desc()).limit(limit)
     )).all()
     return [(p, name) for p, name in rows]
-
 
 async def build_weekly_payload(session: AsyncSession, week_start: datetime) -> dict:
     """Собираем данные недельного снапшота (JSON-safe)."""
@@ -173,7 +159,6 @@ async def build_weekly_payload(session: AsyncSession, week_start: datetime) -> d
         "reactions": [[int(u.tg_id), u.first_name, c] for u, c in reactors],
         "pets": [[p.id, p.name, p.level, owner] for p, owner in pets],
     }
-
 
 def leaderboard_text(payload: dict) -> str:
     """Человеческое представление снапшота (для экрана /award и пост-отчёта)."""
@@ -193,7 +178,6 @@ def leaderboard_text(payload: dict) -> str:
     lines.append("\n🪙 Призёрам 💬-топа начислены монеты: 500 / 250 / 100!")
     return "\n".join(lines)
 
-
 async def snapshot_weekly(session: AsyncSession,
                           now: datetime | None = None) -> dict | None:
     """Еженедельная задача: снапшот + награды топ-3 болтунов недели.
@@ -202,14 +186,11 @@ async def snapshot_weekly(session: AsyncSession,
     (идемпотентность через UserStat key='last_week_award').
     """
     now = now or utcnow()
-    # понедельник текущей недели (UTC); считаем итоги предыдущей
     this_monday = (now - timedelta(days=now.weekday())).replace(
         hour=0, minute=0, second=0, microsecond=0)
     week_start = this_monday - timedelta(days=7)
 
     marker_key = f"last_week_award:{week_start.date().isoformat()}"
-    # Идемпотентность: маркер храним в снапшоте (category='weekly_award'),
-    # а НЕ в UserStat(user_id=0) — user_id=0 нарушает FK users.tg_id на MySQL.
     marker = (await session.execute(
         select(LeaderboardSnapshot.id).where(
             LeaderboardSnapshot.period == "week",
@@ -231,7 +212,6 @@ async def snapshot_weekly(session: AsyncSession,
     session.add(LeaderboardSnapshot(period="week", category=marker_key,
                                     data=[]))
 
-    # награды топ-3 болтунов недели + счётчик для ачивки «Король дня»
     talkers = await top_messages(session, week_start, 3)
     for place, (user, _cnt) in enumerate(talkers, start=1):
         prize = WEEKLY_PRIZES.get(place, 0)
@@ -242,7 +222,6 @@ async def snapshot_weekly(session: AsyncSession,
                 session, int(user.tg_id), "info",
                 f"🎉 Ты #{place} в недельном топе болтунов! Приз: 🪙 {prize} монет.",
             )
-    # «Король дня» — дневной топ на момент снапшота
     day_top = await top_messages(session, now - timedelta(days=1), 1)
     if day_top:
         winner = day_top[0][0]

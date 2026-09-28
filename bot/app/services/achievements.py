@@ -22,7 +22,6 @@ from app.db.models import (
 from app.db.repositories import AchievementRepository
 from app.utils.local_time import now as local_now
 
-
 @dataclass(frozen=True)
 class AchievementDef:
     code: str
@@ -37,10 +36,7 @@ class AchievementDef:
     is_hidden: bool = False
     rarity: AchievementRarity = AchievementRarity.common
 
-
-# Справочник достижений (MVP-набор; пополняется на этапах 3–6)
 ACHIEVEMENTS: list[AchievementDef] = [
-    # 💬 Активность
     AchievementDef("msg_10", "Первые слова", "Написать 10 сообщений", "💬",
                    AchievementCategory.activity, ConditionType.messages_total, 10, 20, 5),
     AchievementDef("msg_100", "Болтун", "Написать 100 сообщений", "🗣",
@@ -54,7 +50,6 @@ ACHIEVEMENTS: list[AchievementDef] = [
     AchievementDef("msg_50_day", "Марафон", "50 сообщений за один день", "🏃",
                    AchievementCategory.activity, ConditionType.messages_day, 50, 150, 30,
                    rarity=AchievementRarity.rare),
-    # 🔥 Стрики
     AchievementDef("streak_7", "Неделя огня", "7 дней активности подряд", "🔥",
                    AchievementCategory.streak, ConditionType.streak_days, 7, 150, 40),
     AchievementDef("streak_30", "Месяц стали", "30 дней активности подряд", "🌋",
@@ -63,7 +58,6 @@ ACHIEVEMENTS: list[AchievementDef] = [
     AchievementDef("streak_365", "Год вместе", "365 дней активности подряд", "🎂",
                    AchievementCategory.streak, ConditionType.streak_days, 365, 5000, 1000,
                    rarity=AchievementRarity.legendary),
-    # 😀 Реакции
     AchievementDef("react_give_50", "Щедрый палец", "Поставить 50 реакций", "👍",
                    AchievementCategory.reactions, ConditionType.reactions_given, 50, 80, 20),
     AchievementDef("react_give_500", "Реактор", "Поставить 500 реакций", "⚡",
@@ -72,20 +66,17 @@ ACHIEVEMENTS: list[AchievementDef] = [
     AchievementDef("react_get_100", "Любимец чата", "Получить 100 реакций", "💖",
                    AchievementCategory.reactions, ConditionType.reactions_received, 100, 250, 60,
                    rarity=AchievementRarity.rare),
-    # 🐣 Тамагочи (реализуются на этапе 3)
     AchievementDef("pet_feed_100", "Заботливый хозяин", "Покормить питомца 100 раз", "🍎",
                    AchievementCategory.pet, ConditionType.pet_feeds, 100, 200, 50),
     AchievementDef("pet_level_5", "Вырастил!", "Довести питомца до 5 уровня", "🐉",
                    AchievementCategory.pet, ConditionType.pet_level, 5, 300, 80),
     AchievementDef("pet_walks_10", "Путешественник", "Отправить питомца на 10 прогулок", "🗺",
                    AchievementCategory.pet, ConditionType.pet_walks, 10, 150, 40),
-    # 🏆 Социальные
     AchievementDef("top1_day", "Король дня", "Занять 1 место в топе за день", "🥇",
                    AchievementCategory.social, ConditionType.top1_day, 1, 300, 100,
                    rarity=AchievementRarity.epic),
     AchievementDef("invite_1", "Знакомый", "Пригласить друга", "🤝",
                    AchievementCategory.social, ConditionType.invites, 1, 50, 20),
-    # 🎭 Секретные
     AchievementDef("night_owl", "Сова", "Написать сообщение в 3–5 ночи", "🦉",
                    AchievementCategory.secret, ConditionType.messages_total, 1, 100, 30,
                    is_hidden=True, rarity=AchievementRarity.epic),
@@ -95,14 +86,12 @@ ACHIEVEMENTS: list[AchievementDef] = [
     AchievementDef("walk_friend", "Новые знакомства", "Завести друга-питомца на прогулке", "💞",
                    AchievementCategory.secret, ConditionType.pet_walks, 1, 80, 25,
                    is_hidden=True, rarity=AchievementRarity.rare),
-    # 🎮 Мини-игры
     AchievementDef("games_won_10", "Игумен", "Выиграть 10 мини-игр", "🎮",
                    AchievementCategory.activity, ConditionType.games_won, 10, 120, 30,
                    rarity=AchievementRarity.rare),
 ]
 
 _BY_CODE = {a.code: a for a in ACHIEVEMENTS}
-
 
 async def seed_achievements(session: AsyncSession) -> int:
     """Идемпотентно загружает справочник достижений. Возвращает число созданных."""
@@ -125,7 +114,6 @@ async def seed_achievements(session: AsyncSession) -> int:
         logger.info("seeded {} achievements", created)
     return created
 
-
 class AchievementService:
     """Проверяет прогресс и выдаёт награды.
 
@@ -147,9 +135,8 @@ class AchievementService:
 
         for a in ach_rows:
             if a.is_hidden and (force_codes is None or a.code not in force_codes):
-                continue  # скрытые — только по прямому триггеру
+                continue
             key = a.condition_type.value
-            # спец-кейс: у условий messages_day значение берётся из counters["messages_day"]
             value = counters.get(key)
             if value is None and key == "messages_day":
                 value = counters.get("messages_day_total")
@@ -191,7 +178,6 @@ class AchievementService:
         )).scalar_one_or_none()
         if already is not None and (already.unlocked_at is not None
                                     or already.progress >= a.condition_value):
-            # уже открыто (или открылась ранее, но не зафиксирована) — помечаем и молча выходим
             if already.unlocked_at is None:
                 already.unlocked_at = local_now()
                 await self.session.flush()
@@ -212,8 +198,6 @@ class AchievementService:
                 user.level, user.xp, _ = apply_xp(user.level, user.xp, xp)
                 user.coins += coins
                 await self.session.flush()
-        # уведомление в очередь (учитывает персональные настройки; флуд-защита —
-        # batching в одном сообщении ниже). kind="achievement" — см. notifications.queue_notification
         try:
             from app.services.notifications import queue_notification
             lines = [f"{a.icon} <b>{a.title}</b> — {a.description}" for a in achievements]
@@ -222,7 +206,7 @@ class AchievementService:
             text = ("🎉 <b>Новое достижение!</b>\n" + "\n".join(lines) +
                     f"\n\nНаграда: +{total_xp} XP · +{total_c} 🪙")
             await queue_notification(self.session, user_id, "achievement", text)
-        except Exception as e:  # уведомления не должны ронять основной флоу
+        except Exception as e:
             logger.debug("achievement notify skipped: {}", e)
         for a in achievements:
             logger.info("🏆 user {} unlocked achievement {} (+{}xp +{}c)",
@@ -242,9 +226,9 @@ class AchievementService:
             out.append((a, rows.get(a.id)))
         rarity_order = {"legendary": 0, "epic": 1, "rare": 2, "common": 3}
         out.sort(key=lambda t: (
-            0 if (t[1] and t[1].unlocked_at) else 1,          # открытые — первыми
+            0 if (t[1] and t[1].unlocked_at) else 1,
             rarity_order.get(getattr(t[0].rarity, "value", str(t[0].rarity)), 4),
-            t[0].condition_value,                              # простые цели — раньше
+            t[0].condition_value,
             t[0].id,
         ))
         return out

@@ -20,12 +20,10 @@ from pathlib import Path
 
 from app.config import _ENV_ENCODINGS, Settings, get_settings
 
-# Ключи, которые никогда не отдаём интерфейсу целиком (показываем маску).
 SECRET_KEYS = {"BOT_TOKEN", "TELEGRAM_PASSWORD", "API_HASH",
                "TELEGRAM_API_HASH", "MTPROTO_SESSION_STRING"}
 
 _KEY_RE = re.compile(r"^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$")
-
 
 def env_path() -> Path:
     """Путь к рабочему .env (тот же порядок поиска, что у app.config)."""
@@ -33,9 +31,7 @@ def env_path() -> Path:
                  str(Path(__file__).resolve().parents[2] / ".env")):
         if cand and Path(cand).is_file():
             return Path(cand)
-    # файла ещё нет — вернём каноническое место (bot/.env)
     return Path(__file__).resolve().parents[2] / ".env"
-
 
 def read_env_lines(path: Path | None = None) -> list[str]:
     path = path or env_path()
@@ -53,7 +49,6 @@ def read_env_lines(path: Path | None = None) -> list[str]:
         text = raw.decode("utf-8", errors="replace")
     return text.replace("\r\n", "\n").replace("\r", "\n").lstrip("\ufeff").split("\n")
 
-
 def parse_env(path: Path | None = None) -> dict[str, str]:
     """KEY→VALUE из файла (без комментариев; последние значения важнее)."""
     out: dict[str, str] = {}
@@ -66,7 +61,6 @@ def parse_env(path: Path | None = None) -> dict[str, str]:
             v = v[1:-1]
         out[k] = v
     return out
-
 
 def write_env(updates: dict[str, str], path: Path | None = None) -> None:
     """Точечно обновить ключи в .env, сохранив комментарии и порядок."""
@@ -87,7 +81,6 @@ def write_env(updates: dict[str, str], path: Path | None = None) -> None:
             seen.add(k)
         else:
             new_lines.append(line)
-    # ключей не было в файле — дописываем в конец
     additions = [f"{k}={fmt(v)}" for k, v in remaining.items()]
     while new_lines and new_lines[-1].strip() == "":
         new_lines.pop()
@@ -97,10 +90,8 @@ def write_env(updates: dict[str, str], path: Path | None = None) -> None:
         new_lines.extend(additions)
     content = "\n".join(new_lines + [""]) 
     path.write_bytes(content.encode("utf-8"))
-    # чтобы пересобранный Settings увидел новые значения даже без перезапуска
     for k, v in updates.items():
         os.environ[k] = v
-
 
 def _coerce(key: str, value: str):
     """Проверка значения на совместимость с полем Settings (или алиасом)."""
@@ -117,7 +108,7 @@ def _coerce(key: str, value: str):
         try:
             data = json.loads(s) if s.startswith("[") else \
                 [x.strip() for x in s.split(",") if x.strip()]
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise ValueError(f"{key}: ожидался список чисел через запятую "
                              f"или JSON (пример: 123,456)") from exc
         if not isinstance(data, list):
@@ -138,13 +129,10 @@ def _coerce(key: str, value: str):
         if s == "":
             return ""
         return str(float(s))
-    # str | None и просто str
     return s
-
 
 ALLOWED_ALIASES = {"API_ID", "API_HASH", "PHONE", "SESSION_STRING",
                    "ANSWER_MODE", "CHANNEL_USERNAME"}
-
 
 def validate_updates(updates: dict[str, str]) -> tuple[dict[str, str], list[str]]:
     """Возвращает (очищенные значения, список предупреждений). Бросает ValueError."""
@@ -161,7 +149,6 @@ def validate_updates(updates: dict[str, str]) -> tuple[dict[str, str], list[str]
                 continue
             raise ValueError(f"ключ {key!r} не поддерживается")
         clean[key] = _coerce(key, "" if val is None else str(val))
-    # полезные предупреждения (не блокирующие)
     tok = clean.get("BOT_TOKEN")
     if tok is not None and tok and ":" not in tok:
         warns.append("BOT_TOKEN похож на неполный: формат «123456:ABC...» (от @BotFather)")
@@ -175,7 +162,6 @@ def validate_updates(updates: dict[str, str]) -> tuple[dict[str, str], list[str]
     if lvl and lvl.upper() not in ("TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL"):
         raise ValueError(f"LOG_LEVEL: неизвестный уровень {lvl!r}")
     return clean, warns
-
 
 def settings_view() -> dict:
     """Все настройки для UI: текущие значения из .env + описания полей Settings."""
@@ -206,11 +192,9 @@ def settings_view() -> dict:
         "items": items,
     }
 
-
 def _version() -> str:
     from app.config import __version__
     return __version__
-
 
 def _type_name(ann) -> str:
     origin = getattr(ann, "__origin__", None)
@@ -227,7 +211,6 @@ def _type_name(ann) -> str:
         return "float"
     return "str"
 
-
 def _as_str(v) -> str:
     if v is None:
         return ""
@@ -237,9 +220,7 @@ def _as_str(v) -> str:
         return "true" if v else "false"
     return str(v)
 
-
 _COMMENT_CACHE: dict[str, str] = {}
-
 
 def _line_comment(key: str) -> str:
     """Комментарий-описание над ключом (или на той же строке) из .env.example —

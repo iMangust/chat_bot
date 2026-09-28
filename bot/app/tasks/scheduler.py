@@ -27,20 +27,17 @@ from app.services.tamagotchi import TamagotchiService, compute_mood
 from app.utils.redis import acquire_lock, release_lock
 from app.utils.local_time import now as local_now
 
-
 async def decay_all_pets(bot: Bot) -> None:
     """Каждые 30 минут: деградация статов, бонус друзей, «питомец скучает»."""
     if not await acquire_lock("decay", ttl_sec=60 * 25):
         return
     try:
-        # 🌦️ Обновляем кэш РЕАЛЬНОЙ погоды до обхода питомцев: apply_decay и
-        # погодные эффекты читают только кэш (сеть в синхронном пути запрещена).
         try:
             from app.services.weather import kamchatka_weather, apply_weather_to_pet
             await kamchatka_weather()
-        except Exception as exc:  # noqa: BLE001 — погода не должна ронять тик
+        except Exception as exc:
             logger.debug("weather refresh in decay tick failed: {}", exc)
-            apply_weather_to_pet = None  # type: ignore[assignment]
+            apply_weather_to_pet = None
         async with session_factory() as session:
             pets = list((await session.execute(
                 select(Pet).where(Pet.is_archived.is_(False)))).scalars())
@@ -50,8 +47,6 @@ async def decay_all_pets(bot: Bot) -> None:
             min_h = get_settings().pet_warning_min_hours
             for pet in pets:
                 changed = await svc.apply_decay(pet)
-                # ☀️/🌧️ эффект реальной погоды: солнце радует, дождь/мороз
-                # грустят и дают шанс простуды (не чаще раза в 3 часа на питомца)
                 if apply_weather_to_pet is not None:
                     try:
                         wline = apply_weather_to_pet(pet)
@@ -59,9 +54,8 @@ async def decay_all_pets(bot: Bot) -> None:
                             changed = True
                             weather_events += 1
                             logger.debug("weather event pet={}: {}", pet.id, wline.replace("\n", " | "))
-                    except Exception as exc:  # noqa: BLE001
+                    except Exception as exc:
                         logger.debug("weather effect skipped for pet {}: {}", pet.id, exc)
-                # пассивный бонус дружбы: +1 счастье за друга в сутки
                 friends = await list_friends(session, pet.id)
                 if friends:
                     day_key = "friend_bonus_day"
@@ -84,14 +78,12 @@ async def decay_all_pets(bot: Bot) -> None:
     finally:
         await release_lock("decay")
 
-
 def compute_mood_reason(mood: str) -> str:
     return {
         "sad": "грустит без тебя… Зайди поиграй! 🎾",
         "sick": "заболел! Нужно лечение 💊",
         "hungry": "голодный! Покорми меня 🍎",
     }.get(mood, "хочет внимания")
-
 
 async def flush_notifications(bot: Bot) -> None:
     """Каждую минуту: отправляем накопленные уведомления в ЛС."""
@@ -104,7 +96,7 @@ async def flush_notifications(bot: Bot) -> None:
                 select(NotificationQueue).where(
                     NotificationQueue.sent.is_(False),
                     NotificationQueue.send_at <= now,
-                ).limit(30)  # не больше 30 в тик — бережём rate-limit Telegram
+                ).limit(30)
             )).scalars())
             sent = 0
             for n in rows:
@@ -113,10 +105,6 @@ async def flush_notifications(bot: Bot) -> None:
                     n.sent = True
                     sent += 1
                 except TelegramAPIError as exc:
-                    # юзер заблокировал бота / ЛС закрыты — помечаем отправленным,
-                    # чтобы не копить мусор (RuntimeWarning: бот выключен и т.п.
-                    # наследуются от OSError/ValueError и НЕ ловятся здесь —
-                    # такое уведомление останется в очереди и дошлёт позже)
                     logger.debug("notification {} to {} dropped: {}",
                                  n.id, n.user_id, str(exc)[:120])
                     n.sent = True
@@ -125,7 +113,6 @@ async def flush_notifications(bot: Bot) -> None:
                 logger.info("notifications flushed: {}/{}", sent, len(rows))
     finally:
         await release_lock("notify_flush")
-
 
 async def check_streak_expiry(bot: Bot) -> None:
     """Раз в сутки (00:15 UTC): сгоревшие стрики → предупреждение."""
@@ -140,7 +127,6 @@ async def check_streak_expiry(bot: Bot) -> None:
             )).scalars())
             expired = 0
             for u in users:
-                # MySQL DATETIME -> naive; приводим к UTC перед сравнением дат
                 last_date = None
                 if u.last_active_date is not None:
                     la = u.last_active_date
@@ -160,16 +146,12 @@ async def check_streak_expiry(bot: Bot) -> None:
     finally:
         await release_lock("streak_check")
 
-
-
-
 async def _flagged_users(session, flag: str) -> set[int]:
     """tg_id юзеров, у которых настройка flag включена (или записи нет — по умолчанию вкл)."""
     off = set((await session.execute(
         select(NotificationSetting.user_id).where(getattr(NotificationSetting, flag).is_(False))
     )).scalars())
     return off
-
 
 async def daily_reports(bot: Bot) -> None:
     """Ежедневный отчёт активности (daily_report_hour_utc)."""
@@ -192,7 +174,7 @@ async def daily_reports(bot: Bot) -> None:
                     continue
                 stats_today = await repo.messages_count(int(u.tg_id), since=day_start)
                 if stats_today == 0:
-                    continue  # не было активности — не дёргаем лишний раз
+                    continue
                 pet = (await session.execute(
                     select(Pet).where(Pet.user_id == u.tg_id, Pet.is_archived.is_(False))
                 )).scalars().first()
@@ -203,7 +185,6 @@ async def daily_reports(bot: Bot) -> None:
             logger.info("daily reports queued: {}", sent)
     finally:
         await release_lock("daily_report")
-
 
 async def evening_streak_warnings(bot: Bot) -> None:
     """Вечером: у кого стрик >0 и сегодня ещё не писал — «серия сгорит»."""
@@ -235,7 +216,6 @@ async def evening_streak_warnings(bot: Bot) -> None:
     finally:
         await release_lock("streak_warn")
 
-
 async def weekly_leaderboard(bot: Bot) -> None:
     """Понедельник 00:30 UTC: снапшот топа + призы."""
     if not await acquire_lock("weekly_lb", ttl_sec=3000):
@@ -243,11 +223,10 @@ async def weekly_leaderboard(bot: Bot) -> None:
     try:
         async with session_factory() as session:
             await snapshot_weekly(session)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error("weekly leaderboard failed: {}", e)
     finally:
         await release_lock("weekly_lb")
-
 
 async def weekly_arena_finish(bot: Bot) -> None:
     """Понедельник 00:40 UTC: призы топ-3 недельной арены питомцев.
@@ -263,11 +242,10 @@ async def weekly_arena_finish(bot: Bot) -> None:
             awarded = await finish_week(session)
             if awarded:
                 logger.info("🏟 arena week closed, prizes distributed")
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error("weekly arena finish failed: {}", e)
     finally:
         await release_lock("weekly_arena")
-
 
 async def scan_channel_members(bot: Bot) -> None:
     """Фоновая сверка реестра подписчиков (v2.0).
@@ -287,28 +265,18 @@ async def scan_channel_members(bot: Bot) -> None:
     try:
         from app.db.repositories import SubscriberRepository
         async with session_factory() as session:
-            # сверяемся с ЧИСЛОМ ЛЮДЕЙ (distinct user_id), а не количеством
-            # строк: участник канала И группы хранится одной строкой.
             repo = SubscriberRepository(session)
             known_users = await repo.distinct_user_count()
             known_rows = await repo.count()
-            # счётчик берём по ПЕРВОМУ обязательному чату гейта (channel_chat_id
-            # или первый из TRACKED_CHAT_IDS) — раньше скан молча не работал
-            # без channel_chat_id.
             chats = required_chats()
             probe_chat = st.channel_chat_id or (chats[0][0] if chats else None)
             total = None
             if probe_chat is not None:
                 try:
                     total = await bot.get_chat_member_count(probe_chat)
-                except Exception as e:  # noqa: BLE001 — нет доступа к счётчику
+                except Exception as e:
                     logger.debug("channel member count unavailable: {}", e)
             if total is not None and total > known_users:
-                # Человек в Telegram больше, чем людей в базе. Но часть этой
-                # разницы может быть легальной: в probe-чат входят люди,
-                # которые НЕ состоят в других обязательных чатах гейта, а
-                # дельта-MTProto их пропускает (старые id ниже курсора).
-                # Поэтому подсказка зависит от того, включён ли полный скан.
                 full_hours = max(0, int(getattr(st, "mtproto_full_scan_hours", 6) or 0))
                 if full_hours > 0:
                     hint = (f"полный MTProto-скан включён (раз в {full_hours} ч) — "
@@ -320,11 +288,10 @@ async def scan_channel_members(bot: Bot) -> None:
                 logger.info("📢 subscribers drift: api={} db={} человек "
                             "(строк в базе: {}) — {}",
                             total, known_users, known_rows, hint)
-    except Exception as e:  # noqa: BLE001
+    except Exception as e:
         logger.error("channel scan failed: {}", e)
     finally:
         await release_lock("channel_scan")
-
 
 async def mtproto_delta_sync(bot: Bot | None = None) -> None:
     """v1.5.12 (фикс v1.5.15): периодическая MTProto-дельта (полный Telegram API).
@@ -346,7 +313,6 @@ async def mtproto_delta_sync(bot: Bot | None = None) -> None:
                                                sync_subscribers)
         if not mtproto_configured():
             return
-        # выбор режима: полный скан по расписанию или обычная дельта
         full = False
         st = get_settings()
         full_hours = max(0, int(getattr(st, "mtproto_full_scan_hours", 6) or 0))
@@ -362,14 +328,13 @@ async def mtproto_delta_sync(bot: Bot | None = None) -> None:
             logger.info("MTProto delta sync: {}", res)
     except asyncio.TimeoutError:
         logger.warning("MTProto delta sync: таймаут (сеть/флудконтроль?)")
-    except RuntimeError:  # вне контекста бота — разойдутся по следующему тикам
+    except RuntimeError:
         pass
-    except Exception as exc:  # noqa: BLE001 — без сессии/кредов тихо живём на Bot API
+    except Exception as exc:
         logger.info("MTProto delta sync пропущен: {}: {}",
                     type(exc).__name__, str(exc)[:200])
     finally:
         await release_lock("mtproto_sync")
-
 
 async def weather_updater(bot: Bot) -> None:
     """v1.5.37: фоновое обновление кэша реальной погоды (OpenWeather).
@@ -390,9 +355,8 @@ async def weather_updater(bot: Bot) -> None:
             logger.info("🌦️ weather updater: кэш обновлён ({}°C, {:.1f} м/с)",
                         info.get("temperature", "?"),
                         (float(info.get("wind") or 0) / 3.6))
-    except Exception as exc:  # noqa: BLE001 — фон не должен ронять scheduler
+    except Exception as exc:
         logger.warning("weather updater failed: {}: {}", type(exc).__name__, exc)
-
 
 def build_scheduler(bot: Bot) -> AsyncIOScheduler:
     sched = AsyncIOScheduler(timezone="UTC")
@@ -414,14 +378,11 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
                   args=[bot], id="weeklylb", max_instances=1, coalesce=True)
     sched.add_job(weekly_arena_finish, "cron", day_of_week="mon", hour=0, minute=40,
                   args=[bot], id="weeklyarena", max_instances=1, coalesce=True)
-    # v1.5.12: MTProto-дельта (полный API), только если ключи заданы
     if st.mtproto_sync_minutes > 0 and st.telegram_api_id and st.telegram_api_hash:
         sched.add_job(mtproto_delta_sync, "interval", minutes=st.mtproto_sync_minutes,
                       args=[bot],
                       id="mtproto_sync", max_instances=1, coalesce=True,
                       next_run_time=local_now() + timedelta(seconds=90))
-    # v1.5.37: погода — ПУШ из фона (первый fetch через 5 с после старта,
-    # далее каждые WEATHER_REFRESH_HOURS). UI читает только кэш.
     weather_hours = max(0.5, float(getattr(st, "weather_refresh_hours", 3.0) or 3.0))
     sched.add_job(weather_updater, "interval", hours=weather_hours, args=[bot],
                   id="weather", max_instances=1, coalesce=True,

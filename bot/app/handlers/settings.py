@@ -20,7 +20,6 @@ _FLAG_LABELS = {
     "daily_report": "🌅 Ежедневный отчёт",
 }
 
-
 async def _render_settings(session: AsyncSession, message: Message, tg_id: int) -> None:
     ns = await NotificationRepository(session).get_or_create(tg_id)
     flags = {k: bool(getattr(ns, k)) for k in _FLAG_LABELS}
@@ -30,12 +29,10 @@ async def _render_settings(session: AsyncSession, message: Message, tg_id: int) 
             + "\n".join(f"{'✅' if flags[k] else '❌'} {label}" for k, label in _FLAG_LABELS.items()))
     await safe_edit_or_answer(message, text, reply_markup=settings_keyboard(flags))
 
-
 @router.callback_query(F.data == "menu:settings")
 async def cb_settings(cb: CallbackQuery, session: AsyncSession) -> None:
     await _render_settings(session, cb.message, cb.from_user.id)
     await cb.answer()
-
 
 @router.callback_query(F.data.startswith("set:"))
 async def cb_toggle(cb: CallbackQuery, session: AsyncSession) -> None:
@@ -51,8 +48,6 @@ async def cb_toggle(cb: CallbackQuery, session: AsyncSession) -> None:
     await _render_settings(session, cb.message, cb.from_user.id)
     await cb.answer(("Включено: " if new else "Выключено: ") + _FLAG_LABELS[key])
 
-
-# ---------- командные алиасы ----------
 @router.message(Command("award", "awards"), F.chat.type == "private")
 async def cmd_awards(message: Message, session: AsyncSession) -> None:
     """Итоги прошлой недели + выданные призы."""
@@ -62,7 +57,6 @@ async def cmd_awards(message: Message, session: AsyncSession) -> None:
         return
     await answer_safe(message, leaderboard_text(payload),
                       reply_markup=back_to_main())
-
 
 @router.message(Command("settings"), F.chat.type == "private")
 async def cmd_settings(message: Message, session: AsyncSession) -> None:

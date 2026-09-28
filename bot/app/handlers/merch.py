@@ -35,11 +35,7 @@ from app.utils.local_time import now as local_now
 
 router = Router(name="merch")
 
-# ---------------------------------------------------------------------------
-# Витрина мерча
-# ---------------------------------------------------------------------------
-
-CATEGORIES: dict[str, tuple[str, str]] = {  # code -> (emoji, название)
+CATEGORIES: dict[str, tuple[str, str]] = {
     "tshirt": ("👕", "Футболки"),
     "hoodie": ("🧥", "Худи"),
     "acc":    ("☕", "Аксессуары"),
@@ -63,7 +59,6 @@ DEFAULT_MERCH: list[dict] = [
     dict(cat="acc", name="Стикерпак", price=350, icon="🎨",
          description="10 виниловых наклеек, не боятся воды.", sizes=[]),
 ]
-
 
 def _parse_items() -> list[dict]:
     """Витрина из MERCH_ITEMS («Категория|Название|Цена|Описание|Размеры»), иначе дефолт."""
@@ -90,14 +85,12 @@ def _parse_items() -> list[dict]:
                         sizes=sizes))
     return out
 
-
 def _items_by_cat() -> dict[str, list[tuple[int, dict]]]:
     groups: dict[str, list[tuple[int, dict]]] = {c: [] for c in CATEGORIES}
     items = _parse_items()
     for idx, it in enumerate(items):
         groups.setdefault(it["cat"], []).append((idx, it))
     return groups
-
 
 def _find(idx_str: str) -> dict | None:
     try:
@@ -107,17 +100,11 @@ def _find(idx_str: str) -> dict | None:
     items = _parse_items()
     return items[idx] if 0 <= idx < len(items) else None
 
-
-# ---------------------------------------------------------------------------
-# Навигация
-# ---------------------------------------------------------------------------
-
 def _back_kb(target: str, label: str = "⬅️ Назад") -> InlineKeyboardBuilder:
     """Одна кнопка возврата (для экранов «пусто» и финальных)."""
     b = InlineKeyboardBuilder()
     b.button(text=label, callback_data=target)
     return b
-
 
 @router.callback_query(F.data == "menu:merch")
 async def merch_screen(cb: CallbackQuery, session=None) -> None:
@@ -140,11 +127,9 @@ async def merch_screen(cb: CallbackQuery, session=None) -> None:
     await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=kb)
     await cb.answer()
 
-
 def _category_kb(buttons: list[InlineKeyboardButton], code: str,
                  title: str, page: int, total_pages: int) -> InlineKeyboardMarkup:
     """Клавиатура витрины категории: листание merch:page:<n>:<code> + фикс. низ."""
-    # layout: по одной кнопке в ряд (подписи товаров длинные)
     b2 = InlineKeyboardBuilder()
     for btn in buttons:
         b2.add_button(btn)
@@ -157,12 +142,10 @@ def _category_kb(buttons: list[InlineKeyboardButton], code: str,
     b2.button(text="⬅️ К категориям", callback_data="menu:merch")
     return b2.as_markup()
 
-
 @router.callback_query(F.data.startswith("merch:cat:"))
 @router.callback_query(F.data.startswith("merch:page:"))
 async def merch_category(cb: CallbackQuery) -> None:
     parts = cb.data.split(":")
-    # merch:cat:<code> или merch:page:<n>:<code>
     code = parts[3] if cb.data.startswith("merch:page:") and len(parts) > 3 else (parts[2] if len(parts) > 2 else "")
     if code not in CATEGORIES:
         return await cb.answer("Категория не найдена 😅", show_alert=True)
@@ -174,8 +157,6 @@ async def merch_category(cb: CallbackQuery) -> None:
                         "Пока пусто — скоро новинки!",
             reply_markup=_back_kb("menu:merch", "⬅️ К категориям").as_markup())
         return await cb.answer()
-    # витрина категории листается (≤6 товаров на страницу);
-    # страница зашита в callback: merch:page:<n>:<code>.
     try:
         page = int(parts[2]) if cb.data.startswith("merch:page:") else 0
     except (IndexError, ValueError):
@@ -197,7 +178,6 @@ async def merch_category(cb: CallbackQuery) -> None:
     await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=kb)
     await cb.answer()
 
-
 @router.callback_query(F.data.startswith("merch:item:"))
 async def merch_item(cb: CallbackQuery) -> None:
     it = _find(cb.data.split(":")[1])
@@ -217,7 +197,6 @@ async def merch_item(cb: CallbackQuery) -> None:
     b.button(text="🏠 Меню", callback_data="menu:main")
     await safe_edit_or_answer(cb.message, text, reply_markup=b.as_markup())
     await cb.answer()
-
 
 @router.callback_query(F.data.startswith("merch:buy:"))
 async def merch_buy(cb: CallbackQuery, session) -> None:
@@ -262,7 +241,6 @@ async def merch_buy(cb: CallbackQuery, session) -> None:
         parse_mode="HTML",
     )
     await cb.answer("Заявка отправлена ✅")
-
 
 @router.callback_query(F.data.startswith("merch:noop"))
 async def merch_noop(cb: CallbackQuery) -> None:

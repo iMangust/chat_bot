@@ -15,7 +15,6 @@ from app.utils.redis import set_cooldown
 
 THROTTLE_SEC = 1.5
 
-
 class ThrottleMiddleware(BaseMiddleware):
     async def __call__(
         self,

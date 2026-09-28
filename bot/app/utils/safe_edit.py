@@ -22,18 +22,12 @@ from aiogram.exceptions import TelegramAPIError, TelegramBadRequest
 from aiogram.types import CallbackQuery, Message
 from loguru import logger
 
-# Явный HTML по умолчанию для всех исходящих сообщений.
-# Важно: аргумент parse_mode=None при вызове edit_text/answer НЕ «наследует»
-# default из DefaultBotProperties — aiogram передаёт None напрямую в Telegram
-# API и клиент показывает сырые теги (<b>...</b>) вместо жирного текста.
 DEFAULT_PARSE_MODE = ParseMode.HTML
-
 
 def _has_editable_text(message: Message) -> bool:
     """True, если в сообщении есть непустой текст (caption тоже считается)."""
     text = (message.text or message.caption or "").strip()
     return bool(text)
-
 
 async def safe_edit_or_answer(
     target: Message,
@@ -52,10 +46,6 @@ async def safe_edit_or_answer(
     напрямую в API и Telegram показывает сырые теги (<b>...</b>) вместо
     жирного текста.
     """
-    # ПРЕ-ФИЛЬТР (продакшен-баг v1.5.28: TelegramBadRequest в 15:23 при живом
-    # /help): edit_text НЕ имеет механизма нарезки — если рендер экрана вышел
-    # за 4096, редактирование гарантированно падает. Делим заранее: первым
-    # сообщением РЕДАКТИРУЕМ первый чанк (с кнопками), остальное досылаем.
     from app.utils.text_split import split_message
     chunks = split_message(text)
     if len(chunks) > 1 and _has_editable_text(target):
@@ -68,7 +58,7 @@ async def safe_edit_or_answer(
             low = str(exc).lower()
             if "not modified" not in low:
                 logger.debug("pre-split edit failed ({}), sending new", exc)
-                last = None  # уйдём в обычную ветку отправки ниже
+                last = None
         if last is not None:
             for chunk in chunks[1:]:
                 try:
@@ -86,12 +76,10 @@ async def safe_edit_or_answer(
         except TelegramBadRequest as exc:
             msg = str(exc).lower()
             if "not modified" in msg:
-                return target  # текст идентичен — ничего делать не нужно
+                return target
             if "no text" in msg or "message can't be edited" in msg:
-                pass  # падаем вниз — отправим новое сообщение
+                pass
             elif "new text provided" in msg:
-                # Telegram: «The new text provided is too long» — редактировать
-                # длинное сообщение нельзя, но ОТПРАВИТЬ его по частям можно.
                 from app.utils.text_split import split_message
                 chunks = split_message(text)
                 last = target
@@ -102,7 +90,6 @@ async def safe_edit_or_answer(
                             reply_markup=reply_markup if i == len(chunks) - 1 else None,
                             parse_mode=parse_mode, **kwargs)
                     except TelegramBadRequest:
-                        # fallback: без разметки (сломанный HTML у вызывающего)
                         last = await target.answer(
                             _strip_tags(chunk),
                             reply_markup=reply_markup if i == len(chunks) - 1 else None)
@@ -111,9 +98,6 @@ async def safe_edit_or_answer(
                 logger.debug("edit_text failed ({}), sending new message", exc)
         except TelegramAPIError as exc:
             logger.debug("edit_text api error ({}), sending new message", exc)
-    # Финальная отправка тоже может быть слишком длинной или с битым HTML —
-    # режем на части и при отказе парсера дублируем plain-текстом, чтобы
-    # экран никогда не «падал» молча (см. баг /help → TelegramBadRequest).
     from app.utils.text_split import split_message
     last = target
     chunks = split_message(text)
@@ -131,9 +115,7 @@ async def safe_edit_or_answer(
                 raise
     return last
 
-
-_TAG_RE = None  # ленивая компиляция
-
+_TAG_RE = None
 
 def _strip_tags(text: str) -> str:
     global _TAG_RE
@@ -142,13 +124,11 @@ def _strip_tags(text: str) -> str:
         _TAG_RE = re.compile(r"</?(b|i|u|s|code|pre|a|tg-spoiler)[^>]*>")
     return _TAG_RE.sub("", text)
 
-
 def _looks_like_html_error(exc: BaseException) -> bool:
     """Telegram BadRequest про сломанную разметку (в т.ч. edit_text)."""
     low = str(exc).lower()
     return ("can't parse" in low or "unsupported start tag" in low
             or "unbalanced" in low or "entity" in low or "tag" in low)
-
 
 async def safe_edit_html(
     target: Message,
@@ -200,10 +180,8 @@ async def safe_edit_html(
             elif "no text" not in msg and "message can't be edited" not in msg \
                     and "new text provided" not in msg:
                 logger.debug("edit_text failed ({}), sending new message", exc)
-    # обычный путь: отредактировать нельзя → новая отправка со всеми фолбэками
     return await safe_edit_or_answer(target, text, reply_markup=reply_markup,
                                      parse_mode=parse_mode, **kwargs)
-
 
 async def answer_safe(message: Message, text: str, *, reply_markup=None,
                       parse_mode: str | None = "HTML", **kwargs) -> Message:
@@ -227,7 +205,6 @@ async def answer_safe(message: Message, text: str, *, reply_markup=None,
             else:
                 raise
     return last
-
 
 async def answer_cb(cb: CallbackQuery, text: str, *, reply_markup=None,
                     parse_mode: str | None = "HTML", **kwargs) -> None:

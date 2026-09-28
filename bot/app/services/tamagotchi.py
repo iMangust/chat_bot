@@ -24,31 +24,22 @@ from app.utils.formatting import (clamp, holiday_effect_mults, season_for,
                                   stat_bar, weather_info)
 from app.utils.html_text import esc
 
-
-# ключ i18n-каталога: запрет обычного ухода в критическом состоянии
 CRIT_MSG = "pet.critical_deny"
-
 
 def _aware(dt: datetime) -> datetime:
     """datetime из MySQL DATETIME приходит naive — нормализуем к локальному (камчатскому) времени."""
     return localize(dt)
 
-
-# сезонные множители скорости деградации (погода/сезоны) — ОБЩИЕ для всех видов
 SEASON_DECAY_MULT = {
     "winter": {"energy": 1.3, "hunger": 1.2},
     "summer": {"hygiene": 1.2, "hunger": 1.1},
     "autumn": {"happy": 1.15},
 }
-# весной «оттепель»: всем питомцам живётся веселее (счастье тает медленнее)
 SPRING_ALL_HAPPY_MULT = 0.8
 
-# видовые сезонные модификаторы: шиншилла — «южный» зверёк, густой мех
-# не переносит жару (летом грустнее), зато зимой чувствует себя отлично.
 SPECIES_SEASON_DECAY_MULT = {
     "chinchilla": {"summer": {"happy": 1.4}, "winter": {"happy": 0.7}},
 }
-
 
 def season_decay_mult(season: str, stat_key: str, species: str = "") -> float:
     """Множитель деградации стата для сезона (1.0 = без модификации).
@@ -62,18 +53,14 @@ def season_decay_mult(season: str, stat_key: str, species: str = "") -> float:
     m *= SPECIES_SEASON_DECAY_MULT.get(species, {}).get(season, {}).get(stat_key, 1.0)
     return m
 
-# скорость деградации статов за 1 час
 DECAY_PER_HOUR = {
     "hunger": 4.0,
     "happiness": 2.0,
-    "energy_day": 1.2,   # энергия падает днём (v1.5.49: было 2.0 — слишком быстро)
-    "energy_sleep": 8.0,  # и восстанавливается во сне
+    "energy_day": 1.2,
+    "energy_sleep": 8.0,
     "hygiene": 3.0,
-    "health_low_care": 3.0,  # если hunger<20 или hygiene<20
+    "health_low_care": 3.0,
 }
-# v1.5.49: «льготные» первые применения действий (play/feed/train/wash):
-# пока счётчик не превышен — кулдауна НЕТ (раньше после одной партии в «21»
-# питомец мгновенно «запыхался»). Сброс — после полного окна отдыха.
 FREE_ACTION_USES = 3
 PET_XP_BASE = 30.0
 
@@ -85,14 +72,6 @@ STAGE_BY_LEVEL = [
     (1, PetStage.egg),
 ]
 
-# ---------------------------------------------------------------------------
-# Виды питомцев: характеристики + предпочтения
-#
-# decay     — множители скорости падения статов (<1 = медленнее, >1 = быстрее)
-# bonus     — механические бонусы (читаются сервисом в действиях)
-# prefers   — любимые/нелюбимые занятия: +/- к эффекту действия и доп. XP
-# start     — стартовые характеристики (сила/ловкость/интеллект)
-# ---------------------------------------------------------------------------
 SPECIES_DATA: dict[str, dict] = {
     "cat": {
         "title": "Котёнок",
@@ -152,33 +131,21 @@ SPECIES_DATA: dict[str, dict] = {
     },
 }
 
-# Стартовый питомец выдаётся котёнком; остальных можно «вылупить» за монеты (магазин).
-# Цена ≈ суммарная сила вида (см. tests/test_chinchilla.py::test_species_power_is_ordered):
-# cat — эталон новичка; dog — самый выживучий; fox — золотая жила монет, но голоден
-# и нервный; chinchilla — чистюля-спринтер с узкими предпочтениями; owl — мощный
-# фермер XP (дороже); dragon — редкий универсал без слабых мест (максимум).
 SPECIES_START_PRICE = {"cat": 0, "dog": 150, "fox": 250, "chinchilla": 300,
                        "owl": 450, "dragon": 800}
 
 SPECIES_BONUS = {k: v["desc"] for k, v in SPECIES_DATA.items()}
 
-
 def _species_key(pet) -> str:
     return getattr(pet.species, "value", str(pet.species))
 
-
 def _species(pet) -> dict:
     return SPECIES_DATA.get(_species_key(pet), SPECIES_DATA["cat"])
-
 
 def species_pref_delta(pet, action: str) -> int:
     """Насколько питомец любит/не любит действие (к изменению happiness)."""
     return _species(pet)["prefers"].get(action, 0)
 
-
-# Человекочитаемые названия занятий и бонусов — единый справочник для всех
-# экранов выбора вида (онбординг, усыновление), чтобы нигде не оставалось
-# служебных английских кодов вроде «play» или «coin_mult».
 ACTION_LABELS = {
     "feed": "🍎 кормёжка",
     "play": "🎾 игры",
@@ -195,7 +162,6 @@ BONUS_LABELS = {
     "sleep_bonus": "+{v:g} ⚡ Энергии за тик сна",
 }
 
-
 def species_likes_text(sp: dict) -> tuple[str, str]:
     """«любит» / «не любит» по-русски, с силой предпочтения.
 
@@ -210,7 +176,6 @@ def species_likes_text(sp: dict) -> tuple[str, str]:
     dislikes = [fmt(k, v) for k, v in sp["prefers"].items() if v < 0]
     return ", ".join(likes) or "нет", ", ".join(dislikes) or "нет"
 
-
 def species_bonuses_text(sp: dict) -> str:
     """Бонусы вида по-русски; множители ×1 и нули (ничего не меняют) режем,
     чтобы не вводить в заблуждение списком «всё ×1»."""
@@ -219,38 +184,28 @@ def species_bonuses_text(sp: dict) -> str:
         label = BONUS_LABELS.get(k)
         if label is None or not isinstance(v, (int, float)) or v == 0:
             continue
-        # нейтральные значения: для множителей это ×1, для прибавок — 0
         neutral = (k.endswith("_mult") or k == "play_happy") and v == 1
         if neutral:
             continue
         parts.append(label.format(v=v))
     return ", ".join(parts) or "особых бонусов нет"
 
-
-# ----------------------------------------------------------------------
-# Балансировка «виды × экипировка»: сет + профильный вид = скрытое комбо.
-# Сеты частично компенсируют слабые места вида (или усиливают сильную
-# сторону) — как бонус за осознанный подбор снаряжения под питомца.
-# Процент суммируется с множителями вещей/бафов в action_modifier.
-# ----------------------------------------------------------------------
 SET_SPECIES_SYNERGY: dict[str, dict[str, tuple[str, float]]] = {
-    # сет: {код_вида: (kind в action_modifier, прибавка)}
-    "dreamer": {   # 🌙 Сновидец усиливает «ночных» и сонных
-        "owl": ("sleep_regen", 0.35),          # сова — ночной флагман: сон ×2.25
-        "chinchilla": ("sleep_regen", 0.20),   # шиншилла быстро утомляется — сон ×2.1
+    "dreamer": {
+        "owl": ("sleep_regen", 0.35),
+        "chinchilla": ("sleep_regen", 0.20),
     },
-    "zen": {       # 🕊️ Дзен — против летней жары и прочего стресса
-        "chinchilla": ("happy_decay", -0.10),  # грустнеет от жары летом → −10% ещё
-        "dragon": ("happy_decay", -0.10),      # дракончик капризен: happiness падает быстрее
+    "zen": {
+        "chinchilla": ("happy_decay", -0.10),
+        "dragon": ("happy_decay", -0.10),
     },
-    "ranger": {    # 🏹 Следопыт — лиса обожает прогулки и добычу
-        "fox": ("walk_coin", 0.20),            # coin_mult 1.3 + прогулки = золотая жила
+    "ranger": {
+        "fox": ("walk_coin", 0.20),
     },
-    "titan": {     # 🪓 Титан — щенок тренируется быстрее всех
+    "titan": {
         "dog": ("train_yield", 0.20),
     },
 }
-
 
 def set_species_synergy(pet, sets_worn: list[str], kind: str) -> float:
     """Суммарная видовая прибавка к множителю действия для надетых сетов."""
@@ -262,23 +217,19 @@ def set_species_synergy(pet, sets_worn: list[str], kind: str) -> float:
             total += spec[1]
     return total
 
-
 MOOD_SPRITES = {
     "great": "😸✨", "good": "😺", "ok": "🐱", "sad": "😿",
     "sick": "🤒😿", "sleeping": "😴🐱", "hungry": "🍽😾",
 }
 
-
 def pet_xp_needed(level: int) -> int:
     return max(int(PET_XP_BASE * (level ** 1.5)), 1)
-
 
 def compute_stage(level: int) -> PetStage:
     for min_lvl, stage in STAGE_BY_LEVEL:
         if level >= min_lvl:
             return stage
     return PetStage.egg
-
 
 def compute_mood(pet: Pet) -> str:
     if pet.is_sleeping:
@@ -296,26 +247,22 @@ def compute_mood(pet: Pet) -> str:
         return "ok"
     return "sad"
 
-
 MOOD_TEXT = {
     "great": "Великолепно!", "good": "Хорошее настроение", "ok": "Нормально",
     "sad": "Грустит… удели внимание", "sick": "Больной! Нужно лечение 💊",
     "sleeping": "Спит… не буди 💤", "hungry": "Голодный! Дай поесть 🍎",
 }
 
-# i18n-ключ настроения (для переводимых мест); MOOD_TEXT — фолбэк.
 MOOD_I18N_KEY = {
     "great": "pet.mood_great", "good": "pet.mood_good", "ok": "pet.mood_ok",
     "sad": "pet.mood_sad", "sick": "pet.mood_sick",
     "sleeping": "pet.mood_sleeping", "hungry": "pet.mood_hungry",
 }
 
-
 def mood_text(mood: str) -> str:
     """Строка настроения питомца (RU-only словарь строк)."""
     key = MOOD_I18N_KEY.get(mood)
     return t(key) if key else MOOD_TEXT.get(mood, "")
-
 
 def _mood_value(pet: Pet) -> int:
     """Числовой «индекс настроения» (0–100): среднее четырёх ключевых
@@ -324,7 +271,6 @@ def _mood_value(pet: Pet) -> int:
     неэкранированный «<» — Telegram падал с «Unsupported start tag "50."»
     и экран ломался целиком (v1.5.65)."""
     return int(round((pet.hunger + pet.happiness + pet.energy + pet.hygiene) / 4))
-
 
 def render_mood_line(pet: Pet, mood: str | None = None) -> str:
     """Единая HTML-безопасная строка «💭 Настроение» для всех экранов (v1.5.65).
@@ -337,19 +283,12 @@ def render_mood_line(pet: Pet, mood: str | None = None) -> str:
     label = esc(mood_text(mood))
     return f"💭 Настроение: {label} ({_mood_value(pet)}/100)"
 
-
-# Пагинация гардероба: сколько вещей слота показывать на одной странице
-# (Telegram лимит — 100 кнопок на клавиатуру; держим экран компактным).
 STYLE_ITEMS_PER_PAGE = 8
-
 
 class TamagotchiService:
     def __init__(self, session: AsyncSession | None = None) -> None:
         self.session = session
 
-    # ------------------------------------------------------------------
-    # Оффлайн-деградация
-    # ------------------------------------------------------------------
     async def apply_decay(self, pet: Pet, now: datetime | None = None) -> bool:
         """Пересчитывает статы по прошествии времени. Возвращает True, если что-то изменилось.
 
@@ -364,24 +303,22 @@ class TamagotchiService:
         changed = True
         sp = _species(pet)
         d = sp["decay"]
-        # сезонная модификация: зимой энергия падает быстрее и т.д.
         try:
             from app.config import get_settings
             season = season_for(now) if get_settings().weather_enabled else ""
-        except (ImportError, AttributeError) as exc:  # конфиг/сезоны недоступны — без сезонности
+        except (ImportError, AttributeError) as exc:
             logger.debug("season lookup failed, decay without seasonality: {}", exc)
             season = ""
         try:
             from app.services.weather import weather_decay_mods
-            wmods = weather_decay_mods()   # реальная погода Камчатки из кэша (без сети)
-        except Exception:  # noqa: BLE001
+            wmods = weather_decay_mods()
+        except Exception:
             wmods = {}
-        sp_key = _species_key(pet)  # видовые сезонные особенности (шиншилле летом жарко)
+        sp_key = _species_key(pet)
         decay_hunger = DECAY_PER_HOUR["hunger"] * d.get("hunger", 1.0) * season_decay_mult(season, "hunger", sp_key) * wmods.get("hunger", 1.0) * self.decay_multiplier(pet, "hunger")
         decay_happy = DECAY_PER_HOUR["happiness"] * d.get("happiness", 1.0) * season_decay_mult(season, "happy", sp_key) * wmods.get("happy", 1.0) * self.decay_multiplier(pet, "happy")
         decay_energy_day = DECAY_PER_HOUR["energy_day"] * d.get("energy", 1.0) * season_decay_mult(season, "energy", sp_key) * wmods.get("energy", 1.0) * self.decay_multiplier(pet, "energy")
         decay_hygiene = DECAY_PER_HOUR["hygiene"] * d.get("hygiene", 1.0) * season_decay_mult(season, "hygiene", sp_key) * wmods.get("hygiene", 1.0) * self.decay_multiplier(pet, "hygiene")
-        # сон/бафы: энергетик и «сонные» вещи ускоряют восстановление энергии во сне
         sleep_regen = (DECAY_PER_HOUR["energy_sleep"] + sp["bonus"]["sleep_bonus"]) \
             * self.action_modifier(pet, "sleep_regen")
 
@@ -390,7 +327,7 @@ class TamagotchiService:
                 pet.is_sleeping = False
                 pet.sleep_until = None
                 pet.sleep_started_at = None
-                pet.energy = clamp(100 + sp["bonus"]["sleep_bonus"])  # сова спит «лучше всех»
+                pet.energy = clamp(100 + sp["bonus"]["sleep_bonus"])
                 pet.happiness = clamp(pet.happiness + species_pref_delta(pet, "sleep"))
             else:
                 pet.energy = clamp(pet.energy + sleep_regen * hours)
@@ -402,13 +339,10 @@ class TamagotchiService:
         pet.happiness = clamp(pet.happiness - decay_happy * hours)
         pet.hygiene = clamp(pet.hygiene - decay_hygiene * hours)
 
-        # «заскучал» — однократно, если не заходили дольше суток
         if hours >= 24 and "bored_penalty" not in (pet.settings_extra or {}):
             pet.happiness = clamp(pet.happiness - 15)
             pet.settings_extra = {**(pet.settings_extra or {}), "bored_penalty": now.isoformat()}
 
-        # здоровье падает при плохом уходе; «щиты» и обереги замедляют порчу
-        # здоровья (health_decay_pct) и снижают шанс заболеть (sick_chance_pct)
         if pet.hunger < 20 or pet.hygiene < 20:
             g = self.gear_bonuses(pet)
             hp_mult = max(0.1, 1.0 + g.get("health_decay_pct", 0.0))
@@ -418,20 +352,13 @@ class TamagotchiService:
                 if random.random() <= sick_chance:
                     pet.sick_since = now
         elif pet.health < 100 and pet.sick_since is None:
-            # медленное восстановление, если уход хороший
             pet.health = clamp(pet.health + 1.0 * hours)
 
-        # прогулка завершилась? НЕ снимаем walk_until здесь — иначе потеряется
-        # событие и награда (кто первый вызовет apply_decay, тот «съест» флаг).
-        # Снимает хендлер после того, как заберёт результат через finish_walk_event.
         walk_finished = bool(pet.walk_until) and now >= _aware(pet.walk_until)
 
         pet.last_update = now
         return changed or walk_finished
 
-    # ------------------------------------------------------------------
-    # Действия
-    # ------------------------------------------------------------------
     def _check_cooldown(self, pet: Pet, action: str, seconds: int,
                         now: datetime) -> tuple[bool, int]:
         """Кулдаун действия хранится в pet.settings_extra как '<action>_at'.
@@ -449,10 +376,10 @@ class TamagotchiService:
         if not extra.get(key):
             return True, 0
         elapsed = (now - datetime.fromisoformat(extra[key])).total_seconds()
-        if elapsed >= seconds:                 # окно отдыха закрыто — сброс
+        if elapsed >= seconds:
             self._reset_uses(pet, action)
             return True, 0
-        if int(extra.get(uses_key, 0)) <= FREE_ACTION_USES:  # льготные разы
+        if int(extra.get(uses_key, 0)) <= FREE_ACTION_USES:
             return True, 0
         return False, int(seconds - elapsed)
 
@@ -492,12 +419,9 @@ class TamagotchiService:
         if not ok:
             return t("pet.cooldown_feed", sec=wait)
         self._set_cooldown(pet, "feed", now)
-        # праздничный модификатор: сытость от еды ×N (Канун НГ и т.п.)
         hol = holiday_effect_mults(now)
-        # экипировка/бафы: окрас «Карамельный», сет «Сладкоежка», баф «Сытный час»
         gear_mult = self.action_modifier(pet, "feed")
         hunger_mult = hol.get("feed_hunger", 1.0) * gear_mult
-        # «вкусность» еды = сумма положительных эффектов; любимая еда даёт доп. счастье
         tastiness = sum(v for k, v in effect.items() if k == "hunger" and v > 0) * hunger_mult
         pref = species_pref_delta(pet, "feed")
         bonus_happy = max(0, pref) + (3 if tastiness >= 40 else 0) + self._gear_happy_flat(pet)
@@ -510,8 +434,6 @@ class TamagotchiService:
             pet.happiness = clamp(pet.happiness + bonus_happy)
         xp = int(5 * _species(pet)["bonus"]["xp_mult"] * hol.get("xp", 1.0)
                  * self.action_modifier(pet, "xp"))
-        # временные бафы от еды/напитков (Item.effect["buff"] или ["buffs"])
-        # накладываются только если питомец реально поел (не во сне/кулдауне)
         buff_defs = effect.get("buffs") or []
         if isinstance(effect.get("buff"), dict):
             buff_defs = [effect["buff"], *buff_defs]
@@ -544,10 +466,9 @@ class TamagotchiService:
 
         sp = _species(pet)
         mult = sp["bonus"]["play_happy"] * self.action_modifier(pet, "play_happy")
-        # День св. Валентина: игры приносят +50% счастья
         mult *= holiday_effect_mults(now).get("play_happy", 1.0)
         pref = species_pref_delta(pet, "play")
-        pet.energy = clamp(pet.energy - 6)   # v1.5.49: было 10 — игры выматывали
+        pet.energy = clamp(pet.energy - 6)
         pet.hygiene = clamp(pet.hygiene - 5)
         xp_base = 15 if won else 8
         xp = int(xp_base * sp["bonus"]["xp_mult"] * holiday_effect_mults(now).get("xp", 1.0)
@@ -560,9 +481,6 @@ class TamagotchiService:
         await self.add_pet_xp(pet, xp)
         return t("pet.lost_game", xp=xp)
 
-    # ------------------------------------------------------------------
-    # Мини-игры: честная игра с характеристиками питомца
-    # ------------------------------------------------------------------
     @staticmethod
     def rps_beaten_by(hand: str) -> str:
         """Ход, который ПРОИГРЫВАЕТ указанному (камень проигрывает бумаге)."""
@@ -570,19 +488,17 @@ class TamagotchiService:
 
     def guess_range(self, pet: Pet) -> tuple[int, int]:
         """Диапазон «угадай число»: интеллект расширяет подсказки (сужает диапазон)."""
-        half = max(3, 10 - pet.intellect // 2)   # L-интеллект 1 → ±10, 15+ → ±3
+        half = max(3, 10 - pet.intellect // 2)
         secret = random.randint(1, 20)
         lo, hi = max(1, secret - half), min(20, secret + half)
         return secret, (lo, hi)
-
-
 
     async def sleep(self, pet: Pet, hours: int = 8) -> str:
         now = local_now()
         await self.apply_decay(pet, now)
         if self.is_critical(pet):
             return t(CRIT_MSG)
-        if self.on_walk(pet, now):   # v1.5.67: гуляющего нельзя уложить спать
+        if self.on_walk(pet, now):
             return t("pet.walk_deny_sleep", name=pet.name)
         if pet.is_sleeping:
             return t("pet.already_sleeping")
@@ -606,7 +522,6 @@ class TamagotchiService:
         if pet.sleep_started_at:
             slept_h = max(0.0, (now - _aware(pet.sleep_started_at)).total_seconds() / 3600.0)
         elif pet.sleep_until:
-            # страховка для старых данных: считаем от оставшегося срока в худшую сторону
             planned = 8
             left = max(0.0, (_aware(pet.sleep_until) - now).total_seconds() / 3600.0)
             slept_h = max(0.0, planned - left)
@@ -621,7 +536,7 @@ class TamagotchiService:
         await self.apply_decay(pet, now)
         if self.is_critical(pet):
             return t(CRIT_MSG)
-        if self.on_walk(pet, now):   # v1.5.67: на прогулке мыться негде
+        if self.on_walk(pet, now):
             return t("pet.walk_deny_wash", name=pet.name)
         if pet.is_sleeping:
             return t("pet.sleeping_deny")
@@ -629,10 +544,8 @@ class TamagotchiService:
         if not ok:
             return f"⏳ Мыться можно раз в 5 минут (осталось {wait} сек)."
         self._set_cooldown(pet, "wash", now)
-        # «Мыльные варежки» и пр.: усиление гигиены от экипировки
         pet.hygiene = clamp(pet.hygiene + int(round(
             40 * max(0.5, 1.0 + self.gear_bonuses(pet).get("hygiene_wash_pct", 0.0)))))
-        # нелюбимое занятие: кошки и собаки по-разному реагируют на воду
         pet.happiness = clamp(pet.happiness - 3 + species_pref_delta(pet, "wash")
                               + self._gear_happy_flat(pet))
         xp = int(4 * _species(pet)["bonus"]["xp_mult"] * self.action_modifier(pet, "xp"))
@@ -642,13 +555,12 @@ class TamagotchiService:
     async def heal(self, pet: Pet) -> str:
         now = local_now()
         await self.apply_decay(pet, now)
-        if self.on_walk(pet, now):   # v1.5.68: на прогулке лекарства не дают
+        if self.on_walk(pet, now):
             return t("pet.walk_deny_medicine", name=pet.name)
         if pet.is_sleeping:
             return t("pet.sleeping_deny_heal")
         if pet.sick_since is None and pet.health >= 70:
             return t("pet.not_sick")
-        # «Рукав целителя»/халат: усиленное лечение
         heal_mult = max(0.5, 1.0 + self.gear_bonuses(pet).get("heal_boost", 0.0))
         pet.health = clamp(pet.health + int(round(35 * heal_mult)))
         if pet.health >= 60:
@@ -679,8 +591,6 @@ class TamagotchiService:
 
     async def train(self, pet: Pet, stat: str) -> str:
         """Тренировка strength/agility/intellect. Кулдаун 180 сек, тратит энергию."""
-        # статы/xp могут быть None у объектов, собранных без части полей
-        # (SQLAlchemy default применяется только на INSERT) — лечим лениво
         for st in ("strength", "agility", "intellect"):
             if getattr(pet, st) is None:
                 setattr(pet, st, 1)
@@ -690,7 +600,7 @@ class TamagotchiService:
         await self.apply_decay(pet, now)
         if self.is_critical(pet):
             return t(CRIT_MSG)
-        if self.on_walk(pet, now):   # v1.5.67: на прогулке тренироваться негде
+        if self.on_walk(pet, now):
             return t("pet.walk_deny_train", name=pet.name)
         if pet.is_sleeping:
             return t("pet.sleeping_deny_train")
@@ -702,16 +612,14 @@ class TamagotchiService:
         if not ok:
             return f"⏳ Перерыв между тренировками: {wait} сек."
         self._set_cooldown(pet, "train", now)
-        pet.energy = clamp(pet.energy - 10)   # v1.5.49: было 15
+        pet.energy = clamp(pet.energy - 10)
         pet.hunger = clamp(pet.hunger - 8)
-        # характеристики растут быстрее, если это «профильная» тренировка вида
         stat_pref = {"strength": "dog", "agility": ("fox", "chinchilla"),
                      "intellect": "owl"}.get(stat)
         gain = 1 + (pet.level // 5)
         if stat_pref and _species_key(pet) in (
                 stat_pref if isinstance(stat_pref, tuple) else (stat_pref,)):
-            gain += 1  # профильная тренировка даёт +1 к приросту
-        # экипировка: % усиление («Кристалл мудрости», майка) + плоские бонусы сетов
+            gain += 1
         train_mult = self.action_modifier(pet, "train_yield")
         gain = max(1, int(round(gain * train_mult))
                    + int(self.gear_bonuses(pet).get("flat_train", 0)))
@@ -738,7 +646,7 @@ class TamagotchiService:
         if pet.is_sleeping:
             return "😴 Сначала разбуди питомца."
         pet.walk_until = now + timedelta(hours=hours)
-        pet.walk_start_at = now   # v1.5.71: отсчёт накопленных бонусов при досрочном возврате
+        pet.walk_start_at = now
         pet.settings_extra = {**(pet.settings_extra or {}), "walk_hours": hours}
         return t("pet.walk_started", hours=hours,
                  time=f"{_aware(pet.walk_until):%H:%M}")
@@ -757,7 +665,6 @@ class TamagotchiService:
         if not getattr(pet, "walk_until", None):
             return t("pet.not_walking")
         if not self.on_walk(pet, now):
-            # срок истёк, но результат ещё не собран — просто добираем его
             text, coins, xp = self.finish_walk_event(pet)
             pet.walk_until = None
             pet.walk_start_at = None
@@ -784,9 +691,6 @@ class TamagotchiService:
         extra = (pet.settings_extra or {})
         if "walk_hours" in extra:
             pet.settings_extra = {k: v for k, v in extra.items() if k != "walk_hours"}
-        # v1.5.72: честная строка награды — если за прогулку нечего начислить
-        # (нейтральное событие «просто погулял» или доля < 1 монеты), не врать
-        # про «+0 монет».
         reward_bits = []
         if coins:
             reward_bits.append(f"🪙 +{coins} монет")
@@ -809,15 +713,11 @@ class TamagotchiService:
         """
         roll = random.random()
         sp = _species(pet)
-        # Хэллоуин и пр.: прогулки находят ×N монет; xp по празднику тоже множится
         hol = holiday_effect_mults(local_now())
-        # 🌦️ погода за время прогулки: сводные модификаторы по прогнозу на
-        # 3 часа (учитываются порывы ветра, фактический снег, смена погоды).
-        # {} = офлайн — без модификаторов.
         try:
             from app.services.weather import forecast_walk_mods
             wm = forecast_walk_mods(3)
-        except Exception:  # noqa: BLE001 — погода не должна ронять прогулку
+        except Exception:
             wm = {}
         w_mult = float(wm.get("mult", 1.0))
         w_happy = int(round(float(wm.get("happy_add", 0))))
@@ -829,8 +729,7 @@ class TamagotchiService:
                      * (1.0 + self.gear_bonuses(pet).get("coin_mult", 0.0)))
         xp_mult = sp["bonus"]["xp_mult"] * self.action_modifier(pet, "xp") \
             * (1.0 + self.gear_bonuses(pet).get("walk_xp_pct", 0.0))
-        pref_bonus = species_pref_delta(pet, "walk") + self._gear_happy_flat(pet)  # собаки обожают гулять
-        # защита от непогоды: шапка/щиты (sick_chance_pct из экипировки) режут риск
+        pref_bonus = species_pref_delta(pet, "walk") + self._gear_happy_flat(pet)
         if w_sick > 0 and getattr(pet, "sick_since", None) is None \
                 and random.random() < max(0.0, min(0.9, w_sick
                         * (1.0 + self.gear_bonuses(pet).get("sick_chance_pct", 0.0)))):
@@ -838,7 +737,6 @@ class TamagotchiService:
             pet.health = clamp(pet.health - 10)
             return ("🤒 Прогулка удалась, но питомец ПРОМЁК/ЗАМЁРЗ на улице — "
                     "простудился! Здоровье −10, нужно лечение 💊"), 0, int(8 * xp_mult)
-        # 🏋️ Активная прогулка в хорошую погоду качает форму: шанс +1 к силе/ловкости
         grow_line = ""
         if w_stat > 0 and random.random() < w_stat:
             if random.random() < 0.5:
@@ -847,7 +745,6 @@ class TamagotchiService:
             else:
                 pet.agility += 1
                 grow_line = "\n   🏃 Беготня на улице: ловкость +1!"
-        # ☀️ солнечная прогулка бодрит (⛈️ шторм выматывает): энергия при возврате
         energy_line = ""
         if w_energy:
             pet.energy = clamp(pet.energy + w_energy)
@@ -879,17 +776,6 @@ class TamagotchiService:
                 + energy_line + grow_line,
                 0, int(10 * xp_mult * w_mult))
 
-    # ------------------------------------------------------------------
-    # XP и эволюция
-    # ------------------------------------------------------------------
-    # ------------------------------------------------------------------
-    # Кастомизация: окрасы и экипировка — MMORPG-система бонусов.
-    # Хранится в pet.settings_extra = {"color": "aurora", "owned": ["🎩"],
-    #                                   "gear": {"head": "🎩"}}
-    # — отдельная миграция не нужна, формат расширяемый.
-    # ------------------------------------------------------------------
-    # Окрасы дают пассивные бонусы (частично перекликаются с характером вида:
-    # сова + сон, дракон + мощь, лиса + монеты…).
     PET_COLORS: dict[str, dict] = {
         "default": {"title": "⚪ Классический", "price": 0, "bonus": {},
                     "desc": "Природный окрас, без бонусов."},
@@ -906,17 +792,12 @@ class TamagotchiService:
                     "bonus": {"sleep_regen_pct": 0.25, "happy_decay_pct": -0.10},
                     "desc": "Сон восстанавливает +25% ⚡, грусть −10%/ч"},
     }
-    # Слоты экипировки — как в MMORPG: по одной вещи на слот, 6 слотов.
     GEAR_SLOTS: dict[str, str] = {
         "weapon": "⚔️ Оружие", "shield": "🛡️ Щит", "body": "🧥 Тело",
         "hands": "🧤 Руки", "legs": "👢 Ноги", "trinket": "🧿 Талисман",
     }
     MAX_GEAR = len(GEAR_SLOTS)
-    # Бонусы: decay_*_pct — скорость падения стата (<0 = медленнее);
-    # *_pct — усиление действия; flat_train — плоская прибавка к тренировке;
-    # duel_power — плоская сила боя; heal_boost — усиление лечения.
     PET_ACCESSORIES: dict[str, dict] = {
-        # ---------------- ⚔️ Оружие (бой, тренировки, добыча) -------------
         "🪒": {"title": "Ржавый кинжал", "slot": "weapon", "price": 60,
                "bonus": {"duel_power": 3},
                "desc": "+3 💪 в бою"},
@@ -947,7 +828,6 @@ class TamagotchiService:
         "🗡️": {"title": "Стилет дуэлянта", "slot": "weapon", "price": 170,
                 "bonus": {"duel_power": 4, "train_yield_pct": 0.10},
                 "desc": "+4 💪, тренировки +10% — точность решает"},
-        # ---------------- 🛡️ Щит (защита, здоровье) -----------------------
         "🥄": {"title": "Щит из ложки", "slot": "shield", "price": 50,
                "bonus": {"health_decay_pct": -0.10},
                "desc": "Здоровье утекает на 10% медленнее"},
@@ -978,7 +858,6 @@ class TamagotchiService:
         "🛎️": {"title": "Щит-колокольчик", "slot": "shield", "price": 90,
                "bonus": {"happy_decay_pct": -0.15},
                "desc": "Звенит и бодрит: настроение держится на 15% дольше"},
-        # ---------------- 🧥 Тело (быт, насыщение, гигиена) ---------------
         "🧣": {"title": "Тёплый шарф", "slot": "body", "price": 50,
                "bonus": {"energy_decay_pct": -0.15},
                "desc": "Энергия тратится на 15% медленнее"},
@@ -1010,7 +889,6 @@ class TamagotchiService:
         "🎃": {"title": "Тыквенный плащ", "slot": "body", "price": 240,
                "bonus": {"walk_coin_pct": 0.15, "play_happy_pct": 0.10},
                "desc": "Хэллоуин-настроение: 🪙+15%, игры +10% 😺"},
-        # ---------------- 🧤 Руки (профессии, ремёсла) --------------------
         "🧤": {"title": "Варежи мастера", "slot": "hands", "price": 60,
                "bonus": {"train_yield_pct": 0.10},
                "desc": "Тренировки +10%"},
@@ -1041,7 +919,6 @@ class TamagotchiService:
         "🪂": {"title": "Ловкие когти", "slot": "hands", "price": 130,
                "bonus": {"train_yield_pct": 0.12, "duel_power": 2},
                "desc": "Тренировки +12%, +2 💪 — хватка хищника"},
-        # ---------------- 👢 Ноги (скорость, прогулки) --------------------
         "🧦": {"title": "Носки спортсмена", "slot": "legs", "price": 50,
                "bonus": {"energy_decay_pct": -0.10},
                "desc": "Экономия ⚡ 10%"},
@@ -1072,7 +949,6 @@ class TamagotchiService:
         "⛸️": {"title": "Ледовые коньки", "slot": "legs", "price": 160,
                 "bonus": {"play_happy_pct": 0.15, "train_yield_pct": 0.10},
                 "desc": "Игры +15% 😺, тренировки +10% — камчатский лёд"},
-        # ---------------- 🧿 Талисманы (магия, удача) ---------------------
         "🧸": {"title": "Талисман-мишка", "slot": "trinket", "price": 100,
                "bonus": {"sleep_regen_pct": 0.20},
                "desc": "Сон восстанавливает +20% энергии"},
@@ -1116,13 +992,9 @@ class TamagotchiService:
                "bonus": {"xp_pct": 0.08},
                "desc": "Мудрость предков: +8% XP во всех делах"},
     }
-    # Пагинация гардероба: сколько вещей слота показывать на одной странице
-    # (Telegram лимит — 100 кнопок на клавиатуру; держим экран компактным).
     STYLE_ITEMS_PER_PAGE = 8
-    STYLE_SLOT_PAGE_STEP = 6  # размер «страницы» выбора слотов (все 6 влезают)
+    STYLE_SLOT_PAGE_STEP = 6
 
-    # Комбо-наборы (как сеты в MMORPG): все предметы надеты → доп. бонус.
-    # Собраны так, чтобы каждый слот участвовал минимум в двух сетах.
     PET_SETS: dict[str, dict] = {
         "gladiator": {
             "title": "🗡️ Гладиатор", "items": ["⚔️", "🛡️", "🥊", "👑"],
@@ -1157,7 +1029,6 @@ class TamagotchiService:
             "title": "🪙 Купец", "items": ["🧲", "🛼", "🍀"],
             "bonus": {"coin_mult": 0.25},
             "desc": "Рукавицы+Коньки+Клевер: все монеты +25%"},
-        # ---- новые сеты под расширенный каталог (охвачены все 6 слотов) ----
         "gourmet": {
             "title": "🍯 Сладкоежка", "items": ["🔪", "🫱", "📿"],
             "bonus": {"feed_bonus_pct": 0.35, "hunger_decay_pct": -0.15},
@@ -1174,11 +1045,6 @@ class TamagotchiService:
             "desc": "Бахрома+Коньки+Заслон: ⚡−20%, болезни −25%, +4 💪"},
         }
 
-    # ------------------------------------------------------------------
-    # Бафы от напитков/еды (эффект хранится в Item.effect["buff"]).
-    # Типы: energy_regen_pct — скорость восстановления ⚡ (сон, энергетики);
-    #       xp_pct / coin_pct / happy_pct / no_decay — временные усиления.
-    # ------------------------------------------------------------------
     BUFF_DURATION_SEC = {"drink_energy": 3600, "food_feast": 1800}
 
     @staticmethod
@@ -1211,7 +1077,7 @@ class TamagotchiService:
         raw = list(extra.get("buffs") or [])
         same = [b for b in raw if b.get("type") == buff_type
                 and float(b.get("until", 0)) > local_now().timestamp()]
-        if same:  # продлеваем самый долгий, берём максимальный множитель
+        if same:
             best = max(same, key=lambda b: float(b.get("until", 0)))
             best["until"] = max(float(best.get("until", 0)), until)
             best["mult"] = max(float(best.get("mult", 0)), mult)
@@ -1219,7 +1085,7 @@ class TamagotchiService:
         else:
             raw.append({"type": buff_type, "mult": mult, "until": until,
                         "label": label})
-        extra["buffs"] = raw[-6:]  # не больше 6 активных бафов
+        extra["buffs"] = raw[-6:]
         pet.settings_extra = extra
 
     def active_set_codes(self, pet: Pet) -> list[str]:
@@ -1258,21 +1124,18 @@ class TamagotchiService:
         — суммируются проценты вещей/сетов и активных бафов соответствующего типа.
         """
         g = self.gear_bonuses(pet)
-        # у большинства kind процент лежит в ключе "<kind>_pct"; исключение —
-        # сон: вещи/сеты отдают "sleep_regen_pct" (см. PET_SETS/PET_ACCESSORIES)
         pct_key = "sleep_regen_pct" if kind == "sleep_regen" else f"{kind}_pct"
         m = 1.0 + g.get(pct_key, 0.0)
         if kind == "feed":
             m += g.get("feed_bonus_pct", 0.0)
         if kind == "duel":
-            m += g.get("duel_power", 0.0) / 50.0  # плоская сила → % к удару
+            m += g.get("duel_power", 0.0) / 50.0
         buffs = self.active_buffs(pet)
         buff_key = {"feed": "food_feast", "xp": "xp_pct", "walk_coin": "coin_pct",
                     "play_happy": "happy_pct", "sleep_regen": "energy_regen_pct",
                     "train_yield": "train_pct"}.get(kind)
         if buff_key and buff_key in buffs:
             m += buffs[buff_key]
-        # сет + профильный вид = скрытое комбо (SET_SPECIES_SYNERGY)
         m += set_species_synergy(pet, self.active_set_codes(pet), kind)
         return max(0.1, m)
 
@@ -1281,9 +1144,8 @@ class TamagotchiService:
         + временный баф «no_decay» (например, от кофе — энергия не тратится)."""
         g = self.gear_bonuses(pet)
         m = 1.0 + g.get(f"{stat_key}_decay_pct", 0.0)
-        # сетовые видовые синергии объявлены как "<стат>_decay" (напр. happy_decay)
         m += set_species_synergy(pet, self.active_set_codes(pet), f"{stat_key}_decay")
-        if stat_key == "energy":  # «no_decay» действует на бодрость (энергетики)
+        if stat_key == "energy":
             m -= self.active_buffs(pet).get("no_decay", 0.0)
         return max(0.1, m)
 
@@ -1295,8 +1157,6 @@ class TamagotchiService:
         color = extra.get("color")
         if color not in self.PET_COLORS or color == "default":
             color = None
-        # обратная совместимость: старое поле accessories[] считаем надетым;
-        # старые слоты (head/neck/eyes/wrist) мапим на новые MMORPG-слоты
         gear = extra.get("gear")
         if gear is None:
             legacy = list(extra.get("accessories") or [])[:self.MAX_GEAR]
@@ -1331,7 +1191,7 @@ class TamagotchiService:
         for code in self.active_set_codes(pet):
             title = self.PET_SETS[code]["title"]
             if key in SET_SPECIES_SYNERGY.get(code, {}):
-                title += " 🔗"  # сет «ложится» на характер этого вида
+                title += " 🔗"
             titles.append(title)
         return titles
 
@@ -1370,7 +1230,6 @@ class TamagotchiService:
         extra = dict(pet.settings_extra or {})
         gear = dict(extra.get("gear") or {})
         owned = set(extra.get("owned") or [])
-        # обратная совместимость со старым полем accessories[]
         if not extra.get("gear") and extra.get("accessories"):
             legacy = list(extra["accessories"])[:self.MAX_GEAR]
             slots = list(self.GEAR_SLOTS.keys())
@@ -1412,10 +1271,7 @@ class TamagotchiService:
             msg += "\n🔥 Активные комбо-наборы: " + ", ".join(sets_now)
         return msg
 
-    # ------------------------------------------------------------------
-    # Жизненный цикл: критическое состояние → реанимация → усыновление
-    # ------------------------------------------------------------------
-    RECRUIT_PRICE = 200  # монет — реанимация/«новая попытка» вместо жёсткого delete
+    RECRUIT_PRICE = 200
 
     def is_critical(self, pet: Pet) -> bool:
         """Питомец «при смерти»: здоровье на нуле И хотя бы один базовый
@@ -1434,7 +1290,7 @@ class TamagotchiService:
                 if _aware(datetime.fromisoformat(grace)) > local_now():
                     return False
             except (TypeError, ValueError):
-                pass  # мусорное значение — считаем, что grace нет
+                pass
         return True
 
     async def revive(self, pet: Pet) -> str:
@@ -1444,7 +1300,7 @@ class TamagotchiService:
         self._apply_revive_mechanics(pet)
         return f"💖 {esc(pet.name)} откаормлен и полон надежды! Дальше — не запускай уход."
 
-    MAX_REVIVES = 3  # жизней у питомца: после — только усыновление нового
+    MAX_REVIVES = 3
 
     def revive_cost(self, pet: Pet) -> int:
         """Стоимость реанимации растёт с каждым разом: 200 → 400 → 600.
@@ -1466,7 +1322,7 @@ class TamagotchiService:
         extra["revived_at"] = now.isoformat()
         extra["revive_grace_until"] = (now + timedelta(minutes=30)).isoformat()
         extra["revives_used"] = int(extra.get("revives_used", 0)) + 1
-        extra.pop("bored_penalty", None)  # иначе при следующем тике снова -15
+        extra.pop("bored_penalty", None)
         pet.settings_extra = extra
 
     async def free_revive_for_newbie(self, pet: Pet) -> bool:
@@ -1537,9 +1393,6 @@ class TamagotchiService:
                 pet.stage = new_stage
         return levels
 
-    # ------------------------------------------------------------------
-    # Рендер карточки питомца (emoji-спрайт + бары)
-    # ------------------------------------------------------------------
     async def render_async(self, pet: Pet, owner_first_name: str = "") -> str:
         """карточка с реальной погодой Камчатки (OpenWeather, фоновый кэш 3 ч).
 
@@ -1551,12 +1404,10 @@ class TamagotchiService:
             from app.services.weather import kamchatka_weather, weather_hint_block
             w = await kamchatka_weather()
             line = f"🌦️ Погода: {w['icon']} {w['name']} — {w['note']}"
-            # v1.5.36: подсказки — как эта погода влияет на питомца прямо сейчас
-            hint = weather_hint_block(pet=pet)   # v1.5.61: внутри уже next_weather_tick
+            hint = weather_hint_block(pet=pet)
             if hint:
                 line += "\n" + hint
             lines = text.split("\n")
-            # заменяем сезонную строку погоды, если она есть (иначе дописываем перед «Настроением»)
             for i, ln in enumerate(lines):
                 if ln.startswith("🌦️ Погода:"):
                     lines[i] = line
@@ -1570,13 +1421,11 @@ class TamagotchiService:
                     lines.append(line)
             if "holiday_icon" in w:
                 lines.append(f"{w['holiday_icon']} {w['holiday_note']}")
-            # v1.5.67: под погодным блоком — когда питомец нагуляется, чтобы
-            # две «⏳»-строки (погода/прогулка) шли подряд и читались целиком.
             back = self.walk_back_line(pet)
             if back and not any(ln.startswith("🚶 Сейчас на прогулке") for ln in lines):
                 lines.append(back)
             return "\n".join(lines)
-        except Exception as exc:  # noqa: BLE001 — карточка важнее погоды
+        except Exception as exc:
             logger.debug("render_async weather skipped: {}: {}", type(exc).__name__, exc)
             return text
 
@@ -1586,7 +1435,6 @@ class TamagotchiService:
         color_key, accessories = self.customization(pet)
         color_tag = "" if not color_key else f" · {self.PET_COLORS[color_key]['title']}"
         acc_line = (" ".join(accessories) + " ") if accessories else ""
-        # «сияющие» окрасы подсвечивают спрайт особыми звёздами — стиль виден в карточке
         glow = {"aurora": "🌌", "golden": "💫", "shadow": "🌪", "candy": "🍬"}.get(color_key or "", "")
         sprite = acc_line + sp["emoji"] + (glow or ("✨" if mood == "great" else ""))
         stage_icon = {
@@ -1597,13 +1445,10 @@ class TamagotchiService:
             f"{stage_icon} <b>{esc(pet.name)}</b> · {sp['title']}{color_tag} {sprite}"
             + (f" · хозяин: {esc(owner_first_name)}" if owner_first_name else ""),
             f"Уровень {pet.level} · опыт {pet.xp}/{pet_xp_needed(pet.level)} "
-            f"[{stat_bar(pet.xp, 6)}]",  # грубо, но мило
+            f"[{stat_bar(pet.xp, 6)}]",
             "",
             f"🍎 Сытость    {stat_bar(pet.hunger)}  {int(pet.hunger)}%",
             f"😊 Счастье     {stat_bar(pet.happiness)}  {int(pet.happiness)}%",
-            # «⚡» U+26A1 без VS16 — иначе Telegram ломает offset'ы entities
-            # и edit_text падает с «can't parse entities / Unsupported start
-            # tag» на строках вида «50%» (продакшен-баг menu:pet, v1.5.65).
             f"⚡ Энергия     {stat_bar(pet.energy)}  {int(pet.energy)}%",
             f"🫧 Гигиена    {stat_bar(pet.hygiene)}  {int(pet.hygiene)}%",
             f"❤️ Здоровье   {stat_bar(pet.health)}  {int(pet.health)}%",
@@ -1611,7 +1456,6 @@ class TamagotchiService:
             f"{render_mood_line(pet, mood)}",
             f"📈 Характеристики: 💪{pet.strength} 🏃{pet.agility} 🧠{pet.intellect}",
         ]
-        # активные бонусы экипировки и бафов (как трек бафов в MMO-интерфейсе)
         bonus_bits = []
         g = self.gear_bonuses(pet)
         if g.get("duel_power"):
@@ -1656,17 +1500,12 @@ class TamagotchiService:
             lines.append(f"🌦️ Погода: {w['icon']} {w['name']} — {w['note']}")
             if "holiday_icon" in w:
                 lines.append(f"{w['holiday_icon']} {w['holiday_note']}")
-        except (ImportError, KeyError, TypeError) as exc:  # рендер погоды не должен ломать карточку
+        except (ImportError, KeyError, TypeError) as exc:
             logger.debug("weather line skipped: {}: {}", type(exc).__name__, exc)
         if pet.walk_until:
-            # v1.5.67: прогулка — состояние занятости; показываем, КОГДА
-            # питомец нагуляется (тот же шаблон времени, что и у тика погоды).
             back = self.walk_back_line(pet)
             lines.append(back or "🚶 Сейчас на прогулке…")
         if self.is_critical(pet):
-            # критический баннер прямо в шапке — про него нельзя
-            # «случайно не заметить», а кнопки реанимации/усыновления
-            # появляются на странице «Уход» (см. pet_hub(critical=True)).
             lines.insert(0, t("pet.critical_banner", name=esc(pet.name)))
             lines.insert(1, "")
         return "\n".join(lines)

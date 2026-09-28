@@ -24,12 +24,12 @@ from PIL import Image, ImageDraw, ImageFont
 from sqlalchemy.ext.asyncio import AsyncSession
 
 W = 900
-H = 1320                  # базовая высота холста; реальная считается measure-проходом
-MIN_CHART_H = 150         # график активности растягивается на остаток, но не меньше этого
-M = 24                    # внешний отступ
-PAD = 16                  # внутренний отступ панелей
-CARD_BG = (30, 36, 58)    # панель
-CARD_BG2 = (40, 47, 72)   # плитка внутри панели
+H = 1320
+MIN_CHART_H = 150
+M = 24
+PAD = 16
+CARD_BG = (30, 36, 58)
+CARD_BG2 = (40, 47, 72)
 BG_TOP = (18, 21, 36)
 BG_BOTTOM = (34, 40, 68)
 ACCENT = (120, 160, 255)
@@ -38,7 +38,6 @@ TEXT = (235, 238, 248)
 DIM = (150, 158, 180)
 LINE = (58, 66, 98)
 
-# цвета витальных статов питомца (сытость/счастье/энергия/гигиена/здоровье)
 VITAL_COLORS = [(255, 150, 90), (255, 110, 160), (255, 210, 90),
                 (110, 200, 255), (110, 230, 150)]
 
@@ -61,21 +60,18 @@ _FONT_BOLD_CANDIDATES = [
 ]
 
 _ALLOWED_RE = re.compile(
-    "[^A-Za-z0-9\u0400-\u04FF"          # латиница, цифры, кириллица (+ Ё/ё)
+    "[^A-Za-z0-9\u0400-\u04FF"
     " .,:;!?\\-–—()/·…%+×«»\"'№&*=<>°]"
 )
-
 
 @lru_cache(maxsize=8)
 def _font_path(bold: bool = False) -> str | None:
     for p in (_FONT_BOLD_CANDIDATES if bold else _FONT_CANDIDATES):
         if os.path.exists(p):
             return p
-    # фолбэк: есть обычный, но нет жирного — рисуем «жирное» обычным
     if bold:
         return _font_path(False)
     return None
-
 
 @lru_cache(maxsize=64)
 def _font(size: int, bold: bool = False):
@@ -86,10 +82,9 @@ def _font(size: int, bold: bool = False):
         except OSError:
             pass
     try:
-        return ImageFont.load_default(size=size)  # Pillow >= 10.1: unicodebitmap
+        return ImageFont.load_default(size=size)
     except TypeError:
         return ImageFont.load_default()
-
 
 def clean(text: str) -> str:
     """Эмодзи -> ASCII-маркеры, прочие неподдерживаемые символы вырезаются."""
@@ -97,26 +92,20 @@ def clean(text: str) -> str:
                 .replace("❤", "+").replace("♥", "+"))
     return _ALLOWED_RE.sub("", text).strip()
 
-
 class ProfileCardRenderer:
     """Чистая функция рисования: пакет данных из card_data.collect() -> PNG bytes."""
 
     def render(self, data: dict) -> bytes:
-        # 1) measure-проход: считаем реальную высоту панелей на «бесконечном»
-        #    холсте — так карточка гарантированно вмещает ВСЮ информацию
-        #    (раньше фикс. H=840 обрезал панель питомца).
         probe = Image.new("RGB", (W, 5000), BG_TOP)
         self.d = ImageDraw.Draw(probe)
         self._init_fonts()
         y = self._header(data, y=M, draw=False)
         y = self._pet_panel(data, y, draw=False)
         y = self._player_panel(data, y, draw=False)
-        needed = y + self._chart_h(data, y) + M   # график ≥120px + нижний отступ
+        needed = y + self._chart_h(data, y) + M
 
-        # 2) реальный рендер на холсте нужной высоты
         img = Image.new("RGB", (W, needed), BG_TOP)
         d = ImageDraw.Draw(img)
-        # вертикальный градиент фона
         for yy in range(needed):
             t = yy / needed
             col = tuple(int(a + (b - a) * t) for a, b in zip(BG_TOP, BG_BOTTOM))
@@ -140,7 +129,6 @@ class ProfileCardRenderer:
         self.f_small = _font(18)
         self.f_tiny = _font(14)
 
-    # ------------------------------------------------------------ helpers
     def put(self, xy, text, **kw):
         self.d.text(xy, clean(text), **kw)
 
@@ -154,7 +142,6 @@ class ProfileCardRenderer:
             text = text[:-1]
         return text.rstrip() + "…"
 
-    # ------------------------------------------------------------------ шапка
     def _header(self, data: dict, y: int, draw: bool = True) -> int:
         d, put, fit = self.d, self.put, self.fit
         user = data["user"]
@@ -165,7 +152,6 @@ class ProfileCardRenderer:
         if not draw:
             return y + av + 14
         cx0, cy0 = M, y
-        # аватар: круг с обводкой + первая буква имени
         d.ellipse([cx0, cy0, cx0 + av, cy0 + av], fill=(52, 60, 92), outline=ACCENT, width=3)
         initial = clean((user.first_name or "?")[:1]).upper() or "?"
         put((cx0 + av // 2, cy0 + av // 2), initial, fill=TEXT,
@@ -179,7 +165,6 @@ class ProfileCardRenderer:
         put((tx, y + 50), fit(" · ".join(sub_bits), self.f_small, W - tx - 210),
             fill=DIM, font=self.f_small)
 
-        # XP-бар под именем
         need = max(ui.get("xp_need", 1), 1)
         bx0, bw = tx, W - tx - 210
         frac = max(0.0, min(1.0, user.xp / need))
@@ -193,7 +178,6 @@ class ProfileCardRenderer:
         put((bar_x + 8, y + 96), fit(f"{user.xp}/{need} XP до {user.level + 1} ур.",
                                      self.f_tiny, bar_w), fill=DIM, font=self.f_tiny)
 
-        # бейдж места в рейтинге справа
         badge_w = 186
         bx = W - M - badge_w
         d.rounded_rectangle([bx, y + 8, bx + badge_w, y + 84], radius=14, fill=CARD_BG)
@@ -203,7 +187,6 @@ class ProfileCardRenderer:
         put((bx + badge_w // 2, y + 62), "по уровням", fill=DIM, font=self.f_tiny, anchor="ma")
         return y + av + 14
 
-    # ------------------------------------------------------- панель питомца
     def _pet_panel(self, data: dict, y: int, draw: bool = True) -> int:
         """Панель питомца. Высота ДИНАМИЧЕСКАЯ: панель подстраивается под
         все данные (характеристики, арена, уход, статусы, подсказки), так что
@@ -226,13 +209,12 @@ class ProfileCardRenderer:
         statuses = pi.get("statuses") or []
         advice = pi.get("advice") or []
 
-        # --- layout (независимо от прохода) --------------------------------
-        ax, ay = x0 + PAD, y + PAD                      # круг аватара вида
-        bar_y = ay + 92                                 # xp-бар питомца
-        vy = bar_y + 34                                 # витальные статы
+        ax, ay = x0 + PAD, y + PAD
+        bar_y = ay + 92
+        vy = bar_y + 34
         vitals_h = len(vitals_list) * 26
-        left_bottom = vy + vitals_h                     # низ левой колонки
-        rx = x1 - PAD - 250                             # правая колонка
+        left_bottom = vy + vitals_h
+        rx = x1 - PAD - 250
         ry0 = y + PAD + 118
         arena_block = 64
         care_block = 64
@@ -249,7 +231,6 @@ class ProfileCardRenderer:
 
         d.rounded_rectangle([x0, y, x1, y + h], radius=16, fill=CARD_BG)
 
-        # --- левая колонка: аватар вида + имя/стадия/настроение ---
         emoji = pi.get("species_emoji") or ""
         d.ellipse([ax, ay, ax + 84, ay + 84], fill=(52, 60, 92), outline=GOLD, width=2)
         put((ax + 42, ay + 42), clean(emoji) or clean(pet.name[:1]).upper(),
@@ -270,7 +251,6 @@ class ProfileCardRenderer:
             put((tx, ay + 54), fit(clean(mood_line), self.f_small, x1 - tx - PAD),
                 fill=GOLD, font=self.f_small)
 
-        # xp питомца
         need = max(pi.get("xp_need", 1), 1)
         frac = max(0.0, min(1.0, pet.xp / need))
         d.rounded_rectangle([ax, bar_y, x1 - PAD, bar_y + 10], radius=5, fill=LINE)
@@ -280,7 +260,6 @@ class ProfileCardRenderer:
         put((ax, bar_y + 14), fit(f"Опыт питомца {pet.xp}/{need}", self.f_tiny, x1 - ax - PAD),
             fill=DIM, font=self.f_tiny)
 
-        # --- витальные статы (левая колонка, под XP-баром) -----------------
         lab_w = 92
         val_w = 46
         track_x = x0 + PAD + lab_w
@@ -293,11 +272,10 @@ class ProfileCardRenderer:
             d.rounded_rectangle([track_x, yy + 3, track_x + track_w, yy + 13], radius=5, fill=LINE)
             if v > 0:
                 wpx = max(10, int(track_w * v / 100.0))
-                c = col if v >= 40 else (235, 90, 90)  # критично — красным
+                c = col if v >= 40 else (235, 90, 90)
                 d.rounded_rectangle([track_x, yy + 3, track_x + wpx, yy + 13], radius=5, fill=c)
             put((track_x + track_w + 8, yy), f"{int(v)}%", fill=TEXT, font=self.f_small)
 
-        # --- правая колонка: характеристики, арена, уход -------------------
         ry = ry0
         put((rx, ry), "ХАРАКТЕРИСТИКИ", fill=DIM, font=self.f_tiny)
         ry += 22
@@ -325,7 +303,6 @@ class ProfileCardRenderer:
         put((rx, ry + 20), f"покормлений {feed_n} · игр {play_n}", fill=TEXT, font=self.f_small)
         put((rx, ry + 42), f"прогулок {walk_n} · помывок {wash_n}", fill=TEXT, font=self.f_small)
 
-        # --- статусы и подсказки во всю ширину внизу панели ----------------
         sy = y + h - 14
         if advice:
             sy -= 24
@@ -337,7 +314,6 @@ class ProfileCardRenderer:
                 fill=GOLD, font=self.f_small)
         return y + h + 12
 
-    # ------------------------------------------------------ панель игрока
     def _player_panel(self, data: dict, y: int, draw: bool = True) -> int:
         d, put, fit = self.d, self.put, self.fit
         user = data["user"]
@@ -373,7 +349,6 @@ class ProfileCardRenderer:
             if sub:
                 put((cxx + 10, cyy + 42), fit(sub, self.f_tiny, tw - 20), fill=DIM, font=self.f_tiny)
 
-        # нижняя строка: погода/праздник/средняя длина сообщения
         bits = []
         if data.get("weather"):
             bits.append(clean(data["weather"]))
@@ -387,7 +362,6 @@ class ProfileCardRenderer:
                 fill=DIM, font=self.f_small)
         return y + h + 12
 
-    # ------------------------------------------------ график активности
     @staticmethod
     def _draw_activity_chart(d, daily: dict[str, int], y0: int, f_small) -> None:
         """Совместимость со старым низкоуровневым вызовом: рисует график вручную."""
@@ -470,16 +444,13 @@ class ProfileCardRenderer:
             tw2 = d.textlength(clean(dl), font=self.f_small)
             put((bx + bw / 2 - tw2 / 2, plot_bot + 4), dl, fill=DIM, font=self.f_small)
 
-
 _renderer = ProfileCardRenderer()
-
 
 async def render_profile_card(session: AsyncSession, tg_id: int) -> bytes | None:
     from app.services import card_data
     data = await card_data.collect(session, tg_id)
     if data is None:
         return None
-    # обогащаем пакет подписями, которые знает только tamagotchi
     pet = data.get("pet")
     if pet is not None and data.get("pet_info"):
         try:
@@ -490,18 +461,15 @@ async def render_profile_card(session: AsyncSession, tg_id: int) -> bytes | None
                 _species_key(pet), SPECIES_DATA["cat"])["emoji"]
             data["vitals"] = vitals(pet)
             data["stat_contribs"] = stat_contribs(pet)
-            # страховка: если collect() не успел обогатить подсказками — считаем здесь
             if "advice" not in data["pet_info"]:
                 from app.services.card_data import vital_advice
                 data["pet_info"]["advice"] = vital_advice(pet)
-        except Exception as exc:  # pragma: no cover
+        except Exception as exc:
             logger.warning("card: pet labels skipped: {}", exc)
     return _renderer.render(data)
 
-
 def card_version(png: bytes) -> str:
     return hashlib.sha256(png).hexdigest()[:12]
-
 
 async def get_or_render_card(session: AsyncSession, tg_id: int) -> tuple[bytes, bool]:
     """Возвращает (png, changed). Кэш версии — Redis/mem (без файловых заморочек)."""

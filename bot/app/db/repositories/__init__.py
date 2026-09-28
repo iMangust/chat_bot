@@ -16,10 +16,6 @@ from app.db.models import (
 )
 from app.utils.local_time import now as local_now
 
-
-# ---------------------------------------------------------------------------
-# Users
-# ---------------------------------------------------------------------------
 class UserRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -43,7 +39,6 @@ class UserRepository:
             self.session.add(user)
             await self.session.flush()
         else:
-            # обновляем профильные поля, если изменились
             if first_name and user.first_name != first_name:
                 user.first_name = first_name
             if username is not None and user.username != username:
@@ -70,7 +65,6 @@ class UserRepository:
         )
         return list((await self.session.execute(stmt)).scalars())
 
-    # ---- пользовательские счётчики (invites и т.п.) ----
     async def bump_stat(self, tg_id: int, key: str, delta: int = 1) -> int:
         """Атомарно увеличивает счётчик UserStat; возвращает новое значение."""
         row = (await self.session.execute(
@@ -90,7 +84,6 @@ class UserRepository:
         )).scalar_one_or_none()
         return row.value if row else 0
 
-    # ---- реферальная система ----
     async def set_referrer(self, tg_id: int, referrer_id: int) -> bool:
         """Запоминаем пригласившего. True — если запись создана впервые."""
         user = await self.get(tg_id)
@@ -109,7 +102,6 @@ class UserRepository:
             select(func.count()).select_from(User).where(User.referrer_id == referrer_id)
         )).scalar_one()
 
-    # ---- персональные настройки уведомлений ----
     async def notif_settings(self, tg_id: int) -> NotificationSetting:
         ns = await self.session.get(NotificationSetting, tg_id)
         if ns is None:
@@ -154,10 +146,6 @@ class UserRepository:
         )
         return [(r[0], r[1]) for r in (await self.session.execute(stmt)).all()]
 
-
-# ---------------------------------------------------------------------------
-# Activity log
-# ---------------------------------------------------------------------------
 class ActivityRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -203,14 +191,11 @@ class ActivityRepository:
                 )
             elif dialect.startswith("mysql"):
                 from sqlalchemy.dialects.mysql import insert as ins
-                # UNIQUE (chat_id, message_id) + INSERT IGNORE — mysql-аналог do-nothing
                 stmt = ins(ChatMessageLog).values(**values).prefix_with("IGNORE")
-            else:  # неизвестный диалект — обычная вставка (дедуп не гарантируется)
+            else:
                 stmt = insert(ChatMessageLog).values(**values)
             await self.session.execute(stmt)
         except IntegrityError:
-            # гонка повторных доставок / отсутствие UNIQUE-индекса на старой БД:
-            # конфликт по (chat_id, message_id) означает «уже записано» — ок.
             await self.session.rollback()
         return entry
 
@@ -283,7 +268,6 @@ class ActivityRepository:
         known = {"text", "voice", "audio", "video_note", "video", "animation",
                  "sticker", "photo", "document", "poll"}
         for mtype, cnt, rep, men in rows:
-            # None/"" — обычное текстовое сообщение; всё прочее неизвестное → other
             mt = (mtype or "").lower()
             key = mt if mt in known else ("text" if not mt else "other")
             out[key] = out.get(key, 0) + int(cnt)
@@ -332,10 +316,6 @@ class ActivityRepository:
         )
         return [(r[0], r[1]) for r in (await self.session.execute(stmt)).all()]
 
-
-# ---------------------------------------------------------------------------
-# Pets
-# ---------------------------------------------------------------------------
 class PetRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -374,7 +354,6 @@ class PetRepository:
                                       value=value, meta=meta or {}))
         await self.session.flush()
 
-    # ---- друзья и соревнование питомцев ----
     async def friends(self, pet_id: int) -> list["PetFriend"]:
         stmt = select(PetFriend).where(PetFriend.pet_id == pet_id)
         return list((await self.session.execute(stmt)).scalars())
@@ -397,10 +376,6 @@ class PetRepository:
         stmt = select(Pet).order_by(Pet.level.desc(), Pet.xp.desc()).limit(limit)
         return list((await self.session.execute(stmt)).scalars())
 
-
-# ---------------------------------------------------------------------------
-# Notification settings
-# ---------------------------------------------------------------------------
 class NotificationRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -413,10 +388,6 @@ class NotificationRepository:
             await self.session.flush()
         return ns
 
-
-# ---------------------------------------------------------------------------
-# Achievements (прогресс)
-# ---------------------------------------------------------------------------
 class AchievementRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -462,12 +433,6 @@ class AchievementRepository:
                 return True
         return False
 
-
-# ---------------------------------------------------------------------------
-# Реестр подписчиков (v2.0: одна строка на человека, PK = user_id)
-# ---------------------------------------------------------------------------
-
-
 class SubscriberRepository:
     """channel_subscribers — реестр членства для гейта доступа (v2.0).
 
@@ -489,7 +454,6 @@ class SubscriberRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    # --- регистрация ---------------------------------------------------------
     async def record_membership(self, user_id: int, chat_id: int | None = None,
                                 first_name: str = "", username: str | None = None,
                                 real_event: bool = False,
@@ -511,11 +475,6 @@ class SubscriberRepository:
         """
         from app.db.models import ChannelSubscriber
         uid = int(user_id)
-        # v1.6.1: SELECT + refresh вместо session.get(): при
-        # expire_on_commit=False identity-map может отдать stale-кэш строки
-        # (её меняли UPDATE'ом из другого экземпляра репозитория на том же
-        # коннекте). Запись «с нуля» поверх устаревшего кэша теряла уже
-        # подтверждённые чаты.
         row = (await self.session.execute(
             select(ChannelSubscriber)
             .where(ChannelSubscriber.user_id == uid)
@@ -542,9 +501,6 @@ class SubscriberRepository:
                 chats.append(cid)
                 row.chats = chats
                 changed = True
-                # v2.0.5: свежее членство обязано мгновенно «видеться» гейтом
-                # (см. docstring) — иначе 15-секундный отрицательный кэш
-                # продолжает отдавать ложный DENY уже подписанному человеку.
                 with contextlib.suppress(Exception):
                     from app.middlewares.gate import reset_subscribe_cache
                     reset_subscribe_cache(uid)
@@ -559,7 +515,6 @@ class SubscriberRepository:
             await self.session.commit()
         return changed
 
-    # --- совместимость со старыми вызовами ------------------------------------
     async def add_if_new(self, user_id: int, chat_id: int,
                          first_name: str = "", username: str | None = None,
                          reset_welcome: bool = False) -> bool:
@@ -571,7 +526,6 @@ class SubscriberRepository:
             user_id, chat_id, first_name=first_name, username=username,
             real_event=True)
 
-    # --- сводки ---------------------------------------------------------------
     async def add_membership_sql(self, user_id: int, chat_id: int) -> None:
         """Гарантированная запись членства напрямую в БД (без ORM-identity-map).
 
@@ -595,8 +549,6 @@ class SubscriberRepository:
             self.session.add(ChannelSubscriber(user_id=uid, chats=[cid]))
         else:
             raw = list(row[1] or [])
-            # нормализация: старые SQL-миграции могли оставить строки/строку
-            # вместо списка (см. _JsonIntList tolerant parsing)
             if raw and isinstance(raw[0], str) and len(raw) == 1:
                 with contextlib.suppress(Exception):
                     raw = json.loads(raw[0])
@@ -635,7 +587,6 @@ class SubscriberRepository:
             .where(ChannelSubscriber.user_id == int(user_id))
         )).scalar_one_or_none()
         if row is None:
-            # объекта в identity-map нет — обычный путь
             return await self.session.get(ChannelSubscriber, int(user_id))
         await self.session.refresh(row)
         return row
@@ -662,8 +613,6 @@ class SubscriberRepository:
         stmt = select(func.count()).select_from(ChannelSubscriber)
         return int((await self.session.execute(stmt)).scalar_one())
 
-    # PK = user_id ⇒ «число людей» == число строк; метод оставлен как алиас,
-    # чтобы не плодить специальные случаи в сканере.
     async def distinct_user_count(self) -> int:
         return await self.count()
 

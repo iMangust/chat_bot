@@ -21,9 +21,7 @@ _settings = get_settings()
 
 redis_client: Redis | None = None
 
-# Fallback для dev без Redis
 _mem_store: dict[str, float] = {}
-
 
 def _norm_ttl(ttl_sec: Any) -> int:
     """Нормализует TTL к целому числу секунд (int).
@@ -38,7 +36,6 @@ def _norm_ttl(ttl_sec: Any) -> int:
     except (TypeError, ValueError):
         value = 1
     return max(value, 1)
-
 
 def init_redis() -> Redis:
     """Создаёт Redis-клиент.
@@ -57,16 +54,13 @@ def init_redis() -> Redis:
     )
     return redis_client
 
-
 async def close_redis() -> None:
     global redis_client
     if redis_client is not None:
         await redis_client.aclose()
         redis_client = None
 
-
 _warned_errors: set[str] = set()
-
 
 async def _try_redis() -> Any:
     """Возвращает рабочий redis-клиент или None (при недоступности).
@@ -79,7 +73,7 @@ async def _try_redis() -> Any:
     try:
         await redis_client.ping()
         return redis_client
-    except Exception as exc:  # noqa: BLE001 — fallback по замыслу
+    except Exception as exc:
         key = type(exc).__name__
         if key not in _warned_errors:
             _warned_errors.add(key)
@@ -89,16 +83,13 @@ async def _try_redis() -> Any:
             )
         return None
 
-
 async def set_cooldown(key: str, ttl_sec: Any) -> bool:
     """Ставит кулдаун. Возвращает True, если кулдаун новый (можно засчитывать)."""
     r = await _try_redis()
     if r is not None:
         try:
-            # SET NX EX — атомарно: False, если ключ уже есть.
-            # ex обязан быть int (redis-py>=5), поэтому _norm_ttl.
             return bool(await r.set(f"cd:{key}", "1", nx=True, ex=_norm_ttl(ttl_sec)))
-        except TypeError as exc:  # redis-py>=6 убрал kwarg ex (NX_EX_DEPRECATED)
+        except TypeError as exc:
             key_full = f"cd:{key}"
             ok = await r.set_nx_ex(key_full, "1", _norm_ttl(ttl_sec)) \
                 if hasattr(r, "set_nx_ex") else await r.setnx(key_full, "1")
@@ -114,7 +105,6 @@ async def set_cooldown(key: str, ttl_sec: Any) -> bool:
     _mem_store[f"cd:{key}"] = now + float(_norm_ttl(ttl_sec))
     return True
 
-
 async def get_cooldown_ttl(key: str) -> int:
     """Сколько секунд осталось до конца кулдауна (0 — кулдауна нет)."""
     r = await _try_redis()
@@ -126,14 +116,13 @@ async def get_cooldown_ttl(key: str) -> int:
         return 0
     return max(int(exp - time.monotonic()), 0)
 
-
 async def acquire_lock(name: str, ttl_sec: int = 60) -> bool:
     """Простой Redis-lock для задач планировщика (масштабирование на N воркеров)."""
     r = await _try_redis()
     if r is not None:
         try:
             return bool(await r.set(f"lock:{name}", "1", nx=True, ex=_norm_ttl(ttl_sec)))
-        except TypeError:  # redis-py>=6: отдельная ветка NX+EX
+        except TypeError:
             key_full = f"lock:{name}"
             ok = await r.set_nx_ex(key_full, "1", _norm_ttl(ttl_sec)) \
                 if hasattr(r, "set_nx_ex") else await r.setnx(key_full, "1")
@@ -141,14 +130,12 @@ async def acquire_lock(name: str, ttl_sec: int = 60) -> bool:
                 await r.expire(key_full, _norm_ttl(ttl_sec))
                 return True
             return False
-    return True  # без Redis один инстанс — локи не нужны
-
+    return True
 
 async def release_lock(name: str) -> None:
     r = await _try_redis()
     if r is not None:
         await r.delete(f"lock:{name}")
-
 
 async def remember_for(name: str, ttl_sec: int) -> bool:
     """«Запомнить на N секунд»: True — если интервал ИСТЁК (или не запоминался),
@@ -163,7 +150,7 @@ async def remember_for(name: str, ttl_sec: int) -> bool:
         try:
             ok = await r.set(f"every:{name}", "1", nx=True, ex=_norm_ttl(ttl_sec))
             return bool(ok)
-        except Exception as exc:  # noqa: BLE001 — fallback по замыслу
+        except Exception as exc:
             logger.debug("remember_for redis failed ({}): mem mode", exc)
     k = f"every:{name}"
     now = time.monotonic()
@@ -173,10 +160,6 @@ async def remember_for(name: str, ttl_sec: int) -> bool:
     _mem_store[k] = now + float(_norm_ttl(ttl_sec))
     return True
 
-
-# ---------------------------------------------------------------------------
-# Простое in-memory/Redis кэширование строк (версии карточек и т.п.)
-# ---------------------------------------------------------------------------
 async def mem_cached_set(key: str, value: str, ttl_sec: int = 3600) -> str | None:
     """Ставит значение, возвращает ПРЕДЫДУЩЕЕ (или None). Без Redis — mem-store.
 

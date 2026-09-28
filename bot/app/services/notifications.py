@@ -21,7 +21,6 @@ from app.services.tamagotchi import MOOD_TEXT, compute_mood
 from app.utils.html_text import esc
 from app.utils.local_time import now as local_now
 
-
 async def queue_notification(session: AsyncSession, user_id: int, kind: str,
                              text: str, send_at: datetime | None = None) -> bool:
     """Ставит уведомление в очередь. False — если персональная настройка выключена."""
@@ -31,20 +30,15 @@ async def queue_notification(session: AsyncSession, user_id: int, kind: str,
             "pet": ns.pet_reminders,
             "streak": ns.streak_reminders,
             "achievement": ns.achievement_notifications,
-            # левелапы — часть игрового прогресса: включены/выключены вместе
-            # с уведомлениями о достижениях
             "levelup": ns.achievement_notifications,
             "daily": ns.daily_report,
         }.get(kind)
         if flag is False:
             return False
-    # все пуши уходят с parse_mode=HTML — экранируем династические куски,
-    # чтобы имя юзера/питомца не сломало разметку
     session.add(NotificationQueue(user_id=user_id, kind=kind, text=text,
                                   send_at=send_at or local_now()))
     await session.flush()
     return True
-
 
 async def has_recent(session: AsyncSession, user_id: int, kind: str,
                      within: timedelta) -> bool:
@@ -59,10 +53,8 @@ async def has_recent(session: AsyncSession, user_id: int, kind: str,
     )).scalar_one_or_none()
     return row is not None
 
-
 def _mood_phrase(mood: str) -> str:
     return MOOD_TEXT.get(mood, "Что-то приуныл")
-
 
 async def build_pet_sad_text(pet: Pet) -> str:
     mood = compute_mood(pet)
@@ -75,11 +67,9 @@ async def build_pet_sad_text(pet: Pet) -> str:
     hint = hints.get(mood, "")
     return f"🐾 <b>{esc(pet.name)}</b> {reason}\n{hint}".strip()
 
-
 async def build_streak_warning(user: User) -> str:
     return (f"🔥 {esc(user.first_name)}, серия из <b>{user.streak_days}</b> дн. сгорит в полночь!\n"
             f"Напиши что-нибудь в чат — даже «спасибо» засчитается 🙂")
-
 
 async def queue_levelup(session: AsyncSession, user_id: int, levels: list[int]) -> bool:
     """Левелап — «важное» событие: ставим в очередь (без мгновенного DM).
@@ -93,7 +83,6 @@ async def queue_levelup(session: AsyncSession, user_id: int, levels: list[int]) 
     top = max(levels)
     text = f"🎉 Новый уровень: <b>{top}</b>! Так держать 🔥"
     return await queue_notification(session, user_id, "levelup", text)
-
 
 async def build_daily_report(user: User, pet: Pet | None, stats_today: int,
                              rank: int | None) -> str:

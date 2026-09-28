@@ -14,7 +14,6 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
-
 def utcnow() -> datetime:
     """Метка «сейчас» — камчатское локальное время (см. app.utils.local_time).
 
@@ -24,22 +23,16 @@ def utcnow() -> datetime:
     from app.utils.local_time import now as kamchatka_now
     return kamchatka_now()
 
-
 def localnow() -> datetime:
     """Канонический псевдоним: текущее время по Камчатке."""
     return utcnow()
 
-
 class Base(DeclarativeBase):
-    # MySQL: таблицы создаются сразу в utf8mb4 — 4-байтные эмодзи (🐾💬)
-    # проходят даже если база по умолчанию utf8mb3. Для sqlite игнорируется.
     __table_args__ = {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"}
-
 
 def _ta(*args):
     """Собирает __table_args__: индексы/констрейны + mysql utf8mb4."""
     return (*args, {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"})
-
 
 class _JsonIntList(TypeDecorator):
     """Список целых id поверх JSON: всегда числа, никогда строки.
@@ -64,19 +57,14 @@ class _JsonIntList(TypeDecorator):
     def process_result_value(self, value, dialect):
         if value is None:
             return []
-        if isinstance(value, str):  # SQLite хранит JSON текстом
+        if isinstance(value, str):
             import json as _json
             try:
                 value = _json.loads(value)
             except ValueError:
-                # НЕ пустой список! Битый/нестандартный текст (например, Python-
-                # репрезентация '[-100..., -100...]' с пробелами после запятых,
-                # которую писали ранние SQL-миграции) молча превращался в
-                # «чатов нет» — живой человек в реестре оставался без доступа
-                # (боёвка 23:41). Парсим по числам напрямую.
                 import re
                 value = re.findall(r"-?\d+", value)
-        if isinstance(value, dict):  # на всякий: {"chats": [...]}? не ожидаем
+        if isinstance(value, dict):
             value = list(value.values()) or []
         if not isinstance(value, (list, tuple)):
             return []
@@ -88,11 +76,6 @@ class _JsonIntList(TypeDecorator):
                 continue
         return out
 
-
-
-# ---------------------------------------------------------------------------
-# Пользователи
-# ---------------------------------------------------------------------------
 class User(Base):
     __tablename__ = "users"
 
@@ -113,24 +96,18 @@ class User(Base):
     onboarded: Mapped[bool] = mapped_column(Boolean, default=False)
     pet_name: Mapped[str | None] = mapped_column(String(64))
     is_banned: Mapped[bool] = mapped_column(Boolean, default=False)
-    # кто пригласил пользователя (deep-link invite_<tg_id>) — для реф-системы
     referrer_id: Mapped[int | None] = mapped_column(BigInteger, default=None)
-    # произвольные сервисные флаги (например _ref_credited) — без новых миграций
     settings_extra: Mapped[dict] = mapped_column(JSON, default=dict)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
-    messages_count: Mapped[int] = mapped_column(Integer, default=0)   # денормализованный счётчик
+    messages_count: Mapped[int] = mapped_column(Integer, default=0)
     reactions_given: Mapped[int] = mapped_column(Integer, default=0)
     reactions_received: Mapped[int] = mapped_column(Integer, default=0)
 
     pet: Mapped["Pet | None"] = relationship(back_populates="owner", uselist=False)
 
-
-# ---------------------------------------------------------------------------
-# Журналы активности
-# ---------------------------------------------------------------------------
 class ChatMessageLog(Base):
     __tablename__ = "chat_messages_log"
     __table_args__ = _ta(
@@ -145,13 +122,12 @@ class ChatMessageLog(Base):
     message_id: Mapped[int] = mapped_column(BigInteger)
     length: Mapped[int] = mapped_column(Integer, default=0)
     has_media: Mapped[bool] = mapped_column(Boolean, default=False)
-    media_type: Mapped[str | None] = mapped_column(String(32))  # photo/sticker/voice/...
+    media_type: Mapped[str | None] = mapped_column(String(32))
     is_reply: Mapped[bool] = mapped_column(Boolean, default=False)
     mentions_count: Mapped[int] = mapped_column(Integer, default=0)
-    is_counted: Mapped[bool] = mapped_column(Boolean, default=True)  # прошёл ли антифрод
-    skip_reason: Mapped[str | None] = mapped_column(String(32))      # short/cooldown/duplicate/command
+    is_counted: Mapped[bool] = mapped_column(Boolean, default=True)
+    skip_reason: Mapped[str | None] = mapped_column(String(32))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
 
 class ReactionLog(Base):
     __tablename__ = "reactions_log"
@@ -166,13 +142,9 @@ class ReactionLog(Base):
     chat_id: Mapped[int] = mapped_column(BigInteger)
     message_id: Mapped[int] = mapped_column(BigInteger)
     emoji: Mapped[str] = mapped_column(String(16))
-    is_counted: Mapped[bool] = mapped_column(Boolean, default=True)  # антифрод-лимит суточный
+    is_counted: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
-
-# ---------------------------------------------------------------------------
-# Достижения
-# ---------------------------------------------------------------------------
 class AchievementCategory(str, enum.Enum):
     activity = "activity"
     streak = "streak"
@@ -181,13 +153,11 @@ class AchievementCategory(str, enum.Enum):
     social = "social"
     secret = "secret"
 
-
 class AchievementRarity(str, enum.Enum):
     common = "common"
     rare = "rare"
     epic = "epic"
     legendary = "legendary"
-
 
 class ConditionType(str, enum.Enum):
     """Тип счётчика, к которому привязано условие достижения."""
@@ -201,10 +171,9 @@ class ConditionType(str, enum.Enum):
     pet_walks = "pet_walks"
     invites = "invites"
     top1_day = "top1_day"
-    level = "level"          # глобальный уровень пользователя
+    level = "level"
     coins_earned = "coins_earned"
-    games_won = "games_won"  # победы в мини-играх
-
+    games_won = "games_won"
 
 class Achievement(Base):
     __tablename__ = "achievements"
@@ -226,7 +195,6 @@ class Achievement(Base):
 
     unlocks: Mapped[list["UserAchievement"]] = relationship(back_populates="achievement")
 
-
 class UserAchievement(Base):
     __tablename__ = "user_achievements"
     __table_args__ = _ta(UniqueConstraint("user_id", "achievement_id", name="uq_user_ach"),)
@@ -239,34 +207,25 @@ class UserAchievement(Base):
 
     achievement: Mapped["Achievement"] = relationship(back_populates="unlocks")
 
-
-# ---------------------------------------------------------------------------
-# Тамагочи
-# ---------------------------------------------------------------------------
 class PetStage(str, enum.Enum):
-    egg = "egg"            # 1-2
-    baby = "baby"          # 3-5
-    teen = "teen"          # 6-9
-    adult = "adult"        # 10-14
-    legendary = "legendary"  # 15+
-
+    egg = "egg"
+    baby = "baby"
+    teen = "teen"
+    adult = "adult"
+    legendary = "legendary"
 
 class PetSpecies(str, enum.Enum):
-    cat = "cat"           # + счастье от игр
-    dog = "dog"           # + голод медленнее
-    fox = "fox"           # + монеты с прогулок
-    chinchilla = "chinchilla"  # пыльные ванны: гигиена почти не пачкается, но боится воды и жары
-    owl = "owl"           # + XP с тренировок
-    dragon = "dragon"     # универсал, редкая стартовая (за 500 монет)
-
+    cat = "cat"
+    dog = "dog"
+    fox = "fox"
+    chinchilla = "chinchilla"
+    owl = "owl"
+    dragon = "dragon"
 
 class Pet(Base):
     __tablename__ = "pets"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    # unique=True снят: у пользователя может быть архив прошлых питомцев
-    # (generation/is_archived); «текущий» выбирается фильтром
-    # is_archived=False (PetRepository.get_by_user).
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.tg_id", ondelete="CASCADE"))
     name: Mapped[str] = mapped_column(String(64))
     species: Mapped[PetSpecies] = mapped_column(Enum(PetSpecies, native_enum=False), default=PetSpecies.cat)
@@ -275,7 +234,7 @@ class Pet(Base):
     xp: Mapped[int] = mapped_column(Integer, default=0)
     stage: Mapped[PetStage] = mapped_column(Enum(PetStage, native_enum=False), default=PetStage.egg)
 
-    hunger: Mapped[float] = mapped_column(Float, default=80.0)     # сытость 0..100
+    hunger: Mapped[float] = mapped_column(Float, default=80.0)
     happiness: Mapped[float] = mapped_column(Float, default=80.0)
     energy: Mapped[float] = mapped_column(Float, default=80.0)
     hygiene: Mapped[float] = mapped_column(Float, default=80.0)
@@ -292,24 +251,17 @@ class Pet(Base):
 
     last_update: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     sleep_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
-    # v1.5.71: старт прогулки — для честного расчёта накопленных бонусов при
-    # досрочном возврате («Вернуть с прогулки», как «Разбудить» для сна)
     walk_start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
     born_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    settings_extra: Mapped[dict] = mapped_column(JSON, default=dict)  # окрас, аксессуары
+    settings_extra: Mapped[dict] = mapped_column(JSON, default=dict)
 
-    # --- история питомца: «усыновление» нового вместо удаления старого ---
-    # generation=1 — текущий питомец; предыдущие получают is_archived=True и
-    # попадают в pet_history_screen («предыдущие питомцы»). Так статистика и
-    # ачивки старого питомца не теряются при смене вида/имени.
     generation: Mapped[int] = mapped_column(Integer, default=1)
     is_archived: Mapped[bool] = mapped_column(Boolean, default=False)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    archive_reason: Mapped[str | None] = mapped_column(String(32))  # rehomed/grew_up
+    archive_reason: Mapped[str | None] = mapped_column(String(32))
 
     owner: Mapped["User"] = relationship(back_populates="pet")
     inventory: Mapped[list["PetInventory"]] = relationship(back_populates="pet", cascade="all, delete-orphan")
-
 
 class Item(Base):
     __tablename__ = "items"
@@ -318,11 +270,10 @@ class Item(Base):
     code: Mapped[str] = mapped_column(String(64), unique=True)
     name: Mapped[str] = mapped_column(String(128))
     icon: Mapped[str] = mapped_column(String(16), default="📦")
-    type: Mapped[str] = mapped_column(String(32))  # food/toy/medicine/accessory/species/merch
+    type: Mapped[str] = mapped_column(String(32))
     price: Mapped[int] = mapped_column(Integer, default=10)
-    effect: Mapped[dict] = mapped_column(JSON, default=dict)  # {"hunger": +20, "happiness": +5}
+    effect: Mapped[dict] = mapped_column(JSON, default=dict)
     description: Mapped[str] = mapped_column(Text, default="")
-
 
 class PetInventory(Base):
     __tablename__ = "pet_inventory"
@@ -336,18 +287,16 @@ class PetInventory(Base):
     pet: Mapped["Pet"] = relationship(back_populates="inventory")
     item: Mapped["Item"] = relationship()
 
-
 class PetActionLog(Base):
     __tablename__ = "pet_actions_log"
     __table_args__ = _ta(Index("ix_pal_pet_created", "pet_id", "created_at"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     pet_id: Mapped[int] = mapped_column(Integer, ForeignKey("pets.id", ondelete="CASCADE"))
-    action: Mapped[str] = mapped_column(String(32))  # feed/play/wash/sleep/heal/walk/train/buy
+    action: Mapped[str] = mapped_column(String(32))
     value: Mapped[int] = mapped_column(Integer, default=0)
     meta: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
 
 class PetFriend(Base):
     __tablename__ = "pet_friends"
@@ -358,10 +307,6 @@ class PetFriend(Base):
     friend_pet_id: Mapped[int] = mapped_column(Integer, ForeignKey("pets.id", ondelete="CASCADE"))
     since: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
-
-# ---------------------------------------------------------------------------
-# Прочее
-# ---------------------------------------------------------------------------
 class ChannelSubscriber(Base):
     """Реестр подписчиков (v2.0: одна строка на человека, PK = user_id).
 
@@ -396,13 +341,9 @@ class ChannelSubscriber(Base):
     first_name: Mapped[str] = mapped_column(String(128), default="")
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    # всегда целые id (см. _JsonIntList) — иначе смешанные str/int ломают
-    # сравнение членства в гейте после SQL-миграций
     chats: Mapped[list] = mapped_column(_JsonIntList, default=list)
-    # --- взаимодействие с ботом ---------------------------------------------
-    ever_contacted: Mapped[bool] = mapped_column(Boolean, default=False)  # писал сам
+    ever_contacted: Mapped[bool] = mapped_column(Boolean, default=False)
     last_contact_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-
 
 class ChatSettings(Base):
     __tablename__ = "chat_settings"
@@ -414,7 +355,6 @@ class ChatSettings(Base):
     min_length: Mapped[int] = mapped_column(Integer, default=5)
     config: Mapped[dict] = mapped_column(JSON, default=dict)
 
-
 class NotificationQueue(Base):
     __tablename__ = "notifications_queue"
 
@@ -423,18 +363,16 @@ class NotificationQueue(Base):
     text: Mapped[str] = mapped_column(Text)
     send_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     sent: Mapped[bool] = mapped_column(Boolean, default=False)
-    kind: Mapped[str] = mapped_column(String(32), default="info")  # achievement/pet/streak/daily
-
+    kind: Mapped[str] = mapped_column(String(32), default="info")
 
 class LeaderboardSnapshot(Base):
     __tablename__ = "leaderboards_snapshot"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    period: Mapped[str] = mapped_column(String(16))     # day/week/all
-    category: Mapped[str] = mapped_column(String(32))   # messages/reactions/level/pet
+    period: Mapped[str] = mapped_column(String(16))
+    category: Mapped[str] = mapped_column(String(32))
     data: Mapped[list] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-
 
 class PetDuel(Base):
     """Недельные соревнования питомцев (PVP).
@@ -453,13 +391,12 @@ class PetDuel(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     pet_id: Mapped[int] = mapped_column(Integer, ForeignKey("pets.id", ondelete="CASCADE"))
-    week_key: Mapped[str] = mapped_column(String(12))   # '2026-W39'
+    week_key: Mapped[str] = mapped_column(String(12))
     wins: Mapped[int] = mapped_column(Integer, default=0)
     losses: Mapped[int] = mapped_column(Integer, default=0)
-    score: Mapped[int] = mapped_column(Integer, default=0)  # рейтинг внутри недели
+    score: Mapped[int] = mapped_column(Integer, default=0)
     fights: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
-
 
 class UserStat(Base):
     """Пользовательские счётчики для ачивок (invites и т.п.)."""
@@ -472,14 +409,13 @@ class UserStat(Base):
     value: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
-
 class NotificationSetting(Base):
     """Персональные настройки уведомлений (экран ⚙️ Настройки)."""
     __tablename__ = "notification_settings"
 
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.tg_id", ondelete="CASCADE"),
                                          primary_key=True, autoincrement=False)
-    pet_reminders: Mapped[bool] = mapped_column(Boolean, default=True)   # «питомец скучает»
-    streak_reminders: Mapped[bool] = mapped_column(Boolean, default=True)  # стрик под угрозой / сгорел
+    pet_reminders: Mapped[bool] = mapped_column(Boolean, default=True)
+    streak_reminders: Mapped[bool] = mapped_column(Boolean, default=True)
     achievement_notifications: Mapped[bool] = mapped_column(Boolean, default=True)
-    daily_report: Mapped[bool] = mapped_column(Boolean, default=True)    # ежедневный отчёт 20:00 UTC
+    daily_report: Mapped[bool] = mapped_column(Boolean, default=True)

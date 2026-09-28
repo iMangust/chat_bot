@@ -10,8 +10,7 @@ from __future__ import annotations
 import re
 
 TG_LIMIT = 4096
-SAFE_LIMIT = 4000   # запас на эмодзи-суррогаты и служебные символы
-
+SAFE_LIMIT = 4000
 
 def split_message(text: str, limit: int = SAFE_LIMIT) -> list[str]:
     """Режет текст по строкам; одна строка длиннее лимита — режется жёстко."""
@@ -21,7 +20,6 @@ def split_message(text: str, limit: int = SAFE_LIMIT) -> list[str]:
     cur: list[str] = []
     cur_len = 0
     for line in text.split("\n"):
-        # слишком длинная строка — дробим принудительно
         while len(line) > limit:
             if cur:
                 chunks.append("\n".join(cur))
@@ -40,7 +38,6 @@ def split_message(text: str, limit: int = SAFE_LIMIT) -> list[str]:
     if cur:
         chunks.append("\n".join(cur))
     return [c for c in (ch.strip("\n") for ch in chunks) if c]
-
 
 def strip_html_tags(text: str) -> str:
     """Убирает теги Telegram HTML (для plain-фолбэка)."""

@@ -28,13 +28,8 @@ WEB_DIR = Path(__file__).resolve().parent
 
 app = FastAPI(title="TamaBot Control Panel", docs_url=None, redoc_url=None)
 
-
-# ------------------------------------------------- доступ по белому списку IP
 LOCALHOST_IPS = {"127.0.0.1", "::1"}
-# Белый список панели по умолчанию (если DASHBOARD_ALLOWED_IPS не задан):
-# рабочие станции администраторов; localhost разрешён всегда (см. _parse_allowed).
 DEFAULT_ALLOWED_IPS = "195.88.178.178,195.88.178.179,195.88.178.222"
-
 
 def _parse_allowed(raw: str | None) -> tuple[set[str], list]:
     """Разбирает DASHBOARD_ALLOWED_IPS (через запятую/пробел/точку с запятой).
@@ -55,9 +50,8 @@ def _parse_allowed(raw: str | None) -> tuple[set[str], list]:
             else:
                 ips.add(str(ipaddress.ip_address(token)))
         except ValueError:
-            continue  # некорректную запись игнорируем, не роняем панель
-    return ips, networks  # type: ignore[return-value]
-
+            continue
+    return ips, networks
 
 def _ip_allowed(ip: str, allow: tuple[set[str], list]) -> bool:
     ips, networks = allow
@@ -68,7 +62,6 @@ def _ip_allowed(ip: str, allow: tuple[set[str], list]) -> bool:
     except ValueError:
         return False
     return any(addr in net for net in networks)
-
 
 def _client_ip(request: Request) -> str:
     """Реальный IP клиента.
@@ -84,7 +77,7 @@ def _client_ip(request: Request) -> str:
         peer = peer.split(":", 1)[1]
     try:
         trust_proxy = bool(get_settings_cached().dashboard_trust_proxy)
-    except Exception:  # noqa: BLE001 — настройки недоступны → консервативно
+    except Exception:
         trust_proxy = False
     if trust_proxy:
         fwd = request.headers.get("x-forwarded-for") or request.headers.get("x-real-ip") or ""
@@ -93,23 +86,20 @@ def _client_ip(request: Request) -> str:
             return first
     return peer
 
-
 def get_settings_cached():
     """get_settings() с кэшем процесса (ленивый импорт — сервер можно
     поднимать и без полного окружения бота в тестах)."""
     from app.config import get_settings
     return get_settings()
 
-
 def _allowlist() -> tuple[set[str], list]:
     """Текущий белый список (читается из настроек при каждом запросе —
     правку DASHBOARD_ALLOWED_IPS в .env можно применить рестартом панели)."""
     try:
         raw = get_settings_cached().dashboard_allowed_ips
-    except Exception:  # noqa: BLE001 — настройки недоступны → дефолт + localhost
+    except Exception:
         raw = DEFAULT_ALLOWED_IPS
     return _parse_allowed(raw)
-
 
 @app.middleware("http")
 async def ip_allowlist_middleware(request: Request, call_next):
@@ -118,8 +108,6 @@ async def ip_allowlist_middleware(request: Request, call_next):
                             status_code=403)
     return await call_next(request)
 
-
-# ------------------------------------------------------------- log stream
 class LogHub:
     """Собирает строки из UiLogHandler и рассылает подписчикам-WS."""
 
@@ -134,8 +122,6 @@ class LogHub:
         ui_log_handler.set_callback(self._on_line)
 
     def _on_line(self, line: str) -> None:
-        # sink вызывается синхронно из потока лога (event loop'а) —
-        # threadsafe-диспатч на случай вызова из другого потока
         if self._loop is not None and not self._loop.is_closed():
             self._loop.call_soon_threadsafe(self._schedule, line)
 
@@ -148,7 +134,7 @@ class LogHub:
         for ws in list(self.clients):
             try:
                 await ws.send_json(payload)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 dead.append(ws)
         for ws in dead:
             self.clients.discard(ws)
@@ -156,7 +142,6 @@ class LogHub:
     async def add(self, ws: WebSocket) -> None:
         await ws.accept()
         self.clients.add(ws)
-        # сразу отдаём накопленный буфер, чтобы окно логов не было пустым
         from app.console.runtime import ui_log_handler
         tail = list(ui_log_handler.buffer)[-500:]
         await ws.send_json({"type": "bulk", "lines": tail})
@@ -164,20 +149,15 @@ class LogHub:
     def remove(self, ws: WebSocket) -> None:
         self.clients.discard(ws)
 
-
 hub = LogHub()
 
-
-# ---------------------------------------------------------------- helpers
 def _runtime():
     from app.console.runtime import runtime
     return runtime
 
-
 def _mask_db(url: str) -> str:
     """mysql+aiomysql://user:PASS@host → user:•••@host (пароль не показываем)."""
     return re.sub(r"://([^:/@]+):[^@]+@", r"://\1:•••@", url)
-
 
 def _status_payload() -> dict:
     from app.config import __version__
@@ -187,11 +167,11 @@ def _status_payload() -> dict:
     me = None
     if rt.bot is not None:
         try:
-            me_bot = rt.bot._me  # заполняется после get_me()/поллинга
+            me_bot = rt.bot._me
             if me_bot is not None:
                 me = {"username": me_bot.username, "id": me_bot.id,
                       "first_name": me_bot.first_name}
-        except Exception:  # noqa: BLE001
+        except Exception:
             me = None
     settings = None
     try:
@@ -207,7 +187,7 @@ def _status_payload() -> dict:
             "mtprotoMode": s.mtproto_answer_mode,
             "isDev": s.is_dev,
         }
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         settings = {"error": str(exc)}
     return {
         "state": st,
@@ -221,22 +201,16 @@ def _status_payload() -> dict:
         "serverTime": time.time(),
     }
 
-
-# ------------------------------------------------------------------ pages
 @app.get("/")
 async def index() -> FileResponse:
     return FileResponse(WEB_DIR / "static" / "index.html")
-
 
 @app.get("/api/status")
 async def status() -> JSONResponse:
     return JSONResponse(_status_payload())
 
-
-# -------------------------------------------------------------- controls
 class Action(BaseModel):
-    action: str  # start | stop | restart
-
+    action: str
 
 @app.post("/api/control")
 async def control(body: Action) -> dict:
@@ -247,7 +221,7 @@ async def control(body: Action) -> dict:
             raise HTTPException(409, f"бот уже в состоянии {rt.state!r}")
         try:
             await rt.start()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise HTTPException(500, f"не удалось запустить: {exc}") from exc
         return {"ok": True, "state": rt.state}
     if act == "stop":
@@ -260,28 +234,22 @@ async def control(body: Action) -> dict:
             await rt.stop()
         try:
             await rt.start()
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             raise HTTPException(500, f"не удалось перезапустить: {exc}") from exc
         return {"ok": True, "state": rt.state}
     raise HTTPException(400, f"неизвестное действие {body.action!r}")
 
-
-# --------------------------------------------------------------- settings
 @app.get("/api/settings")
 async def get_settings_api() -> dict:
     from app.console.settings_store import settings_view
     try:
         return settings_view()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise HTTPException(500, str(exc)) from exc
-
 
 class SettingsPatch(BaseModel):
     updates: dict[str, str]
 
-
-# Ключи, которые можно применить «на лету» (читаются при каждом обращении
-# через get_settings()); остальные требуют рестарта бота.
 HOT_KEYS = {
     "LOG_LEVEL", "WEATHER_ENABLED", "MERCH_URL", "MERCH_ITEMS",
     "PET_WARNING_MIN_HOURS", "STREAK_WARN_THRESHOLD_SEC",
@@ -293,14 +261,13 @@ HOT_KEYS = {
     "MTPROTO_AUTOSYNC",
 }
 
-
 @app.post("/api/settings")
 async def save_settings(body: SettingsPatch) -> dict:
     from app.config import get_settings
     from app.console.settings_store import validate_updates, write_env
     try:
         old = get_settings()
-    except Exception:  # noqa: BLE001
+    except Exception:
         old = None
     try:
         clean, warns = validate_updates(body.updates)
@@ -313,7 +280,6 @@ async def save_settings(body: SettingsPatch) -> dict:
         write_env(clean)
     except OSError as exc:
         raise HTTPException(500, f"не удалось записать .env: {exc}") from exc
-    # пересборка кэша настроек процесса: следующий get_settings() прочитает .env заново
     get_settings.cache_clear()
     new = get_settings()
     changed_fields = [name for name in new.model_fields
@@ -324,12 +290,10 @@ async def save_settings(body: SettingsPatch) -> dict:
     return {"ok": True, "changed": sorted(k.upper() for k in changed_fields),
             "warnings": warns, "restartRequired": restart_required}
 
-
 def _apply_log_level(level: str) -> None:
     from loguru import logger
     from app.console.runtime import setup_file_logging
     setup_file_logging(level)
-
 
 @app.post("/api/loglevel")
 async def set_log_level(body: dict) -> dict:
@@ -342,36 +306,29 @@ async def set_log_level(body: dict) -> dict:
     logger.info("🔧 уровень live-логов оболочки изменён на {}", lvl)
     return {"ok": True, "level": lvl}
 
-
-# ------------------------------------------------------------------- ws
 @app.websocket("/ws/logs")
 async def ws_logs(ws: WebSocket) -> None:
-    # HTTP-middleware на апгрейд не распространяется — проверяем так же строго
     if not _ip_allowed(_client_ip(ws), _allowlist()):
-        await ws.close(code=4403)  # 4403 = «свой» код: IP не в белом списке
+        await ws.close(code=4403)
         return
     await hub.add(ws)
     try:
         while True:
-            await ws.receive_text()  # keep-alive ping от клиента
+            await ws.receive_text()
     except WebSocketDisconnect:
         hub.remove(ws)
-    except Exception:  # noqa: BLE001
+    except Exception:
         hub.remove(ws)
 
-
-# ------------------------------------------------------------------ main
 def _browser_host(host: str) -> str:
     return "127.0.0.1" if host in ("0.0.0.0", "::") else host
-
 
 def _open_browser(url: str) -> None:
     import webbrowser
     try:
         webbrowser.open(url)
-    except Exception:  # noqa: BLE001
+    except Exception:
         pass
-
 
 async def amain(host: str, port: int, autostart: bool, open_browser: bool) -> int:
     import uvicorn
@@ -389,8 +346,7 @@ async def amain(host: str, port: int, autostart: bool, open_browser: bool) -> in
     if autostart and settings.bot_token and settings.bot_token != "test":
         try:
             await runtime.start()
-        except Exception as exc:  # noqa: BLE001
-            # бот не поднялся — оболочка всё равно открывается: чиним из UI
+        except Exception as exc:
             logger.error("автозапуск бота не удался: {} — исправьте настройки в панели", exc)
     elif autostart:
         logger.warning("BOT_TOKEN не задан — панель открыта, запустите бота после настройки .env")
@@ -414,7 +370,6 @@ async def amain(host: str, port: int, autostart: bool, open_browser: bool) -> in
         await runtime.stop()
     return 0
 
-
 def main() -> None:
     import argparse
 
@@ -428,7 +383,6 @@ def main() -> None:
                              autostart=not args.no_start,
                              open_browser=not args.no_open))
     raise SystemExit(code)
-
 
 if __name__ == "__main__":
     main()

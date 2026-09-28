@@ -12,11 +12,9 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.config import get_settings
 
-
 def _two_per_row(buttons: list[InlineKeyboardButton]) -> list[list[InlineKeyboardButton]]:
     """Раскладывает кнопки по две в ряд (непарная — одна)."""
     return [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
-
 
 def _page_nav(prefix: str, page: int, total: int, title: str) -> list[InlineKeyboardButton]:
     """Ряд навигации: ◀️ · «Название 📖 i/n» · ▶️, зацикливание страниц."""
@@ -30,13 +28,8 @@ def _page_nav(prefix: str, page: int, total: int, title: str) -> list[InlineKeyb
         InlineKeyboardButton(text="▶️", callback_data=next_cb),
     ]
 
-
-# ─── 🏠 Главное меню ────────────────────────────────────────────────────────
-
 MENU_PAGES: list[tuple[str, list[tuple[str, str]]]] = [
     ("🎮 Игра", [
-        # «🛒 Магазин» убран: он принадлежит питомцу и доступен только
-        # в хабе питомца (страница «🎒 Вещи» → pet:shop).
         ("🐾 Питомец", "menu:pet"),
         ("🧢 Мерч канала", "menu:merch"),
     ]),
@@ -49,10 +42,8 @@ MENU_PAGES: list[tuple[str, list[tuple[str, str]]]] = [
     ]),
 ]
 
-
 def menu_page_count() -> int:
     return len(MENU_PAGES)
-
 
 def main_menu(link: str | None = None, reward: int = 0,
               page: int = 0) -> InlineKeyboardMarkup:
@@ -70,9 +61,6 @@ def main_menu(link: str | None = None, reward: int = 0,
         kb_rows.append([InlineKeyboardButton(text=invite_label, url=link)])
     kb_rows.append([InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main")])
     return InlineKeyboardMarkup(inline_keyboard=kb_rows)
-
-
-# ─── 🐾 Хаб питомца ─────────────────────────────────────────────────────────
 
 PET_PAGES: list[tuple[str, list[tuple[str, str]]]] = [
     ("🧴 Уход", [
@@ -94,15 +82,10 @@ PET_PAGES: list[tuple[str, list[tuple[str, str]]]] = [
     ]),
 ]
 
-
 def pet_page_count() -> int:
     return len(PET_PAGES)
 
-
-# v1.5.67: callback'и, недоступные, пока питомец гуляет (мыться/спать/
-# тренироваться на улице негде — как в жизни; кормить и играть можно).
 WALK_BLOCKED_CB = {"pet:wash", "pet:sleep", "pet:train"}
-
 
 def pet_hub(page: int = 0, critical: bool = False,
             sleeping: bool = False, walking: bool = False) -> InlineKeyboardMarkup:
@@ -142,9 +125,6 @@ def pet_hub(page: int = 0, critical: bool = False,
     kb_rows.append([InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main")])
     return InlineKeyboardMarkup(inline_keyboard=kb_rows)
 
-
-# ─── 🕹 Мини-игры ────────────────────────────────────────────────────────────
-
 def games_menu() -> InlineKeyboardMarkup:
     """Экран выбора мини-игры. Подписи объясняют механику."""
     b = InlineKeyboardBuilder()
@@ -156,7 +136,6 @@ def games_menu() -> InlineKeyboardMarkup:
     b.row(InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main"))
     return b.as_markup()
 
-
 def rps_keyboard() -> InlineKeyboardMarkup:
     """Ходы для камня-ножницы-бумаги."""
     b = InlineKeyboardBuilder()
@@ -167,7 +146,6 @@ def rps_keyboard() -> InlineKeyboardMarkup:
     b.row(InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main"))
     return b.as_markup()
 
-
 def twentyone_keyboard() -> InlineKeyboardMarkup:
     """Ходы игрока в «21»: взять карту или остановиться."""
     b = InlineKeyboardBuilder()
@@ -176,7 +154,6 @@ def twentyone_keyboard() -> InlineKeyboardMarkup:
     b.adjust(2)
     b.row(InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main"))
     return b.as_markup()
-
 
 def guess_hint_keyboard(secret_lo: int, secret_hi: int) -> InlineKeyboardMarkup:
     """Подсказка диапазона для угадайки: быстрые кнопки-варианты."""
@@ -188,13 +165,11 @@ def guess_hint_keyboard(secret_lo: int, secret_hi: int) -> InlineKeyboardMarkup:
     b.row(InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main"))
     return b.as_markup()
 
-
 def back_to_main() -> InlineKeyboardMarkup:
     """Одиночная кнопка выхода «🏠 Меню» для промежуточных экранов."""
     b = InlineKeyboardBuilder()
     b.button(text="🏠 Меню", callback_data="menu:main")
     return b.as_markup()
-
 
 def adopt_confirm_kb() -> InlineKeyboardMarkup:
     """Экран подтверждения усыновления (v1.5.23): явные «✅ Да» / «⬅️ Назад».
@@ -209,9 +184,6 @@ def adopt_confirm_kb() -> InlineKeyboardMarkup:
     b.adjust(1)
     return b.as_markup()
 
-
-# ─── 🏋️ Тренировки ──────────────────────────────────────────────────────────
-
 def train_menu() -> InlineKeyboardMarkup:
     """Экран тренировок: выбор характеристики."""
     b = InlineKeyboardBuilder()
@@ -222,9 +194,6 @@ def train_menu() -> InlineKeyboardMarkup:
     b.row(InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main"))
     return b.as_markup()
 
-
-# ─── 🚀 Онбординг / выбор вида ──────────────────────────────────────────────
-
 def start_pet_name_suggestions(names: list[str]) -> InlineKeyboardMarkup:
     """Кнопки с вариантами имени питомца (онбординг)."""
     b = InlineKeyboardBuilder()
@@ -233,18 +202,15 @@ def start_pet_name_suggestions(names: list[str]) -> InlineKeyboardMarkup:
     b.adjust(2)
     return b.as_markup()
 
-
 def onboard_done() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="🏠 Открыть меню", callback_data="menu:main")
     return b.as_markup()
 
-
 def welcome_start_button() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="✅ Начать", callback_data="onb:start")
     return b.as_markup()
-
 
 def species_picker() -> InlineKeyboardMarkup:
     """Выбор вида питомца + «просто смотреть»: питомец — опция, не обязанность."""
@@ -257,7 +223,6 @@ def species_picker() -> InlineKeyboardMarkup:
                                callback_data="onb:skip"))
     return b.as_markup()
 
-
 def adopt_cta_kb() -> InlineKeyboardMarkup:
     """Экран «питомца нет»: завести или вернуться в меню."""
     b = InlineKeyboardBuilder()
@@ -265,7 +230,6 @@ def adopt_cta_kb() -> InlineKeyboardMarkup:
     b.button(text="🏠 Меню", callback_data="menu:main")
     b.adjust(1)
     return b.as_markup()
-
 
 def pet_history_kb(has_current: bool = True) -> InlineKeyboardMarkup:
     """Экран истории питомцев."""
@@ -276,9 +240,6 @@ def pet_history_kb(has_current: bool = True) -> InlineKeyboardMarkup:
     b.adjust(2)
     b.row(InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main"))
     return b.as_markup()
-
-
-# ─── 🏆 Достижения / топы / настройки / арена ───────────────────────────────
 
 def achievements_list(pairs: list, page: int = 0,
                       total_pages: int | None = None) -> InlineKeyboardMarkup:
@@ -291,17 +252,15 @@ def achievements_list(pairs: list, page: int = 0,
     b.row(InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main"))
     return b.as_markup()
 
-
 TOP_SECTION_LABELS = {"talk": "💬 Болтуны", "react": "💖 Реакции",
                       "streak": "🔥 Серии", "pets": "🐾 Питомцы",
                       "levels": "⭐ Уровни",
                       "overall": "👑 Общий", "emotional": "🎭 Эмоциональные",
                       "karma": "💚 Добряки"}
 
-
 def top_tabs(active: str = "week", section: str = "talk") -> InlineKeyboardMarkup:
     """Топы: сверху вкладки периода, ниже ◀️ раздел · i/n · ▶️, один выход 🏠."""
-    from app.handlers.stats import TOP_SECTIONS  # локальный импорт: без цикла
+    from app.handlers.stats import TOP_SECTIONS
     keys = [k for k, _ in TOP_SECTIONS]
     idx = keys.index(section) if section in keys else 0
     n = len(keys)
@@ -323,7 +282,6 @@ def top_tabs(active: str = "week", section: str = "talk") -> InlineKeyboardMarku
     b.row(InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main"))
     return b.as_markup()
 
-
 def settings_keyboard(flags: dict[str, bool]) -> InlineKeyboardMarkup:
     """Экран ⚙️ Настройки: тумблеры уведомлений (по 2 в ряд)."""
     labels = {
@@ -340,7 +298,6 @@ def settings_keyboard(flags: dict[str, bool]) -> InlineKeyboardMarkup:
     b.row(InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main"))
     return b.as_markup()
 
-
 def arena_keyboard(can_fight: bool = True, hint: str = "") -> InlineKeyboardMarkup:
     """Арена: кнопка боя (или некликабельная подсказка кулдауна) + выход 🏠.
 
@@ -355,7 +312,6 @@ def arena_keyboard(can_fight: bool = True, hint: str = "") -> InlineKeyboardMark
     b.row(InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main"))
     return b.as_markup()
 
-
 def style_keyboard(svc, pet, slots_page: int = 0,
                    item_page: int = 0) -> InlineKeyboardMarkup:
     """Гардероб MMORPG: окрас → слот экипировки → список вещей слота.
@@ -369,7 +325,6 @@ def style_keyboard(svc, pet, slots_page: int = 0,
 
     b = InlineKeyboardBuilder()
     color_key, _worn = svc.customization(pet)
-    # ---- окрасы (по 2 в ряд) ----
     for key, info in svc.PET_COLORS.items():
         on = (key == "default" and not color_key) or key == color_key
         price = info["price"]
@@ -377,7 +332,6 @@ def style_keyboard(svc, pet, slots_page: int = 0,
         b.button(text=label, callback_data=f"style:color:{key}")
     b.adjust(2)
 
-    # ---- выбор слота ----
     slot_keys = list(svc.GEAR_SLOTS.keys())
     gear = svc.gear_map(pet)
     for k in slot_keys:
@@ -387,7 +341,6 @@ def style_keyboard(svc, pet, slots_page: int = 0,
         b.button(text=label, callback_data=f"style:slot:{k}:{item_page}")
     b.adjust(3)
 
-    # ---- вещи открытого слота (с пагинацией) ----
     if slots_page is not None and 0 <= slots_page < len(slot_keys):
         slot = slot_keys[slots_page]
         owned = set((pet.settings_extra or {}).get("owned") or [])
@@ -397,9 +350,9 @@ def style_keyboard(svc, pet, slots_page: int = 0,
         chunk = catalog[item_page * STYLE_ITEMS_PER_PAGE:(item_page + 1) * STYLE_ITEMS_PER_PAGE]
         for emoji, it in chunk:
             if gear.get(slot) == emoji:
-                label = f"✅ {emoji} Снять"          # надето — клик снимает
+                label = f"✅ {emoji} Снять"
             elif emoji in owned:
-                label = f"🎒 {emoji} Надеть"          # куплено ранее — бесплатно
+                label = f"🎒 {emoji} Надеть"
             else:
                 label = f"{emoji} {it['title']} · {it['price']}🪙"
             b.button(text=label, callback_data=f"style:wear:{slot}:{emoji}:{slots_page}:{item_page}")
@@ -418,7 +371,6 @@ def style_keyboard(svc, pet, slots_page: int = 0,
     b.row(InlineKeyboardButton(text="🐾 К питомцу", callback_data="pet:page:1"),
           InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main"))
     return b.as_markup()
-
 
 def open_slot_of(cb_data: str) -> int | None:
     """Определяет, какой слот сейчас открыт на экране гардероба, по колбэку."""

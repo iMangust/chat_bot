@@ -24,10 +24,8 @@ from app.utils.local_time import now as local_now
 
 router = Router(name="stats")
 
-
 def _medal(i: int) -> str:
     return ["🥇", "🥈", "🥉"][i - 1] if i <= 3 else f"{i}."
-
 
 async def _top_lines(session: AsyncSession, period_label: str, since: datetime | None) -> list[str]:
     """Строки топа болтунов за период (since=None — за всё время)."""
@@ -43,7 +41,6 @@ async def _top_lines(session: AsyncSession, period_label: str, since: datetime |
         name = html.escape(u.first_name or "")
         lines.append(f"{_medal(i)} {name} — {cnt} сообщ. (ур. {u.level})")
     return lines
-
 
 @router.callback_query(F.data == "menu:stats")
 async def stats_screen(cb: CallbackQuery, session: AsyncSession) -> None:
@@ -71,8 +68,6 @@ async def stats_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     await safe_edit_or_answer(cb.message, text, reply_markup=back_to_main())
     await cb.answer()
 
-
-# порядок и подписи типов в разбивке статистики
 MEDIA_LABELS: list[tuple[str, str]] = [
     ("text", "💬 текст"), ("photo", "🖼 фото"), ("sticker", "🎴 стикеры"),
     ("voice", "🎤 голосовые"), ("video_note", "⭕️ кружки"), ("video", "🎬 видео"),
@@ -80,7 +75,6 @@ MEDIA_LABELS: list[tuple[str, str]] = [
     ("poll", "📊 опросы"), ("other", "📦 прочее"),
     ("reply", "↩️ ответы"), ("mentions", "@ упоминания"),
 ]
-
 
 def _breakdown_text(breakdown: dict[str, int], top: int = 8) -> str:
     """ Компактные строки «тип — кол-во» с долей от всех сообщений."""
@@ -100,7 +94,6 @@ def _breakdown_text(breakdown: dict[str, int], top: int = 8) -> str:
         if len(lines) >= top:
             break
     return "\n".join(lines)
-
 
 def _render_achievements(items, page: int = 0, page_size: int = 8) -> tuple[str, int, int]:
     """Собирает текст страницы ачивок.
@@ -129,7 +122,6 @@ def _render_achievements(items, page: int = 0, page_size: int = 8) -> tuple[str,
         )
     return "\n".join(lines), page, total_pages
 
-
 @router.callback_query(F.data.startswith("ach:noop"))
 async def ach_noop(cb: CallbackQuery) -> None:
     """Клик по неразрывной подписи «🏆 Достижения 📖 i/n» — снять «часики».
@@ -139,12 +131,10 @@ async def ach_noop(cb: CallbackQuery) -> None:
     """
     await cb.answer()
 
-
 @router.callback_query(F.data.startswith("top:noop"))
 async def top_noop(cb: CallbackQuery) -> None:
     """Аналогично: центральная кнопка навигации топов."""
     await cb.answer()
-
 
 @router.callback_query(F.data == "menu:ach")
 async def ach_screen(cb: CallbackQuery, session: AsyncSession, page: int = 0) -> None:
@@ -155,7 +145,6 @@ async def ach_screen(cb: CallbackQuery, session: AsyncSession, page: int = 0) ->
                               reply_markup=achievements_list(items, page, total_pages))
     await cb.answer()
 
-
 @router.callback_query(F.data.startswith("ach:page:"))
 async def ach_page(cb: CallbackQuery, session: AsyncSession) -> None:
     try:
@@ -164,9 +153,7 @@ async def ach_page(cb: CallbackQuery, session: AsyncSession) -> None:
         page = 0
     await ach_screen(cb, session, page=page)
 
-
 PERIODS = {"day": "📅 День", "week": "🗓 Неделя", "all": "♾ Всё время"}
-
 
 def _since_for(period: str, now) -> datetime | None:
     if period == "day":
@@ -174,7 +161,6 @@ def _since_for(period: str, now) -> datetime | None:
     if period == "week":
         return now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=6)
     return None
-
 
 async def _top_section(session: AsyncSession, period: str, section: str) -> str:
     """Один раздел топа: все номинации выводятся по одной на страницу
@@ -243,7 +229,7 @@ async def _top_section(session: AsyncSession, period: str, section: str) -> str:
             lines.append("   пока пусто 🐾")
         for i, (p, owner) in enumerate(pets, start=1):
             lines.append(f"{_medal(i)} {html.escape(p.name)} (ур. {p.level}) · {html.escape(owner or '')}")
-    else:  # levels
+    else:
         levels = await top_levels(session, 10)
         lines.append("⭐ <b>Уровни игроков</b>")
         if not levels:
@@ -255,13 +241,11 @@ async def _top_section(session: AsyncSession, period: str, section: str) -> str:
     lines.append("\n<i>/award — итоги прошлой недели с призами 🎁</i>")
     return "\n".join(lines)
 
-
 TOP_SECTIONS: list[tuple[str, str]] = [
     ("overall", "👑 Общий"), ("talk", "💬 Болтуны"), ("react", "💖 Реакции"),
     ("emotional", "🎭 Эмоциональные"), ("karma", "💚 Добряки"),
     ("streak", "🔥 Серии"), ("pets", "🐾 Питомцы"), ("levels", "⭐ Уровни"),
 ]
-
 
 def section_label(section: str) -> tuple[str, str]:
     """(эмодзи, название) раздела топа."""
@@ -271,10 +255,7 @@ def section_label(section: str) -> tuple[str, str]:
             return emoji, title
     return "🏅", "Топы"
 
-
-# контекст «кто смотрит топ» (для подсветки своей строки)
 _TOP_CTX: dict[str, int] = {}
-
 
 def _parse_top_cb(data: str) -> tuple[str, str]:
     """Колбэк топов: 'top:<period>:<section>' -> (period, section).
@@ -290,7 +271,6 @@ def _parse_top_cb(data: str) -> tuple[str, str]:
         section = parts[2]
     return period, section
 
-
 @router.callback_query(F.data == "menu:top")
 @router.callback_query(F.data.startswith("top:"))
 async def top_screen(cb: CallbackQuery, session: AsyncSession) -> None:
@@ -300,14 +280,12 @@ async def top_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     await safe_edit_or_answer(cb.message, text, reply_markup=top_tabs(period, section))
     await cb.answer()
 
-
 @router.message(Command("top"), F.chat.type == "private")
 async def cmd_top(message: Message, session: AsyncSession) -> None:
     """Алиас команды — недельный топ болтунов прямо в ЛС (листай разделы кнопками)."""
     _TOP_CTX["me"] = message.from_user.id
     text = await _top_section(session, "week", "talk")
     await answer_safe(message, text, reply_markup=top_tabs("week", "talk"))
-
 
 @router.message(Command("ach", "achievements"), F.chat.type == "private")
 async def cmd_ach(message: Message, session: AsyncSession) -> None:
@@ -318,8 +296,6 @@ async def cmd_ach(message: Message, session: AsyncSession) -> None:
     await answer_safe(message, text,
                       reply_markup=achievements_list(items, page, total_pages))
 
-
-# ---------- командный алиас статистики ----------
 @router.message(Command("stats"), F.chat.type == "private")
 async def cmd_stats(message: Message, session: AsyncSession) -> None:
     """Полная статистика прямо в ЛС (раньше — заглушка «Воспользуйся меню»)."""

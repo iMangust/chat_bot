@@ -8,7 +8,7 @@ from aiogram.filters import CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
-import html as _html  # noqa: E402  (экран имён в HTML-текстах)
+import html as _html
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Pet, PetSpecies
@@ -29,11 +29,9 @@ router = Router(name="start")
 
 PET_NAME_SUGGESTIONS = ["Барсик", "Мурка", "Персик", "Кузя", "Соня", "Имя своё…"]
 
-
 class Onboarding(StatesGroup):
     choosing_pet_species = State()
     choosing_pet_name = State()
-
 
 def species_picker_text() -> str:
     """Описание видов для экрана выбора (используется в онбординге).
@@ -59,7 +57,6 @@ def species_picker_text() -> str:
         )
     return "\n\n".join(lines)
 
-
 WELCOME_DM = (
     "👋 Привет, <b>{name}</b>!\n\n"
     "Я — бот-компаньон канала (v1.5). Вот что я умею:\n"
@@ -83,11 +80,9 @@ WELCOME_DM = (
     "Нажми «Начать», чтобы завести питомца!"
 )
 
-
 def _channel_line() -> str:
     ch = get_settings().channel_username
     return f"📢 Наш канал: t.me/{ch}\n" if ch else ""
-
 
 def invite_link_for(tg_id: int) -> str:
     """Реферальная ссылка ведёт на КАНАЛ (не в группу): t.me/<channel>?start=invite_<id>.
@@ -99,7 +94,6 @@ def invite_link_for(tg_id: int) -> str:
     if not ch:
         return ""
     return f"https://t.me/{ch}?start=invite_{tg_id}"
-
 
 def _main_menu_text(user, page: int = 0) -> str:
     need = xp_needed_for_level(user.level)
@@ -124,17 +118,8 @@ def _main_menu_text(user, page: int = 0) -> str:
         lines += ["", f"📢 Новости канала: t.me/{ch}"]
     return "\n".join(lines)
 
-
-# Правило 1: команды бота работают только в ЛС (в группах/каналах — молчим).
 private_only = F.chat.type == "private"
 
-
-# deep_link=True отбрасывал обычный «голый» /start (без параметра) — у бота
-# оставалось два входа вместо одного. Убираем ограничение: handler сам
-# различает presence/absence аргумента invite_*.
-# v2.0.6: CommandStart по умолчанию принимает и адресную форму
-# «/start@Sasha_Ovs_bot» (её присылают deep-link-кнопки «Начать»);
-# раньше гейт считал её не-входом и глушил подписчика молча.
 @router.message(CommandStart(), private_only)
 async def cmd_start(message: Message, state: FSMContext, session: AsyncSession,
                     command: CommandObject | None = None) -> None:
@@ -154,15 +139,10 @@ async def cmd_start(message: Message, state: FSMContext, session: AsyncSession,
         first_name=message.from_user.first_name or "",
         username=message.from_user.username,
     )
-    # Отметка в реестре подписчиков (v2.0): /start — достоверный сигнал, что
-    # человек сам написал боту (ever_contacted). Никаких welcome-DM: доступ к
-    # боту даёт только факт подписки, его проверяет AccessGateMiddleware до
-    # этого хендлера — сюда доходят лишь те, кому доступ уже разрешён.
     from app.handlers.access import register_member
     await register_member(
         user.tg_id, contacted=True,
         first_name=user.first_name or "", username=user.username)
-    # запоминаем пригласившего из deep-linkа (если пришли по реф-ссылке)
     payload = (command.args or "") if command else ""
     if payload.startswith("invite_"):
         try:
@@ -185,15 +165,11 @@ async def cmd_start(message: Message, state: FSMContext, session: AsyncSession,
             reply_markup=welcome_start_button(),
         )
         return
-    # доступ (v2.0): AccessGateMiddleware пропускает сюда только подписчиков
-    # отслеживаемых чатов (или при fail-open) — отдельная заглушка «не
-    # подписан» внутри хендлера больше не нужна.
     link = invite_link_for(user.tg_id)
     reward = get_settings().invite_reward_coins
     text = _main_menu_text(user)
     await message.answer(text, reply_markup=main_menu(link=link, reward=reward),
                        parse_mode="HTML")
-
 
 @router.callback_query(F.data == "gate:check")
 async def cb_gate_check(cb: CallbackQuery, bot: Bot, session: AsyncSession) -> None:
@@ -206,7 +182,7 @@ async def cb_gate_check(cb: CallbackQuery, bot: Bot, session: AsyncSession) -> N
     а пользователю показывается понятная подсказка; админ получает сырой
     диагноз отдельным сообщением.
     """
-    reset_subscribe_cache(cb.from_user.id)  # жмём «проверить» — игнорируем старый кэш
+    reset_subscribe_cache(cb.from_user.id)
     if not await is_channel_subscribed(bot, cb.from_user.id):
         uid = cb.from_user.id
         diag = []
@@ -219,7 +195,7 @@ async def cb_gate_check(cb: CallbackQuery, bot: Bot, session: AsyncSession) -> N
                 try:
                     m = await bot.get_chat_member(target, uid)
                     api_notes.append(f"{target}: {getattr(m, 'status', '?')}")
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     api_notes.append(f"{target}: {type(exc).__name__}")
             diag.append("Bot API: " + "; ".join(api_notes))
             diag.append(f"Реестр: {await _registry_row_state(uid)}")
@@ -238,7 +214,6 @@ async def cb_gate_check(cb: CallbackQuery, bot: Bot, session: AsyncSession) -> N
                                reward=get_settings().invite_reward_coins))
     await cb.answer("Ура, добро пожаловать! 🎉")
 
-
 @router.callback_query(F.data == "onb:start")
 async def cb_onboard_start(cb: CallbackQuery, state: FSMContext,
                            session: AsyncSession) -> None:
@@ -256,7 +231,6 @@ async def cb_onboard_start(cb: CallbackQuery, state: FSMContext,
         reply_markup=species_picker(),
     )
     await cb.answer()
-
 
 @router.callback_query(F.data == "onb:skip")
 async def cb_onboard_skip(cb: CallbackQuery, state: FSMContext,
@@ -288,11 +262,9 @@ async def cb_onboard_skip(cb: CallbackQuery, state: FSMContext,
     )
     await cb.answer()
 
-
 def _no_pet_menu_kb():
     from app.keyboards.inline import adopt_cta_kb
     return adopt_cta_kb()
-
 
 @router.callback_query(Onboarding.choosing_pet_species, F.data.startswith("onb:species:"))
 async def cb_pick_species(cb: CallbackQuery, state: FSMContext) -> None:
@@ -309,7 +281,6 @@ async def cb_pick_species(cb: CallbackQuery, state: FSMContext) -> None:
     )
     await cb.answer()
 
-
 @router.callback_query(Onboarding.choosing_pet_name, F.data.startswith("onb:name:"))
 async def cb_pick_name(cb: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     name = cb.data.split(":", 2)[2]
@@ -320,7 +291,6 @@ async def cb_pick_name(cb: CallbackQuery, state: FSMContext, session: AsyncSessi
     species_code = data.get("species", "cat")
     await _finish_onboarding(cb, state, session, name, species=_to_species_enum(species_code))
 
-
 @router.message(Onboarding.choosing_pet_name, F.text & ~F.text.startswith("/"))
 async def msg_custom_name(message: Message, state: FSMContext,
                           session: AsyncSession) -> None:
@@ -330,13 +300,11 @@ async def msg_custom_name(message: Message, state: FSMContext,
     species_code = data.get("species", "cat")
     await _finish_onboarding_from_msg(message, state, session, name, species_code)
 
-
 def _to_species_enum(code: str) -> PetSpecies:
     try:
         return PetSpecies(code)
     except ValueError:
         return PetSpecies.cat
-
 
 async def _finish_onboarding_from_msg(message: Message, state: FSMContext,
                                       session: AsyncSession, name: str,
@@ -368,7 +336,6 @@ async def _finish_onboarding_from_msg(message: Message, state: FSMContext,
         reply_markup=onboard_done(),
     )
 
-
 async def _finish_onboarding(cb: CallbackQuery, state: FSMContext,
                              session: AsyncSession, name: str,
                              species: PetSpecies) -> None:
@@ -399,42 +366,32 @@ async def _finish_onboarding(cb: CallbackQuery, state: FSMContext,
     )
     await cb.answer()
 
-
 @router.callback_query(F.data == "menu:main")
 async def cb_main_menu(cb: CallbackQuery, session: AsyncSession,
                        state: FSMContext) -> None:
-    # v1.5.22: выход из меню отменяет ожидание подтверждения (напр. pet:adopt) —
-    # иначе пользователь остался бы в AdoptConfirm.confirm и второй клик по
-    # «🥚 Усыновить» сработал бы без подтверждения.
     if await state.get_state() is not None:
         await state.clear()
     await _render_main_menu(cb, session, page=0)
-
 
 @router.callback_query(F.data.startswith("menu:page:"))
 async def cb_main_menu_page(cb: CallbackQuery, session: AsyncSession,
                             state: FSMContext) -> None:
     """◀️/▶️ главного меню (v1.5.2): страницы «Игра» и «Профиль»."""
     if await state.get_state() is not None:
-        await state.clear()  # смена экрана = отмена ожидания подтверждения
+        await state.clear()
     try:
         page = int(cb.data.split(":")[-1])
     except ValueError:
         page = 0
     await _render_main_menu(cb, session, page=page)
 
-
 @router.callback_query(F.data == "menu:noop")
 async def cb_main_menu_noop(cb: CallbackQuery) -> None:
     """Клик по неразрывной подписи страницы — просто снять «часики»."""
     await cb.answer()
 
-
 async def _render_main_menu(cb: CallbackQuery, session: AsyncSession,
                             page: int = 0) -> None:
-    # «⬅️ Назад» ведёт сюда с любого экрана. Если сообщение-контекст — фото
-    # (карточка профиля) или вообще отсутствует, edit_text невозможен;
-    # safe_edit_or_answer отправит меню новым сообщением, и навигация не сломается.
     if cb.message is None:
         await cb.answer("Открой бота командой /start 🙂", show_alert=True)
         return

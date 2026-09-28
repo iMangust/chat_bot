@@ -19,7 +19,6 @@ from loguru import logger
 
 error_router = Router(name="errors")
 
-
 @error_router.errors()
 async def on_error(event: Any, exception: Exception | None = None, **kwargs: Any) -> Any:
     """Страховка диспетчера.
@@ -29,23 +28,20 @@ async def on_error(event: Any, exception: Exception | None = None, **kwargs: Any
     чтобы сам error-handler не падал с TypeError и не маскировал первопричину.
     """
     exc = exception
-    if exc is None and hasattr(event, "exception"):  # aiogram ErrorEvent
+    if exc is None and hasattr(event, "exception"):
         exc = event.exception
     upd = getattr(event, "update", event)
     if isinstance(upd, CallbackQuery):
         event = upd
     logger.opt(exception=exc).error("unhandled error while processing update: {}",
                                     type(exc).__name__ if exc else "?")
-    # Если это callback — обязательно «погасим» часы у пользователя,
-    # иначе кнопка крутится вечно и экран кажется сломанным.
     if isinstance(event, CallbackQuery):
         try:
             await event.answer("Упс, что-то пошло не так 😅 Попробуй ещё раз.",
                                show_alert=True)
         except TelegramAPIError:
             pass
-    return True  # считаем ошибку обработанной — диспетчер не падает
-
+    return True
 
 class ErrorNotifyMiddleware(BaseMiddleware):
     """Дублирует страховку на уровне callback'ов (на случай, если ошибка
@@ -60,12 +56,8 @@ class ErrorNotifyMiddleware(BaseMiddleware):
         try:
             return await handler(event, data)
         except TelegramForbiddenError:
-            # юзер заблокировал бота — это нормально, не логируем как ошибку
             return None
         except TelegramAPIError as exc:
-            # «query is too old» — callback протух, пока хендлер ждал сеть.
-            # Это не ошибка пользователя: показывать алерт поздно (запрос уже
-            # невалиден) и бессмысленно — просто тихо гасим, без WARNING-спама.
             if "query is too old" in str(exc) or "INVALID_QUERY" in str(exc).upper():
                 logger.debug("callback query expired before answer: {}", event.data)
                 return None

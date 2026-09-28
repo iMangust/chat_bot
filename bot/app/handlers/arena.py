@@ -19,33 +19,28 @@ from app.utils.safe_edit import safe_edit_or_answer
 
 router = Router(name="arena")
 
-
 async def _pet_or_alert(cb: CallbackQuery, session: AsyncSession):
     pet = await PetRepository(session).get_by_user(cb.from_user.id)
     if pet is None:
         await cb.answer("🥚 Сначала заведи питомца: /start", show_alert=True)
     return pet
 
-
 @router.callback_query(F.data == "arena:open")
 async def arena_open(cb: CallbackQuery, session: AsyncSession) -> None:
-    set_pet_page(cb.message.chat.id, 2)  # арена — страница «Досуг»
+    set_pet_page(cb.message.chat.id, 2)
     text, kb = await arena_screen(session, cb.from_user.id)
     await safe_edit_or_answer(cb.message, text, reply_markup=kb)
     await cb.answer()
-
 
 @router.callback_query(F.data == "arena:noop")
 async def arena_noop(cb: CallbackQuery) -> None:
     """Кнопка-заглушка, когда бой недоступен (кулдаун/лимит): просто подсказка."""
     await cb.answer("Питомец пока не готов к бою ⏳", show_alert=True)
 
-
 @router.message(Command("arena"), F.chat.type == "private")
 async def cmd_arena(message: Message, session: AsyncSession) -> None:
     text, kb = await arena_screen(session, message.from_user.id)
     await message.answer(text, reply_markup=kb, parse_mode="HTML")
-
 
 @router.callback_query(F.data == "arena:fight")
 async def arena_fight(cb: CallbackQuery, session: AsyncSession) -> None:
@@ -73,12 +68,7 @@ async def arena_fight(cb: CallbackQuery, session: AsyncSession) -> None:
             await safe_edit_or_answer(cb.message, f"{report}\n\n{text}", reply_markup=kb)
             await cb.answer("🥊 Бой сыгран!")
     finally:
-        await session.commit()  # баллы/XP боя не должны потеряться при сетевой ошибке
-
-
-# ---------------------------------------------------------------------------
-# 🎨 Стиль: окрасы + экипировка по слотам (MMORPG-система бонусов)
-# ---------------------------------------------------------------------------
+        await session.commit()
 
 _BONUS_LABELS = {
     "duel_power": "💪 сила боя", "xp_pct": "⭐ XP", "coin_mult": "🪙 монеты",
@@ -92,19 +82,17 @@ _BONUS_LABELS = {
     "happy_gain_flat": "😺 счастье за дело",
 }
 
-
 def _fmt_bonuses(b: dict[str, float]) -> str:
     parts = []
     for k, v in b.items():
         label = _BONUS_LABELS.get(k, k)
         if k.endswith("_pct") or k == "coin_mult":
             parts.append(f"{label} {'+' if v > 0 else ''}{v * 100:.0f}%")
-        elif k.endswith("decay_pct"):  # минус = замедление деградации
+        elif k.endswith("decay_pct"):
             parts.append(f"{label} {'−' if v < 0 else '+'}{abs(v) * 100:.0f}%")
         else:
             parts.append(f"{label} {'+' if v > 0 else ''}{v:g}")
     return ", ".join(parts) if parts else "—"
-
 
 def _style_text(pet, user, svc, notice: str = "", slot_key: str | None = None) -> str:
     color_key, worn = svc.customization(pet)
@@ -142,7 +130,6 @@ def _style_text(pet, user, svc, notice: str = "", slot_key: str | None = None) -
         lines.insert(0, notice)
     return "\n".join(lines)
 
-
 async def _style_screen(cb: CallbackQuery, session: AsyncSession,
                         pet, notice: str = "", slots_page: int = 0,
                         item_page: int = 0) -> None:
@@ -156,16 +143,14 @@ async def _style_screen(cb: CallbackQuery, session: AsyncSession,
                               _style_text(pet, user, svc, notice, slot_key),
                               reply_markup=kb)
 
-
 @router.callback_query(F.data == "pet:style")
 async def style_open(cb: CallbackQuery, session: AsyncSession) -> None:
-    set_pet_page(cb.message.chat.id, 1)  # гардероб — страница «Вещи»
+    set_pet_page(cb.message.chat.id, 1)
     pet = await _pet_or_alert(cb, session)
     if pet is None:
         return
     await _style_screen(cb, session, pet)
     await cb.answer()
-
 
 @router.callback_query(F.data.startswith("style:slot:"))
 async def style_slot(cb: CallbackQuery, session: AsyncSession) -> None:
@@ -183,7 +168,6 @@ async def style_slot(cb: CallbackQuery, session: AsyncSession) -> None:
     await _style_screen(cb, session, pet, slots_page=slots_page, item_page=item_page)
     await cb.answer()
 
-
 @router.callback_query(F.data.startswith("style:page:"))
 async def style_page(cb: CallbackQuery, session: AsyncSession) -> None:
     """Листание страниц внутри слота."""
@@ -198,11 +182,9 @@ async def style_page(cb: CallbackQuery, session: AsyncSession) -> None:
     await _style_screen(cb, session, pet, slots_page=slots_page, item_page=item_page)
     await cb.answer()
 
-
 @router.callback_query(F.data == "style:noop")
 async def style_noop(cb: CallbackQuery) -> None:
     await cb.answer()
-
 
 @router.callback_query(F.data.startswith("style:color:"))
 async def style_color(cb: CallbackQuery, session: AsyncSession) -> None:
@@ -220,12 +202,10 @@ async def style_color(cb: CallbackQuery, session: AsyncSession) -> None:
     await _style_screen(cb, session, pet, notice,
                         slots_page=open_slot_of(cb.data) or 0)
     from app.utils.fx import apply_effect
-    # ✨ только если окрас реально сменился (не «недостаточно монет»)
     if "✨" in notice:
         await apply_effect(cb, "equip", toast_override=notice.split("\n")[0][:200] or None)
     else:
         await cb.answer(notice[:120], show_alert="🪙" in notice)
-
 
 @router.callback_query(F.data.startswith("style:wear:"))
 async def style_wear(cb: CallbackQuery, session: AsyncSession) -> None:
@@ -239,7 +219,6 @@ async def style_wear(cb: CallbackQuery, session: AsyncSession) -> None:
         await cb.answer("Сначала /start", show_alert=True)
         return
     parts = cb.data.split(":")
-    # style:wear:<slot>:<emoji>:<slots_page>:<item_page>
     try:
         emoji = parts[3]
         slots_page = int(parts[-2])
@@ -251,15 +230,12 @@ async def style_wear(cb: CallbackQuery, session: AsyncSession) -> None:
                         slots_page=slots_page, item_page=item_page)
     from app.utils.fx import apply_effect
     if "надел" in notice or "достал из шкафа" in notice:
-        # экипировка наделаась — показываем бонус/сет тостом + реакции 🛡️✨
         await apply_effect(cb, "equip", toast_override=notice.split("\n")[0][:200] or None)
     elif "Активных наборов" in notice or "снял" in notice:
         await apply_effect(cb, "unequip", toast_override=notice.split("\n")[0][:200] or None)
     else:
         await cb.answer(notice[:120], show_alert=len(notice) > 120)
 
-
-# обратная совместимость со старыми сообщениями, где были кнопки style:acc:<emoji>
 @router.callback_query(F.data.startswith("style:acc:"))
 async def style_acc_legacy(cb: CallbackQuery, session: AsyncSession) -> None:
     await style_wear(cb, session)

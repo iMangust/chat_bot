@@ -21,19 +21,15 @@ from aiogram.exceptions import TelegramAPIError
 from aiogram.methods import SetMessageReaction
 from aiogram.types import CallbackQuery, Message, ReactionTypeEmoji
 
-# Сколько случайных «второстепенных» эмодзи подмешивать к основному эффекту
 _JITTER_POOL = ["✨", "🌟", "💫", "⭐"]
-
 
 @dataclass(frozen=True)
 class Effect:
-    primary: tuple[str, ...]           # обязательные реакции на сообщении
-    toast: str                         # текст всплывающей подписи под кнопкой
-    extra_pool: tuple[str, ...] = ()   # из этого выбирается 0..1 случайной реакции
-    extra_chance: float = 0.5          # вероятность подмешать случайную реакцию
+    primary: tuple[str, ...]
+    toast: str
+    extra_pool: tuple[str, ...] = ()
+    extra_chance: float = 0.5
 
-
-# Эффекты по действиям тамагочи. Ключи совпадают с именами действий сервиса.
 EFFECTS: dict[str, Effect] = {
     "feed":      Effect(("😋", "❤️"), "😋 Ням-ням!"),
     "play":      Effect(("🥳",),      "🎮 Игра состоялась!"),
@@ -42,9 +38,6 @@ EFFECTS: dict[str, Effect] = {
     "sleep":     Effect(("💤", "🌙"), "💤 Тссс… питомец уснул"),
     "wake":      Effect(("☀️", "🥱"), "☀️ Доброе утро!"),
     "wash":      Effect(("🫧", "🛁"), "🫧 Чистота!"),
-    # Реакция на карточку = эмодзи КАЧАЕМОГО показателя (v1.5.66):
-    # 💪 Сила · 🏃 Ловкость · 🧠 Интеллект — раньше у ловкости стояло ⚡,
-    # что путало с Энергией (⚡ Энергия) и выглядело «не той» реакцией.
     "train_str": Effect(("💪",), "💪 Силовая тренировка!"),
     "train_agi": Effect(("🏃",), "🏃 Ловкость растёт!"),
     "train_int": Effect(("🧠",), "🧠 Интеллект качается!"),
@@ -59,13 +52,11 @@ EFFECTS: dict[str, Effect] = {
 
 _TRAIN_TOAST = {"strength": "train_str", "agility": "train_agi", "intellect": "train_int"}
 
-
 def effect_for(action: str, stat: str | None = None) -> Effect | None:
     """Эффект по имени действия; для тренировок уточняется тип стата."""
     if action == "train" and stat:
         action = _TRAIN_TOAST.get(stat, "train_str")
     return EFFECTS.get(action)
-
 
 async def react_to_message(cb: CallbackQuery, emoji: str, *, bot=None) -> None:
     """Безопасная эмодзи-реакция бота на сообщение-карточку (best-effort).
@@ -79,8 +70,6 @@ async def react_to_message(cb: CallbackQuery, emoji: str, *, bot=None) -> None:
     отклонил реакцию — молча выходим: тост под кнопкой пользователь уже видел.
     """
     msg = cb.message
-    # getattr, а не прямое обращение: тестовые/кастомные заглушки сообщения
-    # могут не иметь chat/bot — в этом случае эффект просто пропускаем.
     chat = getattr(msg, "chat", None)
     if msg is None or chat is None or not emoji:
         return
@@ -97,8 +86,7 @@ async def react_to_message(cb: CallbackQuery, emoji: str, *, bot=None) -> None:
             )
         )
     except Exception:
-        pass   # эффект — украшение; тост под кнопкой уже показал результат
-
+        pass
 
 async def apply_effect(cb: CallbackQuery, action: str, *,
                        stat: str | None = None,
@@ -113,7 +101,7 @@ async def apply_effect(cb: CallbackQuery, action: str, *,
     toast = toast_override or (eff.toast if eff else "")
     if toast:
         try:
-            await cb.answer(toast[:200])   # лимит answerCallbackQuery — 200 симв.
+            await cb.answer(toast[:200])
         except TelegramAPIError:
             pass
     if not eff or cb.message is None:
@@ -124,5 +112,4 @@ async def apply_effect(cb: CallbackQuery, action: str, *,
     msg: Message | None = cb.message
     if msg is None:
         return
-    # Telegram разрешает боту одну реакцию на сообщение — ставим главную.
     await react_to_message(cb, emoji[0])

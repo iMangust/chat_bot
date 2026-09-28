@@ -11,8 +11,6 @@ from app.config import get_settings
 
 _settings = get_settings()
 
-# pool_* параметры валидны только для серверных движков (Postgres/MySQL);
-# для sqlite (dev/тесты) создаём engine без них.
 _engine_kwargs: dict = {"echo": False, "pool_pre_ping": True}
 if not _settings.database_url.startswith("sqlite"):
     _engine_kwargs.update(pool_size=5, max_overflow=10)
@@ -20,7 +18,6 @@ if not _settings.database_url.startswith("sqlite"):
 engine = create_async_engine(_settings.database_url, **_engine_kwargs)
 
 session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
     """Зависимость для FastAPI/aiogram: коммит при успехе, откат при ошибке."""
@@ -31,7 +28,6 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
         except Exception:
             await session.rollback()
             raise
-
 
 class DbMiddleware:
     """Aiogram-мидлвар: кладёт активную сессию БД в data['session'].

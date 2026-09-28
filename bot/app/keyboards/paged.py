@@ -13,9 +13,8 @@ from __future__ import annotations
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
-PAGE_SIZE = 6          # максимум действий на страницу
-NAV_ROW = "◀️"         # символ строки навигации
-
+PAGE_SIZE = 6
+NAV_ROW = "◀️"
 
 def _button_width(btn: InlineKeyboardButton) -> int:
     """Грубая ширина подписи: emoji считаются за 2 символа."""
@@ -23,11 +22,9 @@ def _button_width(btn: InlineKeyboardButton) -> int:
     visual = sum(2 if ord(ch) > 0x2190 else 1 for ch in text)
     return visual
 
-
 def _two_per_row(buttons: list[InlineKeyboardButton]) -> list[list[InlineKeyboardButton]]:
     """Раскладывает кнопки рядами ровно по две (стандарт навигации v1.5.3+)."""
     return [list(buttons[i:i + 2]) for i in range(0, len(buttons), 2)]
-
 
 def _chunk(rows: list[list[InlineKeyboardButton]], size: int) -> list[list[list[InlineKeyboardButton]]]:
     """Режет плоский список рядов на страницы по ~size кнопок, не разрывая ряды."""
@@ -44,7 +41,6 @@ def _chunk(rows: list[list[InlineKeyboardButton]], size: int) -> list[list[list[
         pages.append(current)
     return pages or [[]]
 
-
 def paged_pages(buttons: list[InlineKeyboardButton],
                 page_size: int = PAGE_SIZE) -> list[list[list[InlineKeyboardButton]]]:
     """Страницы контентных кнопок (тот же алгоритм, что у paged_keyboard).
@@ -55,7 +51,7 @@ def paged_pages(buttons: list[InlineKeyboardButton],
     (баг v1.5.24: «стр. 1/4, перейти нельзя»).
     """
     def _is_service(btn: InlineKeyboardButton | None) -> bool:
-        if btn is None:          # placeholder для подсчёта страниц экранами
+        if btn is None:
             return False
         cb = btn.callback_data or ""
         return (btn.url is not None or ":page:" in cb or ":noop" in cb
@@ -63,7 +59,6 @@ def paged_pages(buttons: list[InlineKeyboardButton],
 
     content = [b for b in buttons if not _is_service(b)]
     return _chunk(_two_per_row(content), page_size)
-
 
 def paged_keyboard(
     buttons: list[InlineKeyboardButton],
@@ -87,22 +82,16 @@ def paged_keyboard(
     передаёт их, если сам нарезал список, чтобы текст и кнопки всегда были
     синхронны.
     """
-    # служебные ряды (навигация/выход/url) добавляются после нарезки на
-    # страницы — из подсчёта кнопок на страницу исключаем только их;
-    # кнопки без callback_data/url некликабельны и в навигацию не попадают
     if pages is None:
         pages = paged_pages(buttons, page_size)
 
     total = len(pages)
-    if page < 0:                          # зацикливание: «предыдущая» с первой
+    if page < 0:
         page %= total
-    page = max(0, min(page, total - 1))   # clamp вместо молчаливого «пусто»
+    page = max(0, min(page, total - 1))
 
     kb_rows: list[list[InlineKeyboardButton]] = [list(r) for r in pages[page]]
 
-    # --- строка страниц (4-й ряд): ◀️ · i/n · ▶️ -------------------------
-    # Единая стилистика v1.5.3: «Назад» — это ◀️/▶️ по страницам; выход с
-    # экрана — одна кнопка 🏠 Меню в самом низу (без дублей).
     prev_cb = f"{prefix}:page:{(page - 1) % total}"
     next_cb = f"{prefix}:page:{(page + 1) % total}"
     label = f"{title} 📖 {page + 1}/{total}".strip() if total > 1 else title.strip()
@@ -117,7 +106,6 @@ def paged_keyboard(
         kb_rows.append([InlineKeyboardButton(text=label,
                                              callback_data=f"{prefix}:noop")])
 
-    # --- фиксированный низ: одна кнопка выхода --------------------------
     if url_button is not None:
         kb_rows.append([url_button])
     exit_cb = home_cb or back_cb
