@@ -82,14 +82,14 @@ async def merch_screen(cb: CallbackQuery, session) -> None:
     all_cats = await repo.categories()
     cats = []
     for c in all_cats:
-        if await repo.products(c.id):
+        if await repo.products_with_stock(c.id):
             cats.append(c)
     lines = ["🧢 <b>Мерч канала</b>",
              "",
              "Одежда и атрибутика с фирменными принтами. Выбирай категорию 👇"]
     b = InlineKeyboardBuilder()
     for c in cats:
-        products = await repo.products(c.id)
+        products = await repo.products_with_stock(c.id)
         b._vb(f"{c.icon} {c.title} · {len(products)} моделей", f"merch:cat:{c.code}")
         _vsplit(b)
     if not cats:
@@ -109,7 +109,7 @@ async def merch_category(cb: CallbackQuery, session) -> None:
     cat = await repo.get_category(code)
     if cat is None:
         return await cb.answer("Категория не найдена 😅", show_alert=True)
-    products = await repo.products(cat.id)
+    products = await repo.products_with_stock(cat.id)
     lines = [f"{cat.icon} <b>{html.escape(cat.title)}</b>", ""]
     b = InlineKeyboardBuilder()
     if not products:
@@ -117,7 +117,9 @@ async def merch_category(cb: CallbackQuery, session) -> None:
     for p in products:
         variants = await repo.variants(p.id)
         total_stock = sum(v.stock for v in variants)
-        price_min = min((v.price_rub for v in variants), default=0)
+        priced = [v.price_rub for v in variants if v.stock > 0] or \
+                 [v.price_rub for v in variants]
+        price_min = min(priced, default=0)
         lines.append(f"• <b>{html.escape(p.name)}</b> — от {price_min:,} ₽ · всего {total_stock} шт.")
         b._vb(f"{cat.icon} {p.name}", f"merch:prod:{p.id}")
         _vsplit(b)
@@ -146,6 +148,8 @@ async def merch_product(cb: CallbackQuery, session) -> None:
     sizes = [x for x in (product.sizes or []) if x and x != "one"]
     colors = [c for c in (product.colors or []) if c]
     variants = await repo.variants(pid)
+    if any(not v.size and not v.color for v in variants):
+        sizes, colors = [], []
     if sizes:
         sizes = [sz for sz in sizes if any(v.size == sz and v.stock > 0 for v in variants)]
     b = InlineKeyboardBuilder()
@@ -168,8 +172,16 @@ async def merch_product(cb: CallbackQuery, session) -> None:
             reply_markup=None)
         return await cb.answer()
     if variants:
-        return await _render_variant_screen(cb, repo, product, variants[0].size,
-                                            variants[0].color, back_cb)
+        available = [v for v in variants if v.stock > 0]
+        if not available:
+            await safe_edit_or_answer(
+                cb.message,
+                f"{icon} <b>{html.escape(product.name)}</b>\n\n😔 Эта модель распродана.",
+                reply_markup=None)
+            return await cb.answer()
+        first = next((v for v in available if not v.size and not v.color), available[0])
+        return await _render_variant_screen(cb, repo, product, first.size,
+                                            first.color, back_cb)
     await safe_edit_or_answer(
         cb.message,
         f"{icon} <b>{html.escape(product.name)}</b>\n\nДля этой модели ещё не заданы позиции.",

@@ -611,6 +611,18 @@ class MerchRepository:
             .order_by(MerchVariant.size, MerchVariant.color)
         )).scalars().all())
 
+    async def products_with_stock(self, category_id: int) -> list:
+        from app.db.models import MerchProduct, MerchVariant
+        rows = (await self.session.execute(
+            select(MerchProduct.id)
+            .join(MerchVariant, MerchVariant.product_id == MerchProduct.id)
+            .where(MerchProduct.category_id == category_id, MerchVariant.stock > 0)
+            .distinct()
+        )).scalars().all()
+        ids = set(rows)
+        prods = await self.products(category_id)
+        return [p for p in prods if p.id in ids]
+
     async def get_variant(self, variant_id: int):
         from app.db.models import MerchVariant
         return (await self.session.execute(
