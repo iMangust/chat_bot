@@ -15,7 +15,7 @@ from loguru import logger
 from sqlalchemy import select
 
 from app.config import get_settings
-from app.services.access import numeric_chat_id, schedule_celebration
+from app.services.access import is_watched, numeric_chat_id, schedule_celebration
 
 SUBSCRIBE_CACHE_SEC = 300
 _NEG_TTL_SEC = 15
@@ -34,7 +34,13 @@ class _SyntheticPrivateChat:
 
 def required_chats() -> list[tuple[str, str]]:
     from app.services.access import required_chats as _svc_required_chats
-    return _svc_required_chats()
+    chats = []
+    for cid, uname in _svc_required_chats():
+        n = numeric_chat_id(cid) if (cid and not uname) else None
+        if n is not None:
+            cid = f"-100{n}"
+        chats.append((cid, uname))
+    return chats
 
 def subscribe_kb() -> "Any":
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -139,7 +145,10 @@ async def _api_membership_verdict(bot, user_id: int):
         targets: list[str] = []
         n = numeric_chat_id(cid) if cid else None
         if n is not None:
-            targets.append(str(n))
+            full = f"-100{n}"
+            targets.append(full)
+            if is_watched(int(cid)) and full != str(cid):
+                targets.append(str(cid))
         if uname and ("@" + uname.lstrip("@")) not in targets:
             targets.append("@" + uname.lstrip("@"))
         for target in targets:
@@ -147,13 +156,21 @@ async def _api_membership_verdict(bot, user_id: int):
                 member = await bot.get_chat_member(target, user_id)
             except TelegramForbiddenError:
                 continue
-            except TelegramAPIError:
+            except TelegramAPIError as exc:
+                if "chat not found" in str(exc).lower():
+                    logger.warning("gate: chat {} not visible to the bot — it is "
+                                   "NOT an @username channel/supergroup or the bot "
+                                   "is not in it; fix CHANNEL_USERNAME/TRACKED_CHAT_IDS",
+                                   target)
+                    continue
                 continue
             status = getattr(member, "status", "")
             if status in ("member", "administrator", "creator"):
                 return True
             has_negative = True
-    return False if has_negative else None
+    if has_negative:
+        return False
+    return None
 
 async def _api_confirms_member(bot, user_id: int) -> bool | None:
     try:
@@ -171,8 +188,12 @@ async def _api_confirms_member(bot, user_id: int) -> bool | None:
 async def known_subscriber_in_db(user_id: int, bot=None) -> bool:
     if bot is not None:
         confirmed = await _api_confirms_member(bot, user_id)
-        if confirmed is not None:
-            return confirmed
+        if confirmed is True:
+            return True
+        if confirmed is False:
+            logger.info("gate: registry for {} ignored — Bot API confirms not a member",
+                        user_id)
+            return False
     return await known_subscriber_in_required_chats(user_id)
 
 async def known_subscriber_ids(user_ids: list[int] | set[int]) -> set[int]:
@@ -296,7 +317,10 @@ async def is_channel_subscribed(bot, user_id: int) -> bool:
         targets: list[str] = []
         n = numeric_chat_id(cid) if cid else None
         if n is not None:
-            targets.append(str(n))
+            full = f"-100{n}"
+            targets.append(full)
+            if is_watched(int(cid)) and full != str(cid):
+                targets.append(str(cid))
         if uname and ("@" + uname.lstrip("@")) not in targets:
             targets.append("@" + uname.lstrip("@"))
         for target in targets:
@@ -312,8 +336,17 @@ async def is_channel_subscribed(bot, user_id: int) -> bool:
                 _notify_no_admin(bot, uid_key)
                 continue
             except TelegramAPIError as exc:
+                msg = str(exc)
+                if "chat not found" in msg.lower():
+                    api_status[target] = "CHAT NOT FOUND (bad id/not a public channel/bot not inside)"
+                    logger.error("gate: chat {} not found via Bot API — this id is "
+                                 "NOT usable for subscription checks. Set CHANNEL_USERNAME "
+                                 "(@name of the channel where the bot is an admin) or put "
+                                 "the correct -100... id into TRACKED_CHAT_IDS/CHANNEL_CHAT_ID",
+                                 target)
+                    continue
                 api_error = True
-                api_status[target] = f"API ERROR {type(exc).__name__}: {str(exc)[:60]}"
+                api_status[target] = f"API ERROR {type(exc).__name__}: {msg[:60]}"
                 logger.warning("subscription check failed for {} ({}): skip chat",
                                target, exc)
                 continue
@@ -327,7 +360,9 @@ async def is_channel_subscribed(bot, user_id: int) -> bool:
                             user_id, member.status, target)
                 return True
             negative_api = True
-    if api_error and not negative_api:
+    real_api_error = any(not str(v).startswith(("CHAT NOT FOUND",))
+                         for v in api_status.values())
+    if api_error and not negative_api and real_api_error:
         logger.info("gate: allow {} (fail-open: API unavailable — {})",
                     user_id, api_status)
         return True
