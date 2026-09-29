@@ -37,16 +37,26 @@ MENU_PAGES: list[tuple[str, list[tuple[str, str]]]] = [
 def menu_page_count() -> int:
     return len(MENU_PAGES)
 
+ADMIN_TOOLS_PAGE = ("🛠 Инструменты админа", [
+    ("🧢 Управление мерчем", "madmin:home"),
+    ("📅 Управление мероприятиями", "evadmin:home"),
+    ("⚙️ Мои уведомления", "menu:settings"),
+    ("☀️ Погода (/weather)", "menu:noop"),
+])
+
 def main_menu(link: str | None = None, reward: int = 0,
-              page: int = 0) -> InlineKeyboardMarkup:
+              page: int = 0, is_admin: bool = False) -> InlineKeyboardMarkup:
     settings = get_settings()
-    page %= len(MENU_PAGES)
-    title, actions = MENU_PAGES[page]
+    pages = list(MENU_PAGES)
+    if is_admin:
+        pages.append(ADMIN_TOOLS_PAGE)
+    page %= len(pages)
+    title, actions = pages[page]
     buttons = [InlineKeyboardButton(text=t, callback_data=cb)
                for t, cb in actions
                if not (cb == "menu:merch" and not settings.merch_enabled)]
     kb_rows: list[list[InlineKeyboardButton]] = _two_per_row(buttons)
-    kb_rows.append(_page_nav("menu", page, len(MENU_PAGES), title))
+    kb_rows.append(_page_nav("menu", page, len(pages), title))
     invite_label = f"🤝 Пригласить друга (+{reward})" if reward else "🤝 Пригласить друга"
     if link and settings.show_invite_button:
         kb_rows.append([InlineKeyboardButton(text=invite_label, url=link)])

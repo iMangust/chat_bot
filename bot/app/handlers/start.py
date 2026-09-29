@@ -108,6 +108,12 @@ def _main_menu_text(user, page: int = 0) -> str:
 
 private_only = F.chat.type == "private"
 
+def _menu_is_admin(user_id: int) -> bool:
+    s = get_settings()
+    if user_id in (s.admin_ids or []):
+        return True
+    return bool(s.merch_admin_id) and user_id == s.merch_admin_id
+
 @router.message(CommandStart(), private_only)
 async def cmd_start(message: Message, state: FSMContext, session: AsyncSession,
                     command: CommandObject | None = None,
@@ -169,8 +175,9 @@ async def cmd_start(message: Message, state: FSMContext, session: AsyncSession,
     link = invite_link_for(user.tg_id)
     reward = get_settings().invite_reward_coins
     text = _main_menu_text(user)
-    await message.answer(text, reply_markup=main_menu(link=link, reward=reward),
-                       parse_mode="HTML")
+    await message.answer(text, reply_markup=main_menu(
+        link=link, reward=reward, is_admin=_menu_is_admin(message.from_user.id)),
+        parse_mode="HTML")
 
 @router.callback_query(F.data == "gate:check")
 async def cb_gate_check(cb: CallbackQuery, bot: Bot, session: AsyncSession,
@@ -413,7 +420,9 @@ async def _render_main_menu(cb: CallbackQuery, session: AsyncSession,
                                      cb.from_user.username)
     link = invite_link_for(user.tg_id)
     reward = get_settings().invite_reward_coins
-    page %= len(MENU_PAGES)
-    await safe_edit_or_answer(cb.message, _main_menu_text(user, page),
-                              reply_markup=main_menu(link=link, reward=reward, page=page))
+    page %= len(MENU_PAGES) + (1 if _menu_is_admin(cb.from_user.id) else 0)
+    await safe_edit_or_answer(cb.message, _main_menu_text(user, min(page, len(MENU_PAGES) - 1)),
+                              reply_markup=main_menu(link=link, reward=reward,
+                                                     page=page,
+                                                     is_admin=_menu_is_admin(cb.from_user.id)))
     await cb.answer()
