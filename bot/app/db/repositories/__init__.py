@@ -638,12 +638,13 @@ class MerchRepository:
         )).scalar_one_or_none()
 
     async def add_variant(self, product_id: int, size: str, color: str,
-                          price_rub: int, stock: int) -> tuple:
+                          price_rub: int, stock: int, *, overwrite: bool = True) -> tuple:
         from app.db.models import MerchVariant
         v = await self.find_variant(product_id, size, color)
         if v is not None:
-            v.price_rub = price_rub
-            v.stock = stock
+            if overwrite:
+                v.price_rub = price_rub
+                v.stock = stock
             return v, False
         v = MerchVariant(product_id=product_id, size=size, color=color,
                          price_rub=price_rub, stock=stock)

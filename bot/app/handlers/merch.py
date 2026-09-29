@@ -653,11 +653,18 @@ async def _next_category_code(repo: MerchRepository) -> str:
     return f"id{n}"
 
 async def _ensure_wizard_variant(repo, session, pid: int, size: str, color: str) -> tuple[int, bool]:
-    v, created = await repo.add_variant(pid, size, color, 0, 0)
+    v, created = await repo.add_variant(pid, size, color, 0, 0, overwrite=False)
     await session.commit()
     return int(v.id), bool(created)
 
 async def _resolve_wizard_variant(repo, data: dict):
+    pid = data.get("pid")
+    size = data.get("size", "") or ""
+    color = data.get("color", "") or ""
+    if pid is not None and (size or color):
+        v = await repo.find_variant(int(pid), size, color)
+        if v is not None:
+            return v
     vid = data.get("vid")
     if vid:
         try:
@@ -666,14 +673,11 @@ async def _resolve_wizard_variant(repo, data: dict):
             v = None
         if v is not None:
             return v
-    pid = data.get("pid")
-    if pid:
-        v = await repo.find_variant(int(pid), data.get("size", "") or "", data.get("color", "") or "")
-        if v is not None:
-            return v
+    if pid is not None:
         variants = await repo.variants(int(pid))
-        if variants:
-            return variants[-1]
+        zero_stock = [v for v in variants if (v.stock or 0) == 0]
+        if len(zero_stock) == 1:
+            return zero_stock[0]
     return None
 
 def _wiz_restart_kb():
@@ -1171,10 +1175,11 @@ async def merch_admin_photo_input(message: Message, session, state: FSMContext) 
         return await message.answer(
             "Не нашёл позицию для фото 😅 Нажми «📷 Пришли фото» ещё раз или начни заново 👇",
             reply_markup=_wiz_restart_kb())
-    if not v.photo_file_id:
-        v.photo_file_id = fid
-        await session.commit()
+    v.photo_file_id = fid
+    await session.commit()
     data["vid"] = int(v.id)
+    data["size"] = v.size or ""
+    data["color"] = v.color or ""
     data["step"] = "mv_price"
     await state.set_data(data)
     kb = InlineKeyboardBuilder()
@@ -1340,6 +1345,8 @@ async def merch_admin_input(message: Message, session, state: FSMContext) -> Non
             v.stock = qty
             vid = int(v.id)
             await session.commit()
+            size = data.get("size", "") or (v.size or "")
+            color = data.get("color", "") or (v.color or "")
             await state.clear()
             kb = InlineKeyboardBuilder()
             kb._vb("📦 Задать остаток (±1/±5)", f"madmin:var:{vid}")
@@ -1351,7 +1358,7 @@ async def merch_admin_input(message: Message, session, state: FSMContext) -> Non
             kb._vb("📦 Каталог", "madmin:catalog")
             kb._vb("🏠 Управление", "madmin:home")
             return await message.answer(
-                f"✅ Позиция готова: {html.escape(data.get('size') or '—')}/{_color_label(data.get('color') or '')} "
+                f"✅ Позиция готова: {html.escape(size or '—')}/{_color_label(color)} "
                 f"— 💳 <b>{v.price_rub:,} ₽</b> · 📦 остаток <b>{qty}</b>.\n\nДальше 👇",
                 parse_mode="HTML", reply_markup=kb.as_markup())
         if step == "var_price":
@@ -1404,19 +1411,18 @@ async def merch_admin_input(message: Message, session, state: FSMContext) -> Non
             fid = await _save_photo_as_file_id(message.bot, message)
             if not fid:
                 return await message.answer("Это не фото 😅 Пришли картинку или нажми ⏭ Без фото позже; отмена /cancel.")
-            v = None
-            vid = data.get("vid")
-            if vid:
-                v = await repo.get_variant(int(vid))
+            v = await _resolve_wizard_variant(repo, data)
             if v is None:
-                v = await repo.find_variant(pid, data.get("size", ""), data.get("color", ""))
-            if v is None:
-                variants = await repo.variants(pid)
-                v = variants[-1] if variants else None
-            if v is not None:
-                v.photo_file_id = fid
-                await session.commit()
-            await state.update_data(step="mv_price")
+                return await message.answer(
+                    "Не нашёл позицию для фото 😅 Нажми «📷 Пришли фото» ещё раз или начни заново 👇",
+                    reply_markup=_wiz_restart_kb())
+            v.photo_file_id = fid
+            await session.commit()
+            data["vid"] = int(v.id)
+            data["size"] = v.size or ""
+            data["color"] = v.color or ""
+            data["step"] = "mv_price"
+            await state.set_data(data)
             kb = InlineKeyboardBuilder()
             kb._vb("⬅️ К фото", f"madmin:mvphotopick:{pid}")
             kb._vb("🏠 Управление", "madmin:home")
