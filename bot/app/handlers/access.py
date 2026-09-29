@@ -49,6 +49,9 @@ def _is_private_start(message: Message) -> bool:
 def watched_chat_ids() -> set[int]:
     return access_service.watched_chat_ids()
 
+def is_watched(chat_id: int | None) -> bool:
+    return access_service.is_watched(chat_id)
+
 async def register_member(user_id: int, chat_id: int | str | None = None, *,
                           first_name: str = "", username: str | None = None,
                           real_event: bool = True, contacted: bool = False,

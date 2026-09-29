@@ -13,6 +13,7 @@ from aiogram.types import CallbackQuery, Message, TelegramObject, User
 from loguru import logger
 
 from app.config import get_settings
+from app.services.access import numeric_chat_id
 
 SUBSCRIBE_CACHE_SEC = 300
 _NEG_TTL_SEC = 15
@@ -30,25 +31,8 @@ class _SyntheticPrivateChat:
     type = ChatType.PRIVATE
 
 def required_chats() -> list[tuple[str, str]]:
-    st = get_settings()
-    seen: set[str] = set()
-    chats: list[tuple[str, str]] = []
-
-    def _add(value: object, uname: str = "") -> None:
-        key = str(value)
-        if value and key not in seen:
-            seen.add(key)
-            chats.append((key, uname))
-
-    for cid in st.tracked_chat_ids:
-        _add(str(cid))
-    _add(str(st.channel_chat_id) if st.channel_chat_id else "",
-         st.channel_username or "")
-    if st.channel_username:
-        _add("", st.channel_username)
-    if not chats and (st.channel_chat_id or st.channel_username):
-        chats.append((str(st.channel_chat_id or ""), st.channel_username or ""))
-    return chats
+    from app.services.access import required_chats as _svc_required_chats
+    return _svc_required_chats()
 
 def subscribe_kb() -> "Any":
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -87,27 +71,38 @@ async def _notify_admin(bot, text_key: str, uid: str, text: str) -> None:
     except Exception as exc:
         logger.warning("gate admin notice for {} failed to send: {}", uid, exc)
 
-async def known_subscriber_in_db(user_id: int) -> bool:
-    return bool(await known_subscriber_ids([user_id]))
-
-async def known_subscriber_ids(user_ids: list[int] | set[int]) -> set[int]:
-    ids = {int(u) for u in user_ids if u}
+async def known_subscriber_in_required_chats(user_id: int) -> bool:
+    ids = {numeric_chat_id(cid) for cid, _ in required_chats()}
+    ids.discard(None)
     if not ids:
-        return set()
+        return False
     try:
         from app.db.models import ChannelSubscriber
         from app.db.session import session_factory
-        from sqlalchemy import select
-
         async with session_factory() as session:
+            from sqlalchemy import select
             stmt = select(ChannelSubscriber.user_id,
                           ChannelSubscriber.chats).where(
-                ChannelSubscriber.user_id.in_(ids))
+                ChannelSubscriber.user_id == int(user_id))
             rows = (await session.execute(stmt)).all()
-        return {int(uid) for uid, chats in rows if list(chats or [])}
+        for _uid, chats in rows:
+            norm = {numeric_chat_id(c) for c in (chats or [])}
+            norm.discard(None)
+            if norm & ids:
+                return True
+        return False
     except Exception as exc:
-        logger.debug("gate db-fallback failed for {}: {}", user_ids, exc)
+        logger.debug("gate db-fallback failed for {}: {}", user_id, exc)
+        return False
+
+async def known_subscriber_in_db(user_id: int) -> bool:
+    return await known_subscriber_in_required_chats(user_id)
+
+async def known_subscriber_ids(user_ids: list[int] | set[int]) -> set[int]:
+    wanted = {int(u) for u in user_ids if u}
+    if not wanted:
         return set()
+    return {u for u in wanted if await known_subscriber_in_required_chats(u)}
 
 def _remember_membership(bot, user_id: int, cid: str, source: str) -> None:
     async def _run() -> None:
@@ -207,34 +202,40 @@ async def is_channel_subscribed(bot, user_id: int) -> bool:
     api_status: dict[str, str] = {}
     negative_api = False
     for cid, uname in chats:
-        target = _fmt_target(cid, uname)
-        uid_key = uname or cid
-        try:
-            member = await bot.get_chat_member(target, user_id)
-        except TelegramForbiddenError as exc:
-            api_error = True
-            api_status[target] = f"FORBIDDEN ({str(exc)[:60]})"
-            if uid_key not in _warned_no_admin:
-                logger.warning("cannot check subscription for {}: {} — fail-open",
+        targets: list[str] = []
+        n = numeric_chat_id(cid) if cid else None
+        if n is not None:
+            targets.append(str(n))
+        if uname and ("@" + uname.lstrip("@")) not in targets:
+            targets.append("@" + uname.lstrip("@"))
+        for target in targets:
+            uid_key = uname or target
+            try:
+                member = await bot.get_chat_member(target, user_id)
+            except TelegramForbiddenError as exc:
+                api_error = True
+                api_status[target] = f"FORBIDDEN ({str(exc)[:60]})"
+                if uid_key not in _warned_no_admin:
+                    logger.warning("cannot check subscription for {}: {} — fail-open",
+                                   target, exc)
+                _notify_no_admin(bot, uid_key)
+                continue
+            except TelegramAPIError as exc:
+                api_error = True
+                api_status[target] = f"API ERROR {type(exc).__name__}: {str(exc)[:60]}"
+                logger.warning("subscription check failed for {} ({}): skip chat",
                                target, exc)
-            _notify_no_admin(bot, uid_key)
-            continue
-        except TelegramAPIError as exc:
-            api_error = True
-            api_status[target] = f"API ERROR {type(exc).__name__}: {str(exc)[:60]}"
-            logger.warning("subscription check failed for {} ({}): skip chat",
-                           target, exc)
-            continue
-        api_status[target] = getattr(member, "status", "?")
-        if member.status in ("member", "administrator", "creator"):
-            if uname:
-                _pos_cache[user_id] = time.monotonic() + SUBSCRIBE_CACHE_SEC
-            _neg_cache.pop(user_id, None)
-            _remember_membership(bot, user_id, cid, "bot-api")
-            logger.info("gate: allow {} (Bot API '{}' in {})",
-                        user_id, member.status, target)
-            return True
-        negative_api = True
+                continue
+            api_status[target] = getattr(member, "status", "?")
+            if member.status in ("member", "administrator", "creator"):
+                if uname:
+                    _pos_cache[user_id] = time.monotonic() + SUBSCRIBE_CACHE_SEC
+                _neg_cache.pop(user_id, None)
+                _remember_membership(bot, user_id, cid, "bot-api")
+                logger.info("gate: allow {} (Bot API '{}' in {})",
+                            user_id, member.status, target)
+                return True
+            negative_api = True
     if api_error and not negative_api:
         logger.info("gate: allow {} (fail-open: API unavailable — {})",
                     user_id, api_status)

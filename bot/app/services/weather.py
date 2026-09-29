@@ -11,7 +11,9 @@ from loguru import logger
 from app.utils.formatting import WEATHER_SEASONS, season_for
 from app.utils.local_time import now as local_now
 
-LAT, LON = 53.0446, 158.6507
+WEATHER_CITY = os.getenv("WEATHER_CITY", "Петропавловск-Камчатский")
+LAT = float(os.getenv("WEATHER_LAT", "53.0446"))
+LON = float(os.getenv("WEATHER_LON", "158.6507"))
 CACHE_TTL_SEC = 1800
 WEATHER_REAL_ENABLED = os.getenv("WEATHER_REAL_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
 RETRY_AFTER_SEC = 1200

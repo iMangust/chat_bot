@@ -409,7 +409,10 @@ class SubscriberRepository:
         if row is not None:
             await self.session.refresh(row)
         changed = False
+        cid_norm = numeric_chat_id(chat_id) if chat_id is not None else None
         if row is None:
+            if not arrived and cid_norm is not None:
+                return False
             row = ChannelSubscriber(
                 user_id=uid, chats=[], first_name=first_name or "",
                 username=username)
@@ -421,16 +424,16 @@ class SubscriberRepository:
         if username and row.username != username:
             row.username = username
             changed = True
-        if chat_id is not None:
-            chats = list(row.chats or [])
-            cid = int(chat_id)
-            if real_event and not arrived:
-                if cid in chats:
-                    chats.remove(cid)
+        if cid_norm is not None:
+            chats = [numeric_chat_id(c) for c in (row.chats or [])]
+            chats = [c for c in chats if c is not None]
+            if not arrived:
+                if cid_norm in chats:
+                    chats.remove(cid_norm)
                     row.chats = chats
                     changed = True
-            elif cid not in chats:
-                chats.append(cid)
+            elif cid_norm not in chats:
+                chats.append(cid_norm)
                 row.chats = chats
                 changed = True
             with contextlib.suppress(Exception):
@@ -449,59 +452,13 @@ class SubscriberRepository:
 
     async def add_if_new(self, user_id: int, chat_id: int,
                          first_name: str = "", username: str | None = None) -> bool:
-        from app.db.models import ChannelSubscriber
-        uid, cid = int(user_id), int(chat_id)
-        row = (await self.session.execute(
-            select(ChannelSubscriber)
-            .where(ChannelSubscriber.user_id == uid)
-        )).scalar_one_or_none()
-        if row is None:
-            self.session.add(ChannelSubscriber(
-                user_id=uid, chats=[cid], first_name=first_name or "",
-                username=username))
-            await self.session.commit()
-            return True
-        changed = False
-        if first_name and row.first_name != first_name:
-            row.first_name = first_name
-            changed = True
-        if username and row.username != username:
-            row.username = username
-            changed = True
-        chats = list(row.chats or [])
-        if cid not in chats:
-            chats.append(cid)
-            row.chats = chats
-            changed = True
-            with contextlib.suppress(Exception):
-                from app.middlewares.gate import reset_subscribe_cache
-                reset_subscribe_cache(uid)
-        if changed:
-            await self.session.commit()
-        return changed
+        return await self.record_membership(
+            user_id, chat_id, first_name=first_name, username=username,
+            real_event=True, arrived=True)
 
     async def add_membership_sql(self, user_id: int, chat_id: int) -> None:
-        from app.db.models import ChannelSubscriber
-        uid, cid = int(user_id), int(chat_id)
-        row = (await self.session.execute(
-            select(ChannelSubscriber.user_id, ChannelSubscriber.chats)
-            .where(ChannelSubscriber.user_id == uid)
-        )).first()
-        if row is None:
-            self.session.add(ChannelSubscriber(user_id=uid, chats=[cid]))
-        else:
-            raw = list(row[1] or [])
-            if raw and isinstance(raw[0], str) and len(raw) == 1:
-                with contextlib.suppress(Exception):
-                    raw = json.loads(raw[0])
-            chats = [int(c) for c in raw]
-            if cid not in chats:
-                chats.append(cid)
-                await self.session.execute(
-                    update(ChannelSubscriber)
-                    .where(ChannelSubscriber.user_id == uid)
-                    .values(chats=chats, last_seen_at=utcnow()))
-        await self.session.commit()
+        await self.record_membership(user_id, chat_id,
+                                     real_event=True, arrived=True)
 
     async def registry_stats(self) -> dict:
         from app.db.models import ChannelSubscriber
@@ -550,11 +507,20 @@ class SubscriberRepository:
 
     async def member_ids_by_chat(self, chat_id: int) -> set[int]:
         from app.db.models import ChannelSubscriber
-        cid = int(chat_id)
+        from app.services.access import numeric_chat_id
+        cid = numeric_chat_id(chat_id)
+        if cid is None:
+            return set()
         rows = (await self.session.execute(
             select(ChannelSubscriber.user_id, ChannelSubscriber.chats)
         )).all()
-        return {int(uid) for uid, chats in rows if cid in list(chats or [])}
+        found: set[int] = set()
+        for uid, chats in rows:
+            norm = {numeric_chat_id(c) for c in (chats or [])}
+            norm.discard(None)
+            if cid in norm:
+                found.add(int(uid))
+        return found
 
     async def last_seen_user_id(self) -> int | None:
         from app.db.models import ChannelSubscriber

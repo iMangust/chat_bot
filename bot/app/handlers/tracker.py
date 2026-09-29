@@ -35,9 +35,8 @@ MEDIA_XP_BONUS: dict[str, int] = {
 }
 
 def _is_tracked(chat_id: int) -> bool:
-    from app.handlers.access import watched_chat_ids
-    ids = watched_chat_ids()
-    return not ids or chat_id in ids
+    from app.handlers.access import is_watched
+    return is_watched(chat_id)
 
 def detect_media_type(message: Message) -> str | None:
     for attr in MEDIA_ATTRS:

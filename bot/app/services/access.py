@@ -18,19 +18,26 @@ def required_chats() -> list[tuple[str, str]]:
             seen.add(key)
             chats.append((key, uname))
 
-    _add(st.channel_chat_id, st.channel_username or "")
     for cid in st.tracked_chat_ids:
-        _add(cid)
+        _add(str(cid))
+    ch_num = str(st.channel_chat_id).strip() if st.channel_chat_id else ""
+    ch_uname = (st.channel_username or "").lstrip("@").strip()
+    if ch_num and ch_uname:
+        seen.discard(ch_num)
+        chats[:] = [c for c in chats if c[0] != ch_num]
+        chats.append((ch_num, ch_uname))
+    elif ch_num:
+        _add(ch_num)
+    elif ch_uname:
+        _add(ch_uname)
     return chats
 
 def watched_chat_ids() -> set[int]:
     ids: set[int] = set()
-    for cid, uname in required_chats():
-        n = numeric_chat_id(cid) if cid else None
+    for cid, _uname in required_chats():
+        n = numeric_chat_id(cid)
         if n is not None:
             ids.add(n)
-        elif uname:
-            ids.add(-int("100" + str(abs(hash(uname)) % 10**9)))
     return ids
 
 def is_watched(chat_id: int | None) -> bool:
@@ -54,6 +61,8 @@ async def record_membership(user_id: int, chat_id: int | str | None = None, *,
                             contacted: bool = False,
                             arrived: bool = True) -> None:
     cid = numeric_chat_id(chat_id) if chat_id is not None else None
+    if cid is None and chat_id is not None:
+        return
     try:
         from app.db.repositories import SubscriberRepository
         from app.db.session import session_factory
