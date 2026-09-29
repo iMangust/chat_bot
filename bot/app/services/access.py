@@ -83,13 +83,15 @@ def required_chats() -> list[tuple[str, str]]:
     elif ch_num:
         _add(ch_num)
     elif ch_uname:
-        _add(ch_uname)
+        _add("@" + ch_uname, ch_uname)
     return chats
 
 def watched_chat_ids() -> set[int]:
     ids: set[int] = set()
-    for cid, _uname in required_chats():
+    for cid, uname in required_chats():
         n = numeric_chat_id(cid)
+        if n is None and uname:
+            n = numeric_chat_id(uname)
         if n is not None:
             ids.add(n)
     return ids

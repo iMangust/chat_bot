@@ -57,18 +57,50 @@ async def register_member(user_id: int, chat_id: int | str | None = None, *,
                           real_event: bool = True, contacted: bool = False,
                           arrived: bool = True, bot=None) -> None:
     if arrived and real_event and chat_id is not None and bot is not None:
-        with contextlib.suppress(Exception):
-            n = access_service.numeric_chat_id(chat_id)
-            confirmed = await bot.get_chat_member(n if n is not None else chat_id,
-                                                  user_id)
-            if str(getattr(confirmed, "status", "") or "") not in (
-                    ChatMemberStatus.MEMBER.value,
-                    ChatMemberStatus.ADMINISTRATOR.value,
-                    ChatMemberStatus.CREATOR.value):
-                logger.info("access: skip registry write for {} in {} — Bot API "
-                            "says '{}' (event/scan said member)", user_id,
-                            chat_id, getattr(confirmed, "status", "?"))
+        n = access_service.numeric_chat_id(chat_id)
+        targets: list[str | int] = []
+        for cid, uname in access_service.required_chats():
+            if uname:
+                targets.append("@" + uname.lstrip("@"))
+            raw = str(cid).lstrip("@")
+            if raw not in targets:
+                targets.append(raw)
+            cn = access_service.numeric_chat_id(cid)
+            if cn is not None and f"-100{cn}" not in targets:
+                targets.append(f"-100{cn}")
+        if n is not None:
+            for cand in (n, f"-100{n}"):
+                if cand not in targets:
+                    targets.insert(0, cand)
+        confirmed_status = None
+        for target in targets:
+            try:
+                m = await bot.get_chat_member(target, user_id)
+                confirmed_status = str(getattr(m, "status", "") or "")
+                break
+            except TelegramForbiddenError:
+                logger.info("access: Bot API FORBIDDEN for {} in {} — бот не админ/"
+                            "приватность; запись в реестр отклонена", user_id, target)
                 return
+            except Exception as exc:
+                msg = str(exc).lower()
+                if "chat not found" in msg:
+                    logger.error("access: Bot API 'chat not found' for target {} — "
+                                 "проверьте CHANNEL_USERNAME/TRACKED_CHAT_IDS; запись "
+                                 "в реестр отклонена", target)
+                    return
+                continue
+        if confirmed_status is None:
+            logger.warning("access: cannot confirm membership of {} via Bot API "
+                           "(network?) — registry write skipped", user_id)
+            return
+        if confirmed_status not in (ChatMemberStatus.MEMBER.value,
+                                    ChatMemberStatus.ADMINISTRATOR.value,
+                                    ChatMemberStatus.CREATOR.value):
+            logger.info("access: skip registry write for {} in {} — Bot API "
+                        "says '{}' (event/scan said member)", user_id,
+                        chat_id, confirmed_status)
+            return
     await access_service.record_membership(
         user_id, chat_id, first_name=first_name, username=username,
         real_event=real_event, contacted=contacted, arrived=arrived)

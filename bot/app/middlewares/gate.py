@@ -80,7 +80,12 @@ async def _notify_admin(bot, text_key: str, uid: str, text: str) -> None:
         logger.warning("gate admin notice for {} failed to send: {}", uid, exc)
 
 async def known_subscriber_in_required_chats(user_id: int) -> bool:
-    ids = {numeric_chat_id(cid) for cid, _ in required_chats()}
+    ids = {numeric_chat_id(cid) for cid, uname in required_chats()}
+    for cid, uname in required_chats():
+        if uname:
+            n2 = numeric_chat_id(uname)
+            if n2 is not None:
+                ids.add(n2)
     ids.discard(None)
     if not ids:
         return False
@@ -372,9 +377,16 @@ async def is_channel_subscribed(bot, user_id: int) -> bool:
     hard_errors = [t for t, v in api_status.items()
                    if str(v).startswith(("FORBIDDEN", "API ERROR"))]
     if hard_errors and not negative_api:
-        logger.info("gate: allow {} (fail-open: API unavailable — {})",
-                    user_id, api_status)
-        return True
+        logger.warning("gate: API unavailable for {} ({}) — trying MTProto/live scan "
+                       "before any decision; NO fail-open without confirmation",
+                       user_id, api_status)
+        if await _mtproto_and_scan_fallback(bot, user_id, chats, api_status):
+            return True
+        logger.error("gate: DENY {} — subscription cannot be confirmed via Bot API "
+                     "(chat not found / no access) nor via MTProto/registry. The bot "
+                     "interacts ONLY with confirmed channel members", user_id)
+        _neg_cache[user_id] = time.monotonic() + _NEG_TTL_SEC
+        return False
     if not chats:
         logger.info("gate: DENY {} — no usable required chats configured ({})",
                     user_id, api_status or "empty")
