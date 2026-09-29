@@ -22,6 +22,7 @@ from app.handlers import (access as access_handlers, admin, arena, errors,
                           start, stats, tamagotchi, tracker)
 from app.middlewares.gate import AccessGateMiddleware
 from app.middlewares.throttle import ThrottleMiddleware
+from app.db.repositories import seed_merch_catalog
 from app.handlers.shop import seed_items
 from app.services.achievements import seed_achievements
 from app.tasks.scheduler import build_scheduler
@@ -439,6 +440,9 @@ async def on_startup(bot: Bot) -> None:
     async with session_factory() as session:
         await seed_achievements(session)
         await seed_items(session)
+        seeded = await seed_merch_catalog(session)
+        if seeded:
+            logger.info("merch catalog seeded: {} variants", seeded)
         await session.commit()
     await bot.delete_my_commands()
     await bot.delete_my_commands(scope=BotCommandScopeAllGroupChats())

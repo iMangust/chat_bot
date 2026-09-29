@@ -154,6 +154,8 @@ class Settings(BaseSettings):
 
     channel_scan_minutes: int = 30
 
+    merch_admin_id: int | None = None
+
     telegram_api_id: int | None = None
     telegram_api_hash: str | None = None
     telegram_phone: str | None = None

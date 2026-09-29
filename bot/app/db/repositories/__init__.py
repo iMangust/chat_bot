@@ -3,7 +3,7 @@ from __future__ import annotations
 import contextlib
 from datetime import datetime, timedelta
 
-from sqlalchemy import Integer, func, insert, select, update
+from sqlalchemy import Integer, delete, func, insert, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -530,3 +530,215 @@ class SubscriberRepository:
         stmt = select(func.max(ChannelSubscriber.user_id))
         v = (await self.session.execute(stmt)).scalar_one_or_none()
         return int(v) if v is not None else None
+
+class MerchRepository:
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def categories(self) -> list:
+        from app.db.models import MerchCategory
+        return list((await self.session.execute(
+            select(MerchCategory).order_by(MerchCategory.position, MerchCategory.id)
+        )).scalars().all())
+
+    async def get_category(self, code: str):
+        from app.db.models import MerchCategory
+        return (await self.session.execute(
+            select(MerchCategory).where(MerchCategory.code == code)
+        )).scalar_one_or_none()
+
+    async def add_category(self, code: str, title: str, icon: str = "🧢", position: int = 0):
+        from app.db.models import MerchCategory
+        cat = MerchCategory(code=code, title=title, icon=icon, position=position)
+        self.session.add(cat)
+        await self.session.flush()
+        return cat
+
+    async def delete_category(self, code: str) -> bool:
+        from app.db.models import MerchCategory, MerchProduct, MerchVariant
+        cat = await self.get_category(code)
+        if cat is None:
+            return False
+        prod_ids = list((await self.session.execute(
+            select(MerchProduct.id).where(MerchProduct.category_id == cat.id)
+        )).scalars().all())
+        if prod_ids:
+            await self.session.execute(
+                delete(MerchVariant).where(MerchVariant.product_id.in_(prod_ids)))
+            await self.session.execute(
+                delete(MerchProduct).where(MerchProduct.category_id == cat.id))
+        await self.session.delete(cat)
+        return True
+
+    async def products(self, category_id: int) -> list:
+        from app.db.models import MerchProduct
+        return list((await self.session.execute(
+            select(MerchProduct).where(MerchProduct.category_id == category_id)
+            .order_by(MerchProduct.id)
+        )).scalars().all())
+
+    async def get_product(self, product_id: int):
+        from app.db.models import MerchProduct
+        return (await self.session.execute(
+            select(MerchProduct).where(MerchProduct.id == product_id)
+        )).scalar_one_or_none()
+
+    async def add_product(self, category_id: int, name: str, description: str = "",
+                          sizes: list | None = None, colors: list | None = None,
+                          image_url: str | None = None):
+        from app.db.models import MerchProduct
+        p = MerchProduct(category_id=category_id, name=name, description=description,
+                         sizes=sizes or [], colors=colors or [], image_url=image_url)
+        self.session.add(p)
+        await self.session.flush()
+        return p
+
+    async def delete_product(self, product_id: int) -> bool:
+        from app.db.models import MerchProduct, MerchVariant
+        p = await self.get_product(product_id)
+        if p is None:
+            return False
+        await self.session.execute(
+            delete(MerchVariant).where(MerchVariant.product_id == product_id))
+        await self.session.delete(p)
+        return True
+
+    async def variants(self, product_id: int) -> list:
+        from app.db.models import MerchVariant
+        return list((await self.session.execute(
+            select(MerchVariant).where(MerchVariant.product_id == product_id)
+            .order_by(MerchVariant.size, MerchVariant.color)
+        )).scalars().all())
+
+    async def get_variant(self, variant_id: int):
+        from app.db.models import MerchVariant
+        return (await self.session.execute(
+            select(MerchVariant).where(MerchVariant.id == variant_id)
+        )).scalar_one_or_none()
+
+    async def find_variant(self, product_id: int, size: str, color: str):
+        from app.db.models import MerchVariant
+        return (await self.session.execute(
+            select(MerchVariant).where(MerchVariant.product_id == product_id,
+                                       MerchVariant.size == size,
+                                       MerchVariant.color == color)
+        )).scalar_one_or_none()
+
+    async def add_variant(self, product_id: int, size: str, color: str,
+                          price_rub: int, stock: int) -> tuple:
+        from app.db.models import MerchVariant
+        v = await self.find_variant(product_id, size, color)
+        if v is not None:
+            v.price_rub = price_rub
+            v.stock = stock
+            return v, False
+        v = MerchVariant(product_id=product_id, size=size, color=color,
+                         price_rub=price_rub, stock=stock)
+        self.session.add(v)
+        await self.session.flush()
+        return v, True
+
+    async def delete_variant(self, variant_id: int) -> bool:
+        from app.db.models import MerchVariant
+        v = await self.get_variant(variant_id)
+        if v is None:
+            return False
+        await self.session.delete(v)
+        return True
+
+    async def reserve(self, variant_id: int, user_id: int) -> str:
+        from app.db.models import MerchVariant
+        v = await self.get_variant(variant_id)
+        if v is None:
+            return "not_found"
+        if v.stock <= 0:
+            return "out_of_stock"
+        if v.reserved_by is not None:
+            return "already_reserved_self" if v.reserved_by == user_id else "already_reserved"
+        res = await self.session.execute(
+            update(MerchVariant)
+            .where(MerchVariant.id == variant_id,
+                   MerchVariant.reserved_by.is_(None),
+                   MerchVariant.stock > 0)
+            .values(reserved_by=user_id, reserved_at=utcnow()))
+        if res.rowcount != 1:
+            return "already_reserved"
+        return "ok"
+
+    async def confirm_sale(self, variant_id: int) -> dict | None:
+        from app.db.models import MerchVariant
+        v = await self.get_variant(variant_id)
+        if v is None or v.reserved_by is None:
+            return None
+        buyer = int(v.reserved_by)
+        res = await self.session.execute(
+            update(MerchVariant)
+            .where(MerchVariant.id == variant_id,
+                   MerchVariant.reserved_by == buyer,
+                   MerchVariant.stock > 0)
+            .values(stock=MerchVariant.stock - 1, sold_count=MerchVariant.sold_count + 1,
+                    reserved_by=None, reserved_at=None))
+        if res.rowcount != 1:
+            return None
+        return {"variant_id": variant_id, "buyer": buyer}
+
+    async def cancel_reserve(self, variant_id: int) -> dict | None:
+        from app.db.models import MerchVariant
+        v = await self.get_variant(variant_id)
+        if v is None or v.reserved_by is None:
+            return None
+        buyer = int(v.reserved_by)
+        await self.session.execute(
+            update(MerchVariant)
+            .where(MerchVariant.id == variant_id, MerchVariant.reserved_by == buyer)
+            .values(reserved_by=None, reserved_at=None))
+        return {"variant_id": variant_id, "buyer": buyer}
+
+    async def all_reserved(self) -> list:
+        from app.db.models import MerchVariant
+        return list((await self.session.execute(
+            select(MerchVariant).where(MerchVariant.reserved_by.is_not(None))
+            .order_by(MerchVariant.reserved_at)
+        )).scalars().all())
+
+async def seed_merch_catalog(session: AsyncSession) -> int:
+    from sqlalchemy import func as _func
+    from app.db.models import MerchCategory
+    existing = (await session.execute(select(_func.count(MerchCategory.id)))).scalar() or 0
+    if existing:
+        return 0
+    catalog = {
+        "hoodie": ("🧥", "Худи", [
+            ("Не пиздеть, а делать", 3490),
+            ("Боейтесь бляди, крышу рвет", 3490),
+            ("При виде меня блядей корежит", 3490),
+            ("Молодость, дерзость, хардкор", 3490),
+        ]),
+        "tshirt": ("👕", "Футболки", [
+            ("Не пиздеть, а делать", 1690),
+            ("Боейтесь бляди, крышу рвет", 1690),
+            ("При виде меня блядей корежит", 1690),
+            ("Молодость, дерзость, хардкор", 1690),
+        ]),
+        "bag": ("👜", "Сумки", [
+            ("Не пиздеть, а делать", 1290),
+            ("Боейтесь бляди, крышу рвет", 1290),
+            ("При виде меня блядей корежит", 1290),
+            ("Молодость, дерзость, хардкор", 1290),
+        ]),
+    }
+    sizes = ["S", "M", "L", "XL", "XXL"]
+    colors = ["Розовый", "Чёрный", "Белый", "Серый"]
+    repo = MerchRepository(session)
+    count = 0
+    for pos, (code, (icon, title, products)) in enumerate(catalog.items()):
+        cat = await repo.add_category(code, title, icon, pos)
+        for pname, price in products:
+            p = await repo.add_product(cat.id, pname, f"{title} с фирменным принтом канала.",
+                                       sizes=list(sizes), colors=list(colors))
+            for s in sizes:
+                for c in colors:
+                    await repo.add_variant(p.id, s, c, price, 5)
+                    count += 1
+    return count

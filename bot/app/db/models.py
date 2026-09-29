@@ -366,3 +366,38 @@ class NotificationSetting(Base):
     streak_reminders: Mapped[bool] = mapped_column(Boolean, default=True)
     achievement_notifications: Mapped[bool] = mapped_column(Boolean, default=True)
     daily_report: Mapped[bool] = mapped_column(Boolean, default=True)
+
+class MerchCategory(Base):
+    __tablename__ = "merch_categories"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    code: Mapped[str] = mapped_column(String(32))
+    title: Mapped[str] = mapped_column(String(64))
+    icon: Mapped[str] = mapped_column(String(16), default="🧢")
+    position: Mapped[int] = mapped_column(Integer, default=0)
+
+class MerchProduct(Base):
+    __tablename__ = "merch_products"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    category_id: Mapped[int] = mapped_column(Integer, ForeignKey("merch_categories.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(128))
+    description: Mapped[str] = mapped_column(Text, default="")
+    image_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    sizes: Mapped[list | None] = mapped_column(JSON, default=list)
+    colors: Mapped[list | None] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+class MerchVariant(Base):
+    __tablename__ = "merch_variants"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    product_id: Mapped[int] = mapped_column(Integer, ForeignKey("merch_products.id", ondelete="CASCADE"))
+    size: Mapped[str] = mapped_column(String(16), default="")
+    color: Mapped[str] = mapped_column(String(32), default="")
+    price_rub: Mapped[int] = mapped_column(Integer, default=0)
+    stock: Mapped[int] = mapped_column(Integer, default=0)
+    reserved_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    reserved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    sold_count: Mapped[int] = mapped_column(Integer, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
