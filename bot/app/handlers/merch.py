@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import html
+import secrets
 
 from aiogram import Bot, F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.enums import ChatType
-from aiogram.types import CallbackQuery, InputMediaPhoto, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InputMediaPhoto, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from loguru import logger
 
@@ -435,11 +436,15 @@ async def madmin_catmgmt(cb: CallbackQuery, session) -> None:
         return await cb.answer("Только для админов мерча 🙅", show_alert=True)
     repo = MerchRepository(session)
     cats = await repo.categories()
-    rows = [[("➕ Добавить", "madmin:addcat")] ]
+    b = InlineKeyboardBuilder()
+    b.button(text="➕ Добавить категорию", callback_data="madmin:addcat")
+    b.row()
     for c in cats:
-        rows.append([(f"✏️ {c.icon} {c.title}", f"madmin:catedit:{c.code}"),
-                     (f"🗑 {c.title}", f"madmin:catdel:{c.code}")])
-    b = _admin_kb(rows)
+        b.button(text=f"✏️ {c.icon} {c.title}", callback_data=f"madmin:catedit:{c.code}")
+        b.button(text="🗑", callback_data=f"madmin:catdel:{c.code}")
+        b.row()
+    b.button(text="⬅️ Назад", callback_data="madmin:catalog")
+    b.button(text="🏠 Управление", callback_data="madmin:home")
     await safe_edit_or_answer(
         cb.message,
         "🗂 <b>Категории</b>\n\n✏️ — переименовать/сменить эмодзи,\n🗑 — удалить категорию со всем содержимым.",
@@ -457,8 +462,13 @@ async def madmin_cat_edit(cb: CallbackQuery, session, state: FSMContext) -> None
         return await cb.answer("Категория не найдена 😅", show_alert=True)
     await state.set_state(MerchStates.awaiting)
     await state.update_data(step="cat_title", code=code)
+    b = InlineKeyboardBuilder()
+    b.button(text="⏹ Отмена", callback_data="madmin:catmgmt")
     await cb.message.answer(
-        f"✏️ Категория «{html.escape(cat.title)}».\n\nПришли новое название (или /cancel):")
+        f"✏️ Категория «{cat.icon} {html.escape(cat.title)}» (<code>{code}</code>).\n\n"
+        "Пришли новое название — можешь сразу с эмодзи, например <code>🧥 Худи</code>:\n"
+        "(эмодзи в начале строки станет иконкой категории; отмена — ⏹ или /cancel)",
+        reply_markup=b.as_markup())
     await cb.answer()
 
 @router.callback_query(F.data.startswith("madmin:catdel:"))
@@ -479,10 +489,40 @@ async def madmin_addcat_start(cb: CallbackQuery, state: FSMContext) -> None:
         return await cb.answer("Только для админов мерча 🙅", show_alert=True)
     await state.set_state(MerchStates.awaiting)
     await state.update_data(step="cat_new")
+    b = InlineKeyboardBuilder()
+    b.button(text="⏹ Отмена", callback_data="madmin:catmgmt")
     await cb.message.answer(
-        "➕ Новая категория.\n\nПришли в одну строку: <code>код|Название|эмодзи</code>\n"
-        "Например: <code>cap|Кепки|🧢</code>\n\nОтмена — /cancel")
+        "➕ <b>Новая категория</b>\n\n"
+        "Пришли название в одну строку — эмодзи сразу в нём. ID (код) сгенерируется автоматически.\n"
+        "Формат: <code>ID|Название</code> или просто <code>Название</code>, например:\n"
+        "<code>id1|🧥 Худи</code>  ·  <code>🎒 Сумки</code>  ·  <code>Кепки 🧢</code>\n\n"
+        "Отмена — ⏹ или /cancel",
+        reply_markup=b.as_markup())
     await cb.answer()
+
+def _parse_category_input(text: str) -> tuple[str, str, str]:
+    import re
+    parts = [p.strip() for p in text.split("|")]
+    code = ""
+    body = parts[-1]
+    if len(parts) > 1 and re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,23}", parts[0]):
+        code = parts[0].lower()
+    emoji = ""
+    m = re.match(r"^(\S+)\s+(.*)$", body)
+    if m and len(m.group(1)) <= 4 and not m.group(1).isascii():
+        emoji, title = m.group(1), m.group(2).strip()
+    else:
+        m2 = re.match(r"^(.*?)(\s(\S+))?$", body)
+        title, tail = body.strip(), (m2.group(3) if m2 else None)
+        if tail and len(tail) <= 4 and not tail.isascii():
+            title, emoji = body.strip()[: -len(tail)].strip(), tail
+        else:
+            emoji = ""
+    title = title or body
+    if not code:
+        code = f"id{abs(hash(title.lower())) % 900 + 100}"
+        code = re.sub(r"[^a-zа-я0-9_-]", "", code.lower())[:24] or f"id{secrets.randbelow(900) + 100}"
+    return code, title[:64], emoji or "🧢"
 
 @router.callback_query(F.data.startswith("madmin:cat:"))
 async def madmin_cat_products(cb: CallbackQuery, session) -> None:
@@ -527,9 +567,13 @@ async def madmin_addprod_start(cb: CallbackQuery, session, state: FSMContext) ->
     await state.update_data(step="prod_name", cat_code=code, apparel=apparel)
     hint = "размеры S/M/L/XL/XXL × цвета Розовый/Чёрный/Белый/Серый" if apparel \
         else "без размеров и цветов (одна позиция)"
+    b = InlineKeyboardBuilder()
+    b.button(text="⏹ Отмена", callback_data=f"madmin:cat:{code}")
     await cb.message.answer(
-        f"➕ Новый товар в «{html.escape(cat.title)}» ({hint}).\n\n"
-        "Шаг 1/3 — пришли название принта/товара (или /cancel):")
+        f"➕ Новый товар в «{cat.icon} {html.escape(cat.title)}» ({hint}).\n\n"
+        "<b>Шаг 1/3 — название</b> принта/товара. Просто напиши его сообщением.\n"
+        "Отмена — ⏹ или /cancel",
+        reply_markup=b.as_markup())
     await cb.answer()
 
 @router.callback_query(F.data.startswith("madmin:prod:"))
@@ -589,22 +633,125 @@ async def madmin_product_delete(cb: CallbackQuery, session) -> None:
 async def madmin_addvar_start(cb: CallbackQuery, session, state: FSMContext) -> None:
     if not _is_merch_admin(cb.from_user.id):
         return await cb.answer("Только для админов мерча 🙅", show_alert=True)
+    parts = cb.data.split(":")
+    if len(parts) > 3:
+        return await madmin_addvar_pick_size(cb, session, state)
     try:
-        pid = int(cb.data.split(":")[2])
+        pid = int(parts[2])
     except ValueError:
         return await cb.answer()
     repo = MerchRepository(session)
     product = await repo.get_product(pid)
     if product is None:
         return await cb.answer("Товар не найден 😅", show_alert=True)
-    await state.set_state(MerchStates.awaiting)
-    await state.update_data(step="var_size", pid=pid)
-    sizes = [s for s in (product.sizes or []) if s and s != "one"]
+    sizes = [sz for sz in (product.sizes or []) if sz and sz != "one"]
+    if not sizes:
+        await state.set_state(MerchStates.awaiting)
+        await state.update_data(step="var_size", pid=pid)
+        b = InlineKeyboardBuilder()
+        b.button(text="⏹ Отмена", callback_data=f"madmin:prod:{pid}")
+        await cb.message.answer(
+            f"➕ Позиция для «{html.escape(product.name)}» — товар без размеров.\n\n"
+            "<b>Шаг 1/2 — размер.</b> Напиши '-' (без размера) или новый размер сообщением.\n"
+            "Отмена — ⏹ или /cancel", reply_markup=b.as_markup())
+        return await cb.answer()
+    b = InlineKeyboardBuilder()
+    row = []
+    for sz in sizes:
+        row.append((sz, f"madmin:addvar:{pid}:{sz}"))
+        if len(row) == 3:
+            b.row(*[InlineKeyboardButton(text=t, callback_data=d) for t, d in row])
+            row = []
+    if row:
+        b.row(*[InlineKeyboardButton(text=t, callback_data=d) for t, d in row])
+    b.button(text="⌨️ Другой размер…", callback_data=f"madmin:addvar:{pid}:*")
+    b.row()
+    b.button(text="⏹ Отмена", callback_data=f"madmin:prod:{pid}")
     await cb.message.answer(
-        f"➕ Позиция для «{html.escape(product.name)}».\n\n"
-        + (f"Шаг 1/3 — размер (есть: {', '.join(sizes)}) или новый:" if sizes
-           else "Шаг 1/3 — размер (или '-' если без размера):"))
+        f"➕ Новая позиция для «{html.escape(product.name)}».\n\n"
+        "<b>Шаг 1/2 — выбери размер кнопкой</b> (или введи свой через ⌨️):",
+        reply_markup=b.as_markup())
     await cb.answer()
+
+async def madmin_addvar_pick_size(cb: CallbackQuery, session, state: FSMContext) -> None:
+    if not _is_merch_admin(cb.from_user.id):
+        return await cb.answer("Только для админов мерча 🙅", show_alert=True)
+    parts = cb.data.split(":")
+    try:
+        pid = int(parts[2])
+    except (ValueError, IndexError):
+        return await cb.answer()
+    size = parts[3] if len(parts) > 3 else ""
+    if size == "*":
+        await state.set_state(MerchStates.awaiting)
+        await state.update_data(step="var_size", pid=pid)
+        b = InlineKeyboardBuilder()
+        b.button(text="⏹ Отмена", callback_data=f"madmin:prod:{pid}")
+        await cb.message.answer("⌨️ Введи новый размер сообщением (например M) · отмена — ⏹:",
+                                reply_markup=b.as_markup())
+        return await cb.answer()
+    repo = MerchRepository(session)
+    product = await repo.get_product(pid)
+    if product is None:
+        return await cb.answer("Товар не найден 😅", show_alert=True)
+    colors = [c for c in (product.colors or []) if c]
+    if not colors:
+        price_default = min((x.price_rub for x in await repo.variants(pid)), default=0)
+        v, created = await repo.add_variant(pid, size, "", price_default, 0)
+        await session.commit()
+        await cb.answer("Позиция добавлена ✅" if created else "Такая позиция уже есть",
+                        show_alert=True)
+        return await madmin_product_menu(cb, session)
+    b = InlineKeyboardBuilder()
+    row = []
+    for c in colors:
+        row.append((c, f"madmin:addcol:{pid}:{size}:{c}"))
+        if len(row) == 2:
+            b.row(*[InlineKeyboardButton(text=t, callback_data=d) for t, d in row])
+            row = []
+    if row:
+        b.row(*[InlineKeyboardButton(text=t, callback_data=d) for t, d in row])
+    b.button(text="⌨️ Другой цвет…", callback_data=f"madmin:addcol:{pid}:{size}:*")
+    b.row()
+    b.button(text="⬅️ К размерам", callback_data=f"madmin:addvar:{pid}")
+    b.button(text="⏹ Отмена", callback_data=f"madmin:prod:{pid}")
+    await safe_edit_or_answer(
+        cb.message,
+        f"➕ Позиция «{html.escape(product.name)}» · размер <b>{html.escape(size)}</b>.\n\n"
+        "<b>Шаг 2/2 — выбери цвет кнопкой</b> (или введи свой через ⌨️):",
+        reply_markup=b.as_markup())
+    await cb.answer()
+
+@router.callback_query(F.data.startswith("madmin:addcol:"))
+async def madmin_addcol_pick(cb: CallbackQuery, session, state: FSMContext) -> None:
+    if not _is_merch_admin(cb.from_user.id):
+        return await cb.answer("Только для админов мерча 🙅", show_alert=True)
+    parts = cb.data.split(":")
+    try:
+        pid, size, color = int(parts[2]), parts[3], parts[4]
+    except (ValueError, IndexError):
+        return await cb.answer()
+    repo = MerchRepository(session)
+    if color == "*":
+        await state.set_state(MerchStates.awaiting)
+        await state.update_data(step="var_color", pid=pid, size=size)
+        b = InlineKeyboardBuilder()
+        b.button(text="⏹ Отмена", callback_data=f"madmin:prod:{pid}")
+        await cb.message.answer(f"⌨️ Введи новый цвет для размера {size} сообщением · отмена — ⏹:",
+                                reply_markup=b.as_markup())
+        return await cb.answer()
+    existing = await repo.find_variant(pid, size, color)
+    if existing is not None:
+        return await cb.answer(f"Позиция {size}/{color} уже есть (id={existing.id}) 😉",
+                               show_alert=True)
+    variants = await repo.variants(pid)
+    price_default = min((x.price_rub for x in variants), default=0)
+    v, _ = await repo.add_variant(pid, size, color, price_default, 0)
+    new_vid = int(v.id)
+    await session.commit()
+    await cb.answer(f"✅ Позиция {size}/{color} добавлена (id={new_vid}). Задай ей остаток 👇",
+                    show_alert=True)
+    return await madmin_product_menu(cb, session)
 
 @router.callback_query(F.data.startswith("madmin:var:"))
 async def madmin_variant_edit(cb: CallbackQuery, session) -> None:
@@ -734,32 +881,40 @@ async def merch_admin_input(message: Message, session, state: FSMContext) -> Non
         return await message.answer("Пустое сообщение, повтори.")
     try:
         if step == "cat_new":
-            parts = [p.strip() for p in text.split("|")]
-            if len(parts) < 2:
-                return await message.answer("Формат: <code>код|Название|эмодзи</code>")
-            code, title = parts[0], parts[1]
+            code, title, emoji = _parse_category_input(text)
             if await repo.get_category(code):
-                return await message.answer("Такая категория уже есть.")
-            await repo.add_category(code, title, parts[2] if len(parts) > 2 else "🧢", 99)
+                return await message.answer(f"Категория с кодом «{code}» уже есть — пришли другой ID|Название.")
+            await repo.add_category(code, title, emoji, 99)
             await session.commit()
             await state.clear()
-            return await message.answer(f"✅ Категория «{title}» добавлена.")
+            return await message.answer(
+                f"✅ Категория «{emoji} {title}» добавлена (ID: <code>{code}</code>).",
+                parse_mode="HTML")
         if step == "cat_title":
             cat = await repo.get_category(data["code"])
             if cat is None:
                 await state.clear()
                 return await message.answer("Категория не найдена.")
-            cat.title = text[:64]
+            _, new_title, new_emoji = _parse_category_input(text)
+            cat.title = new_title[:64]
+            cat.icon = new_emoji
             await session.commit()
             await state.clear()
-            return await message.answer(f"✅ Переименовано в «{text}».")
+            return await message.answer(f"✅ Обновлено: {new_emoji} {new_title}")
         if step == "prod_name":
             await state.update_data(step="prod_price", prod_name=text)
-            return await message.answer("Шаг 2/3 — цена в рублях числом:")
+            return await message.answer(
+                f"📝 Название: <b>{html.escape(text)}</b>\n\n"
+                "<b>Шаг 2/3 — цена</b> в рублях, просто числом (например 2500):",
+                parse_mode="HTML")
         if step == "prod_price":
             price = int(float(text.replace(",", "").replace(" ", "")))
             await state.update_data(step="prod_stock", price=price)
-            return await message.answer("Шаг 3/3 — остаток на каждую позицию числом (например 5):")
+            return await message.answer(
+                f"💳 Цена: <b>{price:,} ₽</b>\n\n"
+                "<b>Шаг 3/3 — количество</b> на каждую позицию, числом (например 5). "
+                "Для одежды будет создано 20 позиций (5 размеров × 4 цвета):",
+                parse_mode="HTML")
         if step == "prod_stock":
             stock = max(int(float(text)), 0)
             code = data["cat_code"]
@@ -777,10 +932,19 @@ async def merch_admin_input(message: Message, session, state: FSMContext) -> Non
             combos = [(s, c) for s in (sizes or [""]) for c in (colors or [""])]
             for s, c in combos:
                 await repo.add_variant(p.id, s, c, price, stock)
+            new_pid = int(p.id)
             await session.commit()
             await state.clear()
+            kb = InlineKeyboardBuilder()
+            kb.button(text="⚙️ Открыть товар", callback_data=f"madmin:prod:{new_pid}")
+            kb.button(text="📦 Каталог", callback_data="madmin:catalog")
+            kb.row()
+            kb.button(text="➕ Добавить ещё товар", callback_data=f"madmin:addprod:{code}")
+            kb.button(text="🏠 Управление", callback_data="madmin:home")
             return await message.answer(
-                f"✅ Товар «{name}» (id={p.id}) добавлен, позиций: {len(combos)}.")
+                f"✅ Товар «{name}» добавлен: {len(combos)} позиций · "
+                f"{price:,} ₽ · остаток {stock} каждая.\n\nДальше 👇",
+                reply_markup=kb.as_markup())
         if step == "var_size":
             pid = data["pid"]
             product = await repo.get_product(pid)
@@ -789,12 +953,13 @@ async def merch_admin_input(message: Message, session, state: FSMContext) -> Non
                 return await message.answer("Товар не найден.")
             has_colors = any(c for c in (product.colors or []))
             if not has_colors:
-                price_default = min((v.price_rub for v in await repo.variants(pid)), default=0)
+                price_default = min((x.price_rub for x in await repo.variants(pid)), default=0)
                 v, created = await repo.add_variant(pid, text[:16], "", price_default, 0)
+                new_vid = int(v.id)
                 await session.commit()
                 await state.clear()
                 return await message.answer(
-                    f"✅ Позиция {'добавлена' if created else 'обновлена'}: id={v.id}. "
+                    f"✅ Позиция {'добавлена' if created else 'обновлена'}: id={new_vid}. "
                     f"Задай ей остаток кнопками в меню товара.")
             await state.update_data(step="var_color", size=text[:16])
             colors = [c for c in (product.colors or []) if c]
@@ -807,12 +972,13 @@ async def merch_admin_input(message: Message, session, state: FSMContext) -> Non
                 return await message.answer("Товар не найден.")
             existing = await repo.find_variant(pid, size, text)
             if existing is None:
-                price_default = min((v.price_rub for v in await repo.variants(pid)), default=0)
+                price_default = min((x.price_rub for x in await repo.variants(pid)), default=0)
                 v, _ = await repo.add_variant(pid, size, text[:32], price_default, 0)
+                new_vid = int(v.id)
                 await session.commit()
                 await state.clear()
                 return await message.answer(
-                    f"✅ Позиция {size}/{text} добавлена (id={v.id}), цена по умолчанию "
+                    f"✅ Позиция {size}/{text} добавлена (id={new_vid}), цена по умолчанию "
                     f"{price_default:,} ₽, остаток 0 — поправь в меню товара.")
             await state.clear()
             return await message.answer(f"Такая позиция уже есть (id={existing.id}).")
