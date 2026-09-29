@@ -571,7 +571,7 @@ def _notify_no_gating(bot) -> None:
     _bg_tasks.add(t)
     t.add_done_callback(_bg_tasks.discard)
 
-_ENTRY_COMMANDS = {"start", "help"}
+_ENTRY_COMMANDS = {"help"}
 
 def _is_entry_command(message: Message, bot_username: str = "") -> bool:
     text = message.text or ""
