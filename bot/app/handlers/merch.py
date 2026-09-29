@@ -1027,6 +1027,49 @@ async def _save_photo_as_file_id(bot: Bot, message: Message) -> str | None:
         logger.warning("merch photo upload failed: {}", type(exc).__name__)
         return None
 
+_PHOTO_STEPS = {"mv_photo_attach", "var_photo"}
+
+@router.message(MerchStates.awaiting, F.photo & F.chat.type == ChatType.PRIVATE)
+async def merch_admin_photo_input(message: Message, session, state: FSMContext) -> None:
+    if not _is_merch_admin(message.from_user.id):
+        return await state.clear()
+    data = await state.get_data()
+    step = data.get("step")
+    if step not in _PHOTO_STEPS:
+        return
+    repo = MerchRepository(session)
+    fid = await _save_photo_as_file_id(message.bot, message)
+    if not fid:
+        return await message.answer("Не удалось сохранить фото 😅 Попробуй ещё раз или отмени /cancel.")
+    if step == "var_photo":
+        vid = data["vid"]
+        v = await repo.get_variant(vid)
+        if v is None:
+            await state.clear()
+            return await message.answer("Позиция не найдена.")
+        v.photo_file_id = fid
+        await session.commit()
+        await state.clear()
+        kb = InlineKeyboardBuilder()
+        kb._vb("✏️ К позиции", f"madmin:var:{vid}")
+        kb._vb("🏠 Управление", "madmin:home")
+        return await message.answer("✅ Фото позиции сохранено — покупатель увидит его на витрине!",
+                                    reply_markup=kb.as_markup())
+    pid = data["pid"]
+    v = await repo.find_variant(pid, data.get("size", ""), data.get("color", ""))
+    if v is None:
+        variants = await repo.variants(pid)
+        v = variants[-1] if variants else None
+    if v is not None:
+        v.photo_file_id = fid
+        await session.commit()
+    await state.update_data(step="mv_price")
+    kb = InlineKeyboardBuilder()
+    kb._vb("⬅️ К фото", f"madmin:addvar:{pid}")
+    kb._vb("🏠 Управление", "madmin:home")
+    return await message.answer("✅ Фото принято!\n\n<b>Шаг 6 из 6 — количество штук.</b> Напиши числом (например 10):",
+                                parse_mode="HTML", reply_markup=kb.as_markup())
+
 @router.message(MerchStates.awaiting, CommandStart())
 async def merch_cancel_by_start(message: Message, state: FSMContext) -> None:
     await state.clear()
@@ -1037,6 +1080,13 @@ async def merch_cancel_cmd(message: Message, state: FSMContext) -> None:
     await state.clear()
     await message.answer("⏹ Ввод отменён.")
 
+@router.message(MerchStates.awaiting, F.sticker | F.video | F.document | F.audio | F.voice | F.animation | F.video_note)
+async def merch_admin_wrong_media(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    if data.get("step") in _PHOTO_STEPS:
+        return await message.answer("Это не фото 😅 Пришли обычную картинку сообщением или пропусти шаг кнопкой.")
+    return await message.answer("Нужен текстовый ответ 🙂 Напиши значение сообщением.")
+
 @router.message(MerchStates.awaiting, F.chat.type == ChatType.PRIVATE)
 async def merch_admin_input(message: Message, session, state: FSMContext) -> None:
     if not _is_merch_admin(message.from_user.id):
@@ -1046,7 +1096,22 @@ async def merch_admin_input(message: Message, session, state: FSMContext) -> Non
     text = (message.text or "").strip()
     repo = MerchRepository(session)
     if not text:
+        if step in _PHOTO_STEPS:
+            return await message.answer("📷 Пришли фото позицией (картинкой), «-» чтобы пропустить, или отмени /cancel.")
         return await message.answer("Пустое сообщение, повтори.")
+    if step in _PHOTO_STEPS and text.lower() in ("-", "нет", "пропустить", "skip"):
+        if step == "var_photo":
+            await state.clear()
+            kb = InlineKeyboardBuilder()
+            kb._vb("✏️ К позиции", f"madmin:var:{data['vid']}")
+            kb._vb("🏠 Управление", "madmin:home")
+            return await message.answer("⏭ Фото пропущено.", reply_markup=kb.as_markup())
+        await state.update_data(step="mv_price")
+        kb = InlineKeyboardBuilder()
+        kb._vb("⬅️ К фото", f"madmin:addvar:{data['pid']}")
+        kb._vb("🏠 Управление", "madmin:home")
+        return await message.answer("<b>Шаг 6 из 6 — количество штук.</b> Напиши числом (например 10):",
+                                    parse_mode="HTML", reply_markup=kb.as_markup())
     try:
         if step == "cat_new":
             code, title, emoji = _parse_category_input(text)

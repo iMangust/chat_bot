@@ -168,6 +168,15 @@ async def menu_events(cb: CallbackQuery, session) -> None:
     await _render_list(cb, session)
     await cb.answer()
 
+@router.callback_query(CommandStart("menu"))
+async def menu_any_unhandled(cb: CallbackQuery) -> None:
+    if cb.data and cb.data.count(":") >= 2:
+        try:
+            await cb.message.delete_reply_markup()
+        except Exception:
+            pass
+    await cb.answer("Обнови меню: напиши /start 🙂", show_alert=True)
+
 
 async def _detail_render(cb: CallbackQuery, session, eid: int) -> None:
     repo = EventRepository(session)
