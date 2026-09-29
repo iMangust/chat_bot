@@ -42,6 +42,18 @@ def required_chats() -> list[tuple[str, str]]:
         chats.append((cid, uname))
     return chats
 
+
+def serviceable_chats() -> list[tuple[str, str]]:
+    """All chats the bot works with: required channel + tracked groups."""
+    from app.services.access import _all_serviceable_chats
+    chats = []
+    for cid, uname in _all_serviceable_chats():
+        n = numeric_chat_id(cid) if (cid and not uname) else None
+        if n is not None:
+            cid = f"-100{n}"
+        chats.append((cid, uname))
+    return chats
+
 def channel_link() -> tuple[str, str]:
     st = get_settings()
     ch = (st.channel_username or "").strip().lstrip("@")
@@ -670,8 +682,8 @@ class AccessGateMiddleware(BaseMiddleware):
                     logger.info("gate: recheck DENY {} — Bot API says not a "
                                 "member; registry membership cleared", user.id)
         except Exception as exc:
-            logger.warning("subscription gate crashed for {}: {} — allow", user.id, exc)
-            subscribed = True
+            logger.exception("subscription gate crashed for {} — deny (fail-closed)", user.id)
+            subscribed = False
 
         if subscribed and (was_locked or recheck):
             schedule_celebration(data["bot"], user.id, user.first_name or "")
@@ -687,11 +699,11 @@ class AccessGateMiddleware(BaseMiddleware):
         if not exempt and not subscribed:
             ch, visual = channel_link()
             text_out = ["🔒 Взаимодействие с ботом недоступно:",
-                        "ты не подписан ни на наш канал, ни на группу обсуждения."]
+                        "ты не подписан на наш канал."]
             if ch:
                 text_out.append(f"\n📢 Подпишись ({visual}) — и возвращайся, я жду!")
             else:
-                text_out.append("\n📢 Подпишись на канал/группу — и возвращайся, я жду!")
+                text_out.append("\n📢 Подпишись на канал — и возвращайся, я жду!")
             text_out.append("После подписки нажми «Проверить» или отправь /start.")
             text = "\n".join(text_out)
             if isinstance(event, CallbackQuery):

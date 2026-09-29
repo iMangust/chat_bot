@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import html
 import re
 
@@ -10,6 +11,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InputMediaPhoto, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from loguru import logger
 
 from app.config import get_settings
 from app.db.repositories import EventRepository
@@ -163,13 +165,30 @@ async def _render_list(cb: CallbackQuery, session) -> None:
     await safe_edit_or_answer(cb.message, text, reply_markup=b.as_markup())
 
 
+_KNOWN_MENU_PREFIXES = ("main", "page", "noop", "merch", "pet", "arena",
+                        "stats", "shop", "game", "settings", "profile")
+
+
 @router.callback_query(F.data == "menu:events")
 async def menu_events(cb: CallbackQuery, session) -> None:
-    await _render_list(cb, session)
-    await cb.answer()
+    try:
+        await _render_list(cb, session)
+        await cb.answer()
+    except Exception as exc:
+        logger.exception("menu:events render failed: {}", exc)
+        with contextlib.suppress(Exception):
+            await cb.answer("Не удалось загрузить мероприятия 😅", show_alert=True)
+
 
 @router.callback_query(CommandStart("menu"))
 async def menu_any_unhandled(cb: CallbackQuery) -> None:
+    # Only warn for genuinely unknown menu:* buttons (stale keyboards from old
+    # versions). Known prefixes must never be swallowed here.
+    sub = (cb.data or "").split(":", 1)[1] if ":" in (cb.data or "") else ""
+    head = sub.split(":")[0]
+    if head in _KNOWN_MENU_PREFIXES:
+        await cb.answer()
+        return
     if cb.data and cb.data.count(":") >= 2:
         try:
             await cb.message.delete_reply_markup()

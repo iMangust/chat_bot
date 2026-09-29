@@ -232,8 +232,8 @@ async def weekly_arena_finish(bot: Bot) -> None:
 
 async def scan_channel_members(bot: Bot) -> None:
     st = get_settings()
-    from app.middlewares.gate import required_chats
-    if not required_chats():
+    from app.middlewares.gate import required_chats, serviceable_chats
+    if not serviceable_chats():
         return
     if not await acquire_lock("channel_scan", ttl_sec=max(60, st.channel_scan_minutes * 60 - 30)):
         return
@@ -243,7 +243,7 @@ async def scan_channel_members(bot: Bot) -> None:
             repo = SubscriberRepository(session)
             known_users = await repo.distinct_user_count()
             known_rows = await repo.count()
-            chats = required_chats()
+            chats = serviceable_chats()
             probe_chat = st.channel_chat_id or (chats[0][0] if chats else None)
             total = None
             if probe_chat is not None:

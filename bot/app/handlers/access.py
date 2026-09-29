@@ -59,7 +59,7 @@ async def register_member(user_id: int, chat_id: int | str | None = None, *,
     if arrived and real_event and chat_id is not None and bot is not None:
         n = access_service.numeric_chat_id(chat_id)
         targets: list[str | int] = []
-        for cid, uname in access_service.required_chats():
+        for cid, uname in access_service._all_serviceable_chats():
             if uname:
                 targets.append("@" + uname.lstrip("@"))
             raw = str(cid).lstrip("@")
@@ -167,7 +167,7 @@ async def cmd_subscribers(message: Message, session: AsyncSession) -> None:
 
     repo = SubscriberRepository(session)
     stats = await repo.registry_stats()
-    chats = access_service.required_chats()
+    chats = access_service._all_serviceable_chats()
     lines = [
         "👥 <b>Реестр доступа</b>",
         f"• человек в реестре: {stats['total']}",
@@ -209,7 +209,7 @@ async def cb_gate_check(cb: CallbackQuery, bot: Bot) -> None:
     diag.append("Bot API: " + "; ".join(f"{k}={v}" for k, v in statuses.items()))
     diag.append(f"Реестр: {await access_service.registry_state(cb.from_user.id)}")
     mt = []
-    for cid, uname in access_service.required_chats():
+    for cid, uname in access_service._all_serviceable_chats():
         kind, res = await access_service.mtproto_status(uname or cid, cb.from_user.id)
         mt.append(f"@{uname or cid}: {kind} {str(res)[:60]}")
     diag.append("MTProto: " + ("; ".join(mt) if mt else "нет чатов"))

@@ -44,7 +44,9 @@ async def start_userbot(bot) -> asyncio.Task | None:
         if msg.out or (msg.sender and getattr(msg.sender, "bot", False)):
             return
         from app.middlewares.gate import required_chats
-        tracked = {abs(int(c)) for c, _ in required_chats()}
+        tracked = {abs(int(c)) for c, _ in required_chats()} | {
+            abs(int(c)) for c, _ in __import__("app.services.access", fromlist=["_all_serviceable_chats"])._all_serviceable_chats()
+            if str(c).lstrip("-").isdigit()}
         try:
             chat_id = int(event.chat_id)
         except (TypeError, ValueError):

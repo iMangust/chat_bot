@@ -17,7 +17,7 @@ async def collect_participant_ids() -> list[int]:
         await holder.get()
 
     from app.middlewares import gate as _gate_mod
-    chats = _gate_mod.required_chats()
+    chats = _gate_mod.serviceable_chats()
     if not chats:
         raise RuntimeError("required_chats пуст — нечего синхронизировать")
 
@@ -88,7 +88,7 @@ async def collect_participant_ids() -> list[int]:
 async def collect_participants_by_chat() -> dict[int, set[int]]:
     from app.middlewares import gate as gate_mod
 
-    chats = list(gate_mod.required_chats())
+    chats = list(gate_mod.serviceable_chats())
     out: dict[int, set[int]] = {}
     orig = gate_mod.required_chats
     try:
@@ -203,12 +203,12 @@ async def full_rescan_subscribers() -> dict:
     from app.db.models import ChannelSubscriber
     from app.db.repositories import SubscriberRepository
     from app.db.session import session_factory
-    from app.middlewares.gate import required_chats
+    from app.middlewares.gate import serviceable_chats
     from app.services.mtproto_client import holder, iter_all_participants
 
     if not mtproto_configured():
         return {"skipped": "mtproto not configured"}
-    chats = required_chats()
+    chats = serviceable_chats()
     if not chats:
         return {"skipped": "no required chats"}
 

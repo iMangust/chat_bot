@@ -79,7 +79,11 @@ async def _notify_merch_admins(bot: Bot, text: str, kb) -> None:
 @router.callback_query(F.data == "menu:merch")
 async def merch_screen(cb: CallbackQuery, session) -> None:
     repo = MerchRepository(session)
-    cats = await repo.categories()
+    all_cats = await repo.categories()
+    cats = []
+    for c in all_cats:
+        if await repo.products(c.id):
+            cats.append(c)
     lines = ["🧢 <b>Мерч канала</b>",
              "",
              "Одежда и атрибутика с фирменными принтами. Выбирай категорию 👇"]
@@ -142,19 +146,27 @@ async def merch_product(cb: CallbackQuery, session) -> None:
     sizes = [x for x in (product.sizes or []) if x and x != "one"]
     colors = [c for c in (product.colors or []) if c]
     variants = await repo.variants(pid)
+    if sizes:
+        sizes = [sz for sz in sizes if any(v.size == sz and v.stock > 0 for v in variants)]
     b = InlineKeyboardBuilder()
     if sizes:
         lines = [f"{icon} <b>{html.escape(product.name)}</b>", "", "📏 Выбери размер:"]
         for sz in sizes:
-            has = any(v.size == sz and v.stock > 0 for v in variants)
-            b._vb(f"{sz}{'' if has else ' ✖'}", f"merch:size:{pid}:{sz}")
+            b._vb(sz, f"merch:size:{pid}:{sz}")
         _vsplit(b)
         _vbtn(b, "⬅️ Назад", back_cb)
         _vbtn(b, "🏠 Меню", "menu:main")
         await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=b.as_markup())
         return await cb.answer()
     if colors:
-        return await _render_variant_screen(cb, repo, product, "", colors[0], back_cb)
+        colors = [c for c in colors if any(v.color == c and v.stock > 0 for v in variants)]
+        if colors:
+            return await _render_variant_screen(cb, repo, product, "", colors[0], back_cb)
+        await safe_edit_or_answer(
+            cb.message,
+            f"{icon} <b>{html.escape(product.name)}</b>\n\n😔 Все размеры и цвета этой модели распроданы.",
+            reply_markup=None)
+        return await cb.answer()
     if variants:
         return await _render_variant_screen(cb, repo, product, variants[0].size,
                                             variants[0].color, back_cb)
@@ -184,13 +196,18 @@ async def merch_size(cb: CallbackQuery, session) -> None:
             return await cb.answer("Позиция не найдена 😅", show_alert=True)
         return await _render_variant_screen(cb, repo, product, size, match.color,
                                             f"merch:prod:{pid}")
+    colors = [c for c in colors
+              if any(x.color == c and x.stock > 0 for x in variants if x.size == size)]
+    if not colors:
+        return await cb.answer("В этом размере всё распродано 😔", show_alert=True)
     lines = [f"🎨 <b>{html.escape(product.name)}</b> · размер <b>{html.escape(size)}</b>", "",
              "Выбери цвет:"]
     b = InlineKeyboardBuilder()
     for c in colors:
-        v = next((x for x in variants if x.size == size and x.color == c), None)
-        ok = v is not None and v.stock > 0
-        b._vb(f"{c}{'' if ok else ' ✖'}", f"merch:var:{v.id if v else 0}")
+        v = next((x for x in variants if x.size == size and x.color == c and x.stock > 0), None)
+        if v is None:
+            continue
+        b._vb(c, f"merch:var:{v.id}")
     _vsplit(b)
     _vbtn(b, "⬅️ К размерам", f"merch:prod:{pid}")
     _vbtn(b, "🏠 Меню", "menu:main")

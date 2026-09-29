@@ -63,34 +63,31 @@ def schedule_celebration(bot, user_id: int, first_name: str = "") -> None:
     _celebrate_tasks.add(task)
     task.add_done_callback(_celebrate_tasks.discard)
 
-def required_chats() -> list[tuple[str, str]]:
+def channel_required_chats() -> list[tuple[str, str]]:
     st = get_settings()
-    seen: set[str] = set()
     chats: list[tuple[str, str]] = []
-
-    def _add(value: object, uname: str = "") -> None:
-        key = str(value or "").strip()
-        if key and key not in seen:
-            seen.add(key)
-            chats.append((key, uname))
-
-    for cid in st.tracked_chat_ids:
-        _add(str(cid))
     ch_num = str(st.channel_chat_id).strip() if st.channel_chat_id else ""
     ch_uname = (st.channel_username or "").lstrip("@").strip()
     if ch_num and ch_uname:
-        seen.discard(ch_num)
-        chats[:] = [c for c in chats if c[0] != ch_num]
         chats.append((ch_num, ch_uname))
     elif ch_num:
-        _add(ch_num)
+        chats.append((ch_num, ""))
     elif ch_uname:
-        _add("@" + ch_uname, ch_uname)
+        chats.append(("@" + ch_uname, ch_uname))
     return chats
+
+
+def required_chats() -> list[tuple[str, str]]:
+    """Chats whose membership is REQUIRED to talk to the bot.
+
+    Only the channel (CHANNEL_USERNAME / CHANNEL_CHAT_ID) gates access.
+    TRACKED_CHAT_IDS are activity/tracking chats (XP, reactions, events) —
+    subscribing to a group there is NOT mandatory."""
+    return channel_required_chats()
 
 def watched_chat_ids() -> set[int]:
     ids: set[int] = set()
-    for cid, uname in required_chats():
+    for cid, uname in _all_serviceable_chats():
         n = numeric_chat_id(cid)
         if n is None and uname:
             n = numeric_chat_id(uname)
@@ -103,6 +100,30 @@ def is_watched(chat_id: int | None) -> bool:
         return False
     ids = watched_chat_ids()
     return not ids or int(chat_id) in ids
+
+
+def _all_serviceable_chats() -> list[tuple[str, str]]:
+    st = get_settings()
+    seen: set[str] = set()
+    chats: list[tuple[str, str]] = []
+
+    def _add(value: object, uname: str = "") -> None:
+        key = str(value or "").strip()
+        if key and key not in seen:
+            seen.add(key)
+            chats.append((key, uname))
+
+    for cid in st.tracked_chat_ids:
+        _add(str(cid))
+    for cid, uname in channel_required_chats():
+        n = numeric_chat_id(cid)
+        k = str(n) if n is not None else cid
+        if k in seen:
+            chats[:] = [c for c in chats if str(numeric_chat_id(c[0]) or c[0]) != k]
+        seen.add(k)
+        chats.append((cid, uname))
+    return chats
+
 
 def numeric_chat_id(target: str | int) -> int | None:
     s = str(target).lstrip("@")
@@ -184,7 +205,7 @@ async def registry_state(user_id: int) -> str:
 async def api_status_for(bot, user_id: int) -> tuple[dict[str, str], bool]:
     statuses: dict[str, str] = {}
     errored = False
-    for cid, uname in required_chats():
+    for cid, uname in _all_serviceable_chats():
         target = f"@{uname}" if uname else cid
         try:
             member = await bot.get_chat_member(target, user_id)
@@ -272,7 +293,7 @@ async def _refresh_registry_impl(bot, user_id: int) -> bool:
     import time
 
     ran = False
-    for cid, uname in required_chats():
+    for cid, uname in channel_required_chats():
         target = uname or cid
         key = str(target)
         now = time.monotonic()
