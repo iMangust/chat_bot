@@ -155,13 +155,24 @@ async def _api_membership_verdict(bot, user_id: int):
             has_negative = True
     return False if has_negative else None
 
+async def _api_confirms_member(bot, user_id: int) -> bool | None:
+    try:
+        verdict = await _api_membership_verdict(bot, user_id)
+    except Exception:
+        return None
+    if verdict is True:
+        return True
+    if verdict is False:
+        logger.info("gate: registry row for {} ignored — Bot API confirms "
+                    "not a member (stale/phantom record)", user_id)
+        return False
+    return None
+
 async def known_subscriber_in_db(user_id: int, bot=None) -> bool:
     if bot is not None:
-        verdict = await _api_membership_verdict(bot, user_id)
-        if verdict is False:
-            logger.info("gate: registry row for {} ignored — Bot API confirms "
-                        "not a member (stale/phantom record)", user_id)
-            return False
+        confirmed = await _api_confirms_member(bot, user_id)
+        if confirmed is not None:
+            return confirmed
     return await known_subscriber_in_required_chats(user_id)
 
 async def known_subscriber_ids(user_ids: list[int] | set[int]) -> set[int]:

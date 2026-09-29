@@ -110,6 +110,33 @@ async def collect_participants_by_chat() -> dict[int, set[int]]:
         gate_mod.required_chats = orig
     return out
 
+async def _bot_api_confirmed_members(chat_id: int, uids: set[int]) -> set[int]:
+    if not uids:
+        return set()
+    try:
+        from aiogram import Bot
+
+        bot = Bot(get_settings().bot_token) if get_settings().bot_token else None
+        if bot is None:
+            return uids
+    except Exception:
+        return uids
+    from aiogram.exceptions import TelegramAPIError
+    out: set[int] = set()
+    for uid in uids:
+        try:
+            member = await bot.get_chat_member(chat_id, uid)
+            if str(getattr(member, "status", "") or "") in (
+                    "member", "administrator", "creator"):
+                out.add(uid)
+        except TelegramAPIError:
+            out.add(uid)
+        except Exception as exc:
+            logger.debug("MTProto sync: Bot API verify {} in {} failed: {}",
+                         uid, chat_id, type(exc).__name__)
+            out.add(uid)
+    return out
+
 async def sync_subscribers(first_run: bool = False) -> dict:
     from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
     from app.db.repositories import SubscriberRepository
@@ -131,7 +158,10 @@ async def sync_subscribers(first_run: bool = False) -> dict:
             subs = SubscriberRepository(session)
             for chat_id, uids in per_chat.items():
                 already = await subs.member_ids_by_chat(chat_id)
-                for uid in sorted(uids - already):
+                new_ids = uids - already
+                if new_ids:
+                    new_ids = await _bot_api_confirmed_members(chat_id, new_ids)
+                for uid in sorted(new_ids):
                     if uid in self_ids:
                         continue
                     if await subs.add_if_new(uid, chat_id):
@@ -165,6 +195,7 @@ async def full_rescan_subscribers() -> dict:
 
     added = updated = total_seen = 0
     failures: list[str] = []
+    api_verified: dict[int, set[int]] = {}
     async with session_factory() as session:
         subs = SubscriberRepository(session)
         for cid, uname in chats:
@@ -183,12 +214,28 @@ async def full_rescan_subscribers() -> dict:
                                target, reason)
                 continue
             total_seen += len(members)
+            new_uids = {int(m["id"]) for m in members
+                        if int(m["id"]) not in self_ids}
+            existing_rows = set()
+            async with session_factory() as s0:
+                from sqlalchemy import select as _select
+                from app.db.models import ChannelSubscriber as _CS
+                rows0 = (await s0.execute(
+                    _select(_CS.user_id, _CS.chats))).all()
+                for uid0, chats0 in rows0:
+                    if int(uid0) in new_uids:
+                        existing_rows.add(int(uid0))
+            to_verify = {u for u in new_uids if u not in existing_rows}
+            api_verified[int(cid)] = await _bot_api_confirmed_members(
+                int(cid), to_verify) if to_verify else set()
             for m in members:
                 uid = int(m["id"])
                 if uid in self_ids:
                     continue
                 row = await session.get(ChannelSubscriber, uid)
                 if row is None:
+                    if uid not in api_verified[int(cid)]:
+                        continue
                     if await subs.add_if_new(uid, cid,
                                              first_name=m.get("first_name") or "",
                                              username=m.get("username")):

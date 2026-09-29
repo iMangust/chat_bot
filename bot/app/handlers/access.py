@@ -56,6 +56,19 @@ async def register_member(user_id: int, chat_id: int | str | None = None, *,
                           first_name: str = "", username: str | None = None,
                           real_event: bool = True, contacted: bool = False,
                           arrived: bool = True, bot=None) -> None:
+    if arrived and real_event and chat_id is not None and bot is not None:
+        with contextlib.suppress(Exception):
+            n = access_service.numeric_chat_id(chat_id)
+            confirmed = await bot.get_chat_member(n if n is not None else chat_id,
+                                                  user_id)
+            if str(getattr(confirmed, "status", "") or "") not in (
+                    ChatMemberStatus.MEMBER.value,
+                    ChatMemberStatus.ADMINISTRATOR.value,
+                    ChatMemberStatus.CREATOR.value):
+                logger.info("access: skip registry write for {} in {} — Bot API "
+                            "says '{}' (event/scan said member)", user_id,
+                            chat_id, getattr(confirmed, "status", "?"))
+                return
     await access_service.record_membership(
         user_id, chat_id, first_name=first_name, username=username,
         real_event=real_event, contacted=contacted, arrived=arrived)
@@ -73,8 +86,8 @@ async def ensure_registry_fresh(bot: Bot, user_id: int) -> bool:
 def last_scan_stats() -> tuple[int | None, int | None]:
     return (access_service.LAST_SCAN_SEEN, access_service.LAST_SCAN_TOTAL)
 
-async def scan_channel_participants(target: str) -> int:
-    return await access_service.scan_chat_participants(target)
+async def scan_channel_participants(target: str, bot=None) -> int:
+    return await access_service.scan_chat_participants(target, bot)
 
 async def handle_chat_member(update: ChatMemberUpdated, bot: Bot) -> None:
     if not access_service.is_watched(update.chat.id):

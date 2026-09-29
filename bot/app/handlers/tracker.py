@@ -66,10 +66,9 @@ async def track_group_message(message: Message, session: AsyncSession) -> None:
     media_type = detect_media_type(message)
 
     if message.from_user is not None and not message.from_user.is_bot:
-        from app.handlers.access import register_member
-        await register_member(
-            author, message.chat.id,
-            first_name=message.from_user.first_name or "",
+        from app.services.access import remember_contact
+        await remember_contact(
+            author, first_name=message.from_user.first_name or "",
             username=message.from_user.username)
 
     svc = ActivityService(session, bot=message.bot)

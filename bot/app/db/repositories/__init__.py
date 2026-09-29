@@ -432,13 +432,16 @@ class SubscriberRepository:
                     chats.remove(cid_norm)
                     row.chats = chats
                     changed = True
-            elif cid_norm not in chats:
+                with contextlib.suppress(Exception):
+                    from app.middlewares.gate import reset_subscribe_cache
+                    reset_subscribe_cache(uid)
+            elif real_event and cid_norm not in chats:
                 chats.append(cid_norm)
                 row.chats = chats
                 changed = True
-            with contextlib.suppress(Exception):
-                from app.middlewares.gate import reset_subscribe_cache
-                reset_subscribe_cache(uid)
+                with contextlib.suppress(Exception):
+                    from app.middlewares.gate import reset_subscribe_cache
+                    reset_subscribe_cache(uid)
         row.last_seen_at = utcnow()
         if contacted:
             if not row.ever_contacted:

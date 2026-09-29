@@ -184,7 +184,18 @@ async def cb_gate_check(cb: CallbackQuery, bot: Bot, session: AsyncSession) -> N
 
 @router.callback_query(F.data == "onb:start")
 async def cb_onboard_start(cb: CallbackQuery, state: FSMContext,
-                           session: AsyncSession) -> None:
+                           session: AsyncSession, bot: Bot) -> None:
+    if not await is_channel_subscribed(bot, cb.from_user.id):
+        from app.middlewares.gate import subscribe_kb
+        await cb.answer("Сначала подпишись на канал 📢", show_alert=True)
+        with contextlib.suppress(Exception):
+            await safe_edit_or_answer(
+                cb.message,
+                "🔒 Взаимодействие с ботом недоступно:\nты не подписан ни на наш "
+                "канал, ни на группу обсуждения.\n\n📢 Подпишись — и возвращайся, "
+                "я жду!\nПосле подписки нажми «Проверить».",
+                reply_markup=subscribe_kb())
+        return
     users = UserRepository(session)
     user = await users.get_or_create(cb.from_user.id, cb.from_user.first_name or "",
                                      cb.from_user.username)

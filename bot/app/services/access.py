@@ -206,7 +206,7 @@ async def mtproto_status(target: str | int, user_id: int) -> tuple[str, str]:
     except Exception as exc:
         return ("error", f"{type(exc).__name__}: {str(exc)[:120]}")
 
-async def scan_chat_participants(target: str) -> int:
+async def scan_chat_participants(target: str, bot=None) -> int:
     global LAST_SCAN_SEEN, LAST_SCAN_TOTAL
     from app.services.mtproto_sync import mtproto_configured
 
@@ -226,6 +226,16 @@ async def scan_chat_participants(target: str) -> int:
             uid = int(m["id"])
         except (KeyError, TypeError, ValueError):
             continue
+        if bot is not None and cid is not None:
+            can_write = False
+            try:
+                member = await bot.get_chat_member(cid, uid)
+                can_write = str(getattr(member, "status", "") or "") in (
+                    "member", "administrator", "creator")
+            except Exception:
+                can_write = False
+            if not can_write:
+                continue
         await record_membership(uid, cid, first_name=m.get("first_name") or "",
                                 username=m.get("username"))
         added += 1
@@ -266,7 +276,7 @@ async def _refresh_registry_impl(bot, user_id: int) -> bool:
             continue
         _scan_busy.add(key)
         try:
-            await scan_chat_participants(target)
+            await scan_chat_participants(target, bot)
             ran = True
         finally:
             _scan_busy.discard(key)
