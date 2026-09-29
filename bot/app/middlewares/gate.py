@@ -42,21 +42,28 @@ def required_chats() -> list[tuple[str, str]]:
         chats.append((cid, uname))
     return chats
 
-def subscribe_kb() -> "Any":
-    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+def channel_link() -> tuple[str, str]:
     st = get_settings()
-    rows = []
-    ch = st.channel_username or ""
+    ch = (st.channel_username or "").strip().lstrip("@")
     if not ch:
         for cid, uname in required_chats():
             if uname:
-                ch = uname
+                ch = uname.strip().lstrip("@")
                 break
-            if cid.startswith("-100"):
-                ch = f"+{cid[4:]}"
+            elif cid and not cid.startswith("-100"):
+                ch = cid
                 break
+    if not ch:
+        return "", ""
+    visual = (st.channel_username_visual or "").strip() or f"t.me/{ch}"
+    return ch, visual
+
+def subscribe_kb() -> "Any":
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    rows = []
+    ch, visual = channel_link()
     if ch:
-        rows.append([InlineKeyboardButton(text=f"📢 Подписаться: t.me/{ch}",
+        rows.append([InlineKeyboardButton(text=f"📢 Подписаться: {visual}",
                                           url=f"https://t.me/{ch}")])
     rows.append([InlineKeyboardButton(text="✅ Я подписался — проверить",
                                       callback_data="gate:check")])
@@ -635,12 +642,11 @@ class AccessGateMiddleware(BaseMiddleware):
 
         exempt = isinstance(event, Message) and _is_entry_command(event, bot_name)
         if not exempt and not subscribed:
-            ch = get_settings().channel_username
-            link = f"t.me/{ch}" if ch else ""
+            ch, visual = channel_link()
             text_out = ["🔒 Взаимодействие с ботом недоступно:",
                         "ты не подписан ни на наш канал, ни на группу обсуждения."]
-            if link:
-                text_out.append(f"\n📢 Подпишись ({link}) — и возвращайся, я жду!")
+            if ch:
+                text_out.append(f"\n📢 Подпишись ({visual}) — и возвращайся, я жду!")
             else:
                 text_out.append("\n📢 Подпишись на канал/группу — и возвращайся, я жду!")
             text_out.append("После подписки нажми «Проверить» или отправь /start.")

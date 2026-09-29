@@ -22,7 +22,7 @@ from app.utils.formatting import progress_bar, xp_needed_for_level
 from app.utils.safe_edit import safe_edit_or_answer
 from app.config import get_settings
 from loguru import logger
-from app.middlewares.gate import is_channel_subscribed, reset_subscribe_cache
+from app.middlewares.gate import channel_link, is_channel_subscribed, reset_subscribe_cache
 
 router = Router(name="start")
 
@@ -52,33 +52,31 @@ def species_picker_text() -> str:
 
 WELCOME_DM = (
     "👋 Привет, <b>{name}</b>!\n\n"
-    "Я — бот-компаньон канала . Вот что я умею:\n"
-    "• 🐾 Виртуальный питомец-тамагочи — корми, мой, играй, тренируй, гуляй;\n"
-    "   он растёт (яйцо → легенда), болеет и лечится вместе с тобой;\n"
-    "• 🌦️ Живая погода Петропавловска-Камчатского (OpenWeather): солнце бодрит\n"
-    "   питомца и удваивает находки на прогулке, дождь и мороз — грустят и могут\n"
-    "   простудить; перед прогулкой бот покажет прогноз на ближайшие 3 часа;\n"
-    "• 📊 Активность — за сообщения в чате (текст, фото, голосовые, кружки,\n"
-    "   стикеры) и реакции капают XP и 🪙 монеты; ежедневный стрик множит награды;\n"
-    "• 🏆 20+ достижений и уровни — прогресс считается автоматически, в том\n"
-    "   числе за действия с питомцем (кормления, прогулки);\n"
-    "• ⚔️ Арена — еженедельные дуэли питомцев за призы;\n"
-    "• 🏅 Топы недели — покажи, кто тут главный болтун;\n"
-    "• 🛒 Магазин и 🎒 инвентарь — еда, энергетики, лекарства и щиты от простуды\n"
-    "   (внутри «🐾 Питомец» → «🎒 Вещи», страницы листаются ◀️ ▶️);\n"
-    "• 🖼 PNG-карточка профиля со всеми статами.\n\n"
-    "Полная справка — /help, погода и её плюсы/минусы — /weather.\n"
-    "Правила простые: общайся в чате, не флуди, ставь реакции — это тоже считается.\n"
-    "{channel_line}\n"
-    "Нажми «Начать», чтобы завести питомца!"
+    "Я — бот-компаньон канала {channel_name}. Здесь живут подписчики: "
+    "общение, награды и немного магии 🐾\n\n"
+    "Что тебя ждёт внутри:\n"
+    "• 🧢 Мерч канала и предстоящие мероприятия;\n"
+    "• 🐾 Питомец-тамагочи с играми и ⚔️ Ареной;\n"
+    "• 🏆 Достижения, уровни, топы недели и 🖼 карточка профиля;\n"
+    "• 🌦️ Живая погода и активность в чате — всё приносит XP и 🪙 монеты.\n\n"
+    "{channel_line}"
+    "Нажми «Начать», чтобы познакомиться поближе!"
 )
 
 def _channel_line() -> str:
-    ch = get_settings().channel_username
-    return f"📢 Наш канал: t.me/{ch}\n" if ch else ""
+    from app.middlewares.gate import channel_link
+    ch, visual = channel_link()
+    if not ch:
+        return ""
+    return f"📢 Наш канал: <a href=\"https://t.me/{ch}\">{visual}</a>\n"
+
+def _channel_title() -> str:
+    from app.middlewares.gate import channel_link
+    ch, visual = channel_link()
+    return visual or "нашего канала"
 
 def invite_link_for(tg_id: int) -> str:
-    ch = get_settings().channel_username
+    ch = (get_settings().channel_username or "").strip().lstrip("@")
     if not ch:
         return ""
     return f"https://t.me/{ch}?start=invite_{tg_id}"
@@ -86,7 +84,7 @@ def invite_link_for(tg_id: int) -> str:
 def _main_menu_text(user, page: int = 0) -> str:
     need = xp_needed_for_level(user.level)
     bar = progress_bar(user.xp, need)
-    ch = get_settings().channel_username
+    ch, visual = channel_link()
     title, _actions = MENU_PAGES[page % len(MENU_PAGES)]
     lines = [
         f"🏠 <b>Главное меню · {title}</b>\n",
@@ -103,7 +101,7 @@ def _main_menu_text(user, page: int = 0) -> str:
         "• ⚔️ Попробуй Арену — еженедельные дуэли питомцев за призы",
     ]
     if ch:
-        lines += ["", f"📢 Новости канала: t.me/{ch}"]
+        lines += ["", f"📢 Новости канала: {visual} (t.me/{ch})"]
     return "\n".join(lines)
 
 private_only = F.chat.type == "private"
@@ -139,7 +137,9 @@ async def cmd_start(message: Message, state: FSMContext, session: AsyncSession,
     if not user.onboarded:
         await message.answer(
             WELCOME_DM.format(name=_html.escape(user.first_name or "друг"),
-                                channel_line=_channel_line()),
+                              channel_name=_html.escape(_channel_title()),
+                              channel_line=_channel_line()),
+            parse_mode="HTML",
             reply_markup=welcome_start_button(),
         )
         return

@@ -149,6 +149,7 @@ class Settings(BaseSettings):
     redis_socket_timeout: int = 5
 
     channel_username: str | None = None
+    channel_username_visual: str | None = None
     channel_chat_id: int | None = None
 
     channel_scan_minutes: int = 30

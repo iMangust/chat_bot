@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+import html as _html_mod
 from typing import Iterable
 
 from loguru import logger
@@ -26,6 +27,7 @@ async def celebrate_subscription(bot, user_id: int, first_name: str = "") -> Non
         return
     st = get_settings()
     uname = (st.channel_username or "").lstrip("@").strip()
+    visual = (getattr(st, "channel_username_visual", None) or "").strip() or (f"t.me/{uname}" if uname else "")
     link = f"https://t.me/{uname}" if uname else None
     reward_xp, reward_coins = 50, 20
     try:
@@ -42,7 +44,7 @@ async def celebrate_subscription(bot, user_id: int, first_name: str = "") -> Non
             f"Начисляем бонус за вступление: <b>+{reward_xp} XP</b> и "
             f"<b>+{reward_coins} монет</b> 🪙\n\n")
     if link:
-        text += f"Там свежие новости и анонсы: {link}\n\n"
+        text += f"Там свежие новости и анонсы: <a href=\"{link}\">{_html_mod.escape(visual)}</a>\n\n"
     text += "Нажми «Начать», чтобы завести питомца 👇"
     kb = None
     with contextlib.suppress(Exception):
