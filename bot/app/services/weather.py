@@ -30,7 +30,8 @@ _HTTP_CONNECT_TIMEOUT = 6.0
 _HTTP_READ_TIMEOUT = 10.0
 
 def openweather_key() -> str:
-    for var in (OPENWEATHER_KEY_ENV, "OWM_API_KEY", "OWM_APP_ID"):
+    for var in (OPENWEATHER_KEY_ENV, "OPENWEATHER_API_TOKEN",
+                "OWM_API_KEY", "OWM_APP_ID"):
         tok = os.getenv(var, "").strip()
         if tok:
             return tok
@@ -43,7 +44,8 @@ def openweather_key() -> str:
             if tok:
                 return tok
         extra = getattr(s, "model_extra", None) or {}
-        for key in (OPENWEATHER_KEY_ENV.lower(), "owm_api_key", "owm_app_id"):
+        for key in (OPENWEATHER_KEY_ENV.lower(), "openweather_api_token",
+                    "owm_api_key", "owm_app_id"):
             tok = str(extra.get(key, "") or "").strip()
             if tok:
                 return tok
@@ -314,7 +316,12 @@ async def fetch_openweather() -> dict | None:
                     snap = _parse_owm_onecall(resp.json())
                     if snap:
                         return snap
-                elif resp.status_code not in (401, 403, 404):
+                elif resp.status_code in (401, 403):
+                    logger.info(
+                        "openweather onecall: HTTP {} — ключ без доступа к One Call "
+                        "(бесплатный тариф), перехожу на /2.5/weather",
+                        resp.status_code)
+                else:
                     logger.warning("openweather onecall: HTTP {}", resp.status_code)
             except Exception as exc:
                 logger.debug("openweather onecall недоступен: {}", str(exc)[:120])

@@ -441,6 +441,39 @@ class SubscriberRepository:
             await self.session.commit()
         return changed
 
+    async def add_if_new(self, user_id: int, chat_id: int,
+                         first_name: str = "", username: str | None = None) -> bool:
+        from app.db.models import ChannelSubscriber
+        uid, cid = int(user_id), int(chat_id)
+        row = (await self.session.execute(
+            select(ChannelSubscriber)
+            .where(ChannelSubscriber.user_id == uid)
+        )).scalar_one_or_none()
+        if row is None:
+            self.session.add(ChannelSubscriber(
+                user_id=uid, chats=[cid], first_name=first_name or "",
+                username=username))
+            await self.session.commit()
+            return True
+        changed = False
+        if first_name and row.first_name != first_name:
+            row.first_name = first_name
+            changed = True
+        if username and row.username != username:
+            row.username = username
+            changed = True
+        chats = list(row.chats or [])
+        if cid not in chats:
+            chats.append(cid)
+            row.chats = chats
+            changed = True
+            with contextlib.suppress(Exception):
+                from app.middlewares.gate import reset_subscribe_cache
+                reset_subscribe_cache(uid)
+        if changed:
+            await self.session.commit()
+        return changed
+
     async def add_membership_sql(self, user_id: int, chat_id: int) -> None:
         from app.db.models import ChannelSubscriber
         uid, cid = int(user_id), int(chat_id)
