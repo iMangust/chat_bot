@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import html
-import io
 
 from aiogram import Bot, F, Router
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.enums import ChatType
-from aiogram.types import (BufferedInputFile, CallbackQuery, InlineKeyboardButton,
+from aiogram.types import (CallbackQuery, InlineKeyboardButton,
                           InputMediaPhoto, Message)
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from loguru import logger
@@ -54,7 +53,7 @@ def _media_ref(product, v) -> str | None:
 
 def _variant_caption(product, v) -> str:
     lines = [f"🧢 <b>{html.escape(product.name)}</b>",
-             f"📏 Размер: <b>{html.escape(v.size or '—')}</b> · 🎨 Цвет: <b>{html.escape(v.color or '—')}</b>",
+             f"📏 Размер: <b>{html.escape(v.size or '—')}</b> · 🎨 {_color_label(v.color)}",
              f"💳 Цена: <b>{v.price_rub:,} ₽</b>"]
     if v.stock <= 0:
         lines.append("📦 Остаток: <b>нет в наличии</b>")
@@ -319,7 +318,7 @@ async def merch_admin_action(cb: CallbackQuery, session) -> None:
             await cb.bot.send_message(
                 buyer,
                 f"🎉 <b>Поздравляем с покупкой!</b>\n\n🧢 {html.escape(pname)} · "
-                f"{html.escape(v.size or '—')} · {html.escape(v.color or '—')} — {v.price_rub:,} ₽\n\n"
+                f"{html.escape(v.size or '—')} · {_color_label(v.color)} — {v.price_rub:,} ₽\n\n"
                 "Спасибо, что ты с нами! Мерч уже едет к тебе 🚀",
                 parse_mode="HTML")
         except Exception:
@@ -390,15 +389,51 @@ HELP_LINES = [
 
 DEFAULT_SIZES = ["S", "M", "L", "XL", "XXL"]
 COLOR_PALETTE = [
-    ("🩷", "Розовый"), ("🖤", "Чёрный"), ("🤍", "Белый"), ("🩶", "Серый"),
-    ("💙", "Синий"), ("❤️", "Красный"), ("💚", "Зелёный"), ("💛", "Жёлтый"),
-    ("🧡", "Оранжевый"), ("💜", "Фиолетовый"), ("🤎", "Коричневый"), ("🩵", "Голубой"),
-    ("🫐", "Индиго"), ("🌲", "Тёмно-зелёный"), ("🍷", "Бордовый"), ("🌸", "Пудровый"),
-    ("🥶", "Мятный"), ("👑", "Золотой"), ("⚡", "Серебряный"), ("🔥", "Огненный"),
-    ("🌈", "Мультиколор"), ("🌫", "Хаки"),
+    ("Розовый", "🩷"), ("Чёрный", "🖤"), ("Белый", "🤍"), ("Серый", "🩶"),
+    ("Синий", "💙"), ("Красный", "❤️"), ("Зелёный", "💚"), ("Жёлтый", "💛"),
+    ("Оранжевый", "🧡"), ("Фиолетовый", "💜"), ("Коричневый", "🤎"), ("Голубой", "🩵"),
+    ("Индиго", "🟪"), ("Тёмно-зелёный", "🟩"), ("Бордовый", "🟥"), ("Пудровый", "🌸"),
+    ("Мятный", "🟢"), ("Золотой", "👑"), ("Серебряный", "⚡"), ("Огненный", "🔥"),
+    ("Мультиколор", "🌈"), ("Хаки", "🫒"), ("Бежевый", "🐫"), ("Молочный", "🥛"),
+    ("Изумрудный", "💚"), ("Лавандовый", "💐"), ("Фуксия", "🌺"), ("Салатовый", "🥬"),
+    ("Горчичный", "🌭"), ("Терракотовый", "🧱"), ("Графитовый", "✒️"), ("Стальной", "⚙️"),
+    ("Лазурный", "🌊"), ("Бирюзовый", "🪩"), ("Винный", "🍇"), ("Кофейный", "☕"),
+    ("Кремовый", "🍦"), ("Песочный", "🏖"), ("Шоколадный", "🍫"), ("Вишнёвый", "🍒"),
+    ("Коралловый", "🪸"), ("Персиковый", "🍑"), ("Лимонный", "🍋"), ("Небесный", "☁️"),
 ]
-ALL_COLORS = [name for _, name in COLOR_PALETTE]
+ALL_COLORS = [name for name, _ in COLOR_PALETTE]
 DEFAULT_COLORS = ALL_COLORS[:4]
+COLOR_EMOJI = {name: emo for name, emo in COLOR_PALETTE}
+
+def _color_label(color: str | None) -> str:
+    if not color:
+        return "—"
+    emo = COLOR_EMOJI.get(color)
+    if emo is None:
+        low = color.lower()
+        for name, e in COLOR_PALETTE:
+            if name.lower() == low or name.lower() in low or low in name.lower():
+                emo = e
+                break
+    return f"{emo} {color}" if emo else color
+
+def _vgrid1(b, items):
+    """Вертикальная сетка с переносом длинных подписей: если текст не влезает
+    в 2 колонки — кнопка на всю ширину."""
+    row = []
+    for text, cb in items:
+        wide = len(text) > 16
+        if wide and row:
+            b.row(*row); row = []
+        btn = InlineKeyboardButton(text=text, callback_data=cb)
+        if wide:
+            b.row(btn)
+        else:
+            row.append(btn)
+            if len(row) == 2:
+                b.row(*row); row = []
+    if row:
+        b.row(*row)
 
 def _grid_kb(b, items, cb_fmt, cols=2):
     row = []
@@ -759,7 +794,7 @@ async def madmin_mv_size(cb: CallbackQuery, session, state: FSMContext) -> None:
     page %= pages
     chunk = colors[page * per_page:(page + 1) * per_page]
     b = InlineKeyboardBuilder()
-    _vgrid(b, [(c, f"madmin:mvcolor:{pid}:{size}:{c}") for c in chunk], cols=2)
+    _vgrid1(b, [(_color_label(c), f"madmin:mvcolor:{pid}:{size}:{c}") for c in chunk])
     nav = []
     if page > 0:
         nav.append(("◀️", f"madmin:mvsize:{pid}:{size}:-{page - 1}"))
@@ -784,7 +819,8 @@ async def madmin_mv_color(cb: CallbackQuery, session, state: FSMContext) -> None
         return await cb.answer("Только для админов мерча 🙅", show_alert=True)
     parts = cb.data.split(":")
     try:
-        pid, size, color = int(parts[2]), parts[3], parts[4]
+        pid, size = int(parts[2]), parts[3]
+        color = ":".join(parts[4:])
     except (ValueError, IndexError):
         return await cb.answer()
     if color == "*":
@@ -828,7 +864,7 @@ async def madmin_mv_photopick(cb: CallbackQuery, state: FSMContext) -> None:
     if not _is_merch_admin(cb.from_user.id):
         return await cb.answer("Только для админов мерча 🙅", show_alert=True)
     data = await state.get_data()
-    if data.get("step") != "mv_photo":
+    if data.get("step") not in ("mv_photo", "mv_photo_attach"):
         return await cb.answer()
     await state.set_state(MerchStates.awaiting)
     data["step"] = "mv_photo_attach"
@@ -848,7 +884,7 @@ async def madmin_mv_price(cb: CallbackQuery, session, state: FSMContext) -> None
     if not _is_merch_admin(cb.from_user.id):
         return await cb.answer("Только для админов мерча 🙅", show_alert=True)
     data = await state.get_data()
-    if data.get("step") != "mv_photo":
+    if data.get("step") not in ("mv_photo", "mv_photo_attach"):
         return await cb.answer()
     await state.set_state(MerchStates.awaiting)
     data["step"] = "mv_price"
@@ -931,7 +967,7 @@ async def madmin_variant_edit(cb: CallbackQuery, session) -> None:
     await safe_edit_or_answer(
         cb.message,
         f"✏️ <b>{html.escape(product.name if product else '?')}</b> · "
-        f"{html.escape(v.size or '—')}/{html.escape(v.color or '—')} (id={vid})\n\n"
+        f"{html.escape(v.size or '—')}/{_color_label(v.color)} (id={vid})\n\n"
         f"💳 Цена: <b>{v.price_rub:,} ₽</b> · 📦 Остаток: <b>{v.stock}</b>"
         f" · Продано: {v.sold_count}{buyer}",
         reply_markup=b.as_markup())
@@ -1012,20 +1048,17 @@ async def madmin_img_start(cb: CallbackQuery, session, state: FSMContext) -> Non
     await cb.answer()
 
 async def _save_photo_as_file_id(bot: Bot, message: Message) -> str | None:
-    photo = message.photo[-1] if message.photo else None
-    if photo is None:
+    if not message.photo:
         return None
+    fid = message.photo[-1].file_id
     try:
-        buf = io.BytesIO()
-        await bot.download(photo, destination=buf)
-        data = buf.getvalue()
-        if not data or len(data) > 10 * 1024 * 1024:
-            return None
-        up = await bot.upload_photo(message.chat.id, BufferedInputFile(data, filename="photo.jpg"))
-        return up.file_id
+        up = await bot.send_photo(message.chat.id, fid)
+        saved = up.photo[-1].file_id if up.photo else fid
+        await bot.delete_message(message.chat.id, up.message_id)
+        return saved
     except Exception as exc:
-        logger.warning("merch photo upload failed: {}", type(exc).__name__)
-        return None
+        logger.warning("merch photo re-save failed: {}: {}", type(exc).__name__, exc)
+        return fid
 
 _PHOTO_STEPS = {"mv_photo_attach", "var_photo"}
 
@@ -1040,7 +1073,17 @@ async def merch_admin_photo_input(message: Message, session, state: FSMContext) 
     repo = MerchRepository(session)
     fid = await _save_photo_as_file_id(message.bot, message)
     if not fid:
-        return await message.answer("Не удалось сохранить фото 😅 Попробуй ещё раз или отмени /cancel.")
+        b = InlineKeyboardBuilder()
+        _vbtn(b, "📷 Повторить загрузку", "noop")
+        if step == "mv_photo_attach":
+            _vbtn(b, "⏭ Пропустить без фото", f"madmin:mvspeed:{data.get('pid', 0)}")
+        elif step == "var_photo":
+            _vbtn(b, "✏️ К позиции", f"madmin:var:{data.get('vid', 0)}")
+        _vbtn(b, "❌ Отменить", "madmin:home")
+        return await message.answer(
+            "Не удалось сохранить фото 😅 Telegram не отдал файл (часто бывает со старыми пересланными "
+            "картинками). Пришли фото ещё раз обычным сообщением — обычно помогает.\n"
+            "Или пропусти фото / отмени ввод 👇", reply_markup=b.as_markup())
     if step == "var_photo":
         vid = data["vid"]
         v = await repo.get_variant(vid)
