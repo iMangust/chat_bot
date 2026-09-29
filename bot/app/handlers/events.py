@@ -4,9 +4,9 @@ import contextlib
 import html
 import re
 
-from aiogram import F, Router
+from aiogram import Bot, F, Router
 from aiogram.enums import ChatType
-from aiogram.filters import CommandStart
+from aiogram.filters import BaseFilter, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InputMediaPhoto, Message
@@ -165,8 +165,18 @@ async def _render_list(cb: CallbackQuery, session) -> None:
     await safe_edit_or_answer(cb.message, text, reply_markup=b.as_markup())
 
 
-_KNOWN_MENU_PREFIXES = ("main", "page", "noop", "merch", "pet", "arena",
-                        "stats", "shop", "game", "settings", "profile")
+class _MenuFallback(BaseFilter):
+    """Catch-all для кнопок «menu:*», которые больше никем не обработаны.
+
+    Регистрируется ПОСЛЕДЕЙ в роутере, поэтому срабатывает только если ни один
+    конкретный обработчик не подошёл (например, устаревшая клавиатура из старой
+    версии бота). Специально реализован как фильтр по callback_data, а не через
+    CommandStart: CommandStart матчит только текст сообщения, начинающийся с
+    «/menu…», и никогда не сработает на callback-кнопках вида «menu:events».
+    """
+
+    async def __call__(self, cb: CallbackQuery) -> bool:
+        return bool(cb.data) and cb.data.startswith("menu:")
 
 
 @router.callback_query(F.data == "menu:events")
@@ -180,21 +190,21 @@ async def menu_events(cb: CallbackQuery, session) -> None:
             await cb.answer("Не удалось загрузить мероприятия 😅", show_alert=True)
 
 
-@router.callback_query(CommandStart("menu"))
-async def menu_any_unhandled(cb: CallbackQuery) -> None:
-    # Only warn for genuinely unknown menu:* buttons (stale keyboards from old
-    # versions). Known prefixes must never be swallowed here.
-    sub = (cb.data or "").split(":", 1)[1] if ":" in (cb.data or "") else ""
-    head = sub.split(":")[0]
-    if head in _KNOWN_MENU_PREFIXES:
-        await cb.answer()
-        return
-    if cb.data and cb.data.count(":") >= 2:
-        try:
-            await cb.message.delete_reply_markup()
-        except Exception:
-            pass
-    await cb.answer("Обнови меню: напиши /start 🙂", show_alert=True)
+# ВАЖНО: этот обработчик должен оставаться последним в файле/роутере —
+# он ловит только непойманные «menu:*» коллбэки (aiogram вызывает handlers
+# в порядке регистрации).
+@router.callback_query(_MenuFallback())
+async def menu_any_unhandled(cb: CallbackQuery, bot: Bot) -> None:
+    if cb.message is not None:
+        with contextlib.suppress(Exception):
+            await cb.message.edit_reply_markup(reply_markup=None)
+    await cb.answer("Меню обновилось 🔄 — нажми /start или кнопку ещё раз.",
+                    show_alert=False)
+    # Подсказка: сразу показать актуальное главное меню текстом, чтобы
+    # пользователь не остался «в пустоте» после устаревшей кнопки.
+    with contextlib.suppress(Exception):
+        await bot.send_message(cb.from_user.id,
+                               "Кнопка устарела 😅 Напиши /start — покажу свежее меню.")
 
 
 async def _detail_render(cb: CallbackQuery, session, eid: int) -> None:
