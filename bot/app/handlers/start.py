@@ -8,6 +8,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 import html as _html
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Pet, PetSpecies
@@ -115,6 +116,15 @@ async def cmd_start(message: Message, state: FSMContext, session: AsyncSession,
         first_name=message.from_user.first_name or "",
         username=message.from_user.username,
     )
+    if not user.onboarded:
+        from app.db.models import Pet
+        pet = (await session.execute(
+            select(Pet).where(Pet.user_id == user.tg_id).limit(1)
+        )).scalar_one_or_none()
+        if pet is not None:
+            user.pet_name = pet.name
+            user.onboarded = True
+            await session.commit()
     from app.handlers.access import register_member
     await register_member(
         user.tg_id, contacted=True,

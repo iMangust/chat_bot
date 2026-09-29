@@ -215,7 +215,11 @@ async def cmd_pet(message: Message, session: AsyncSession) -> None:
     svc = TamagotchiService(session)
     pet = await _get_pet(session, message.from_user.id)
     if pet is None:
-        await message.answer("🥚 У тебя пока нет питомца. Нажми /start и пройди онбординг!")
+        from app.keyboards.inline import adopt_cta_kb
+        await message.answer(
+            "🥚 У тебя пока нет питомца! Заведи его прямо сейчас — "
+            "выбери вид и имя:",
+            reply_markup=adopt_cta_kb())
         return
     await svc.apply_decay(pet)
     users = UserRepository(session)
@@ -231,9 +235,11 @@ async def pet_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     svc = TamagotchiService(session)
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
-        await safe_edit_or_answer(cb.message, 
-            "🥚 У тебя пока нет питомца. Нажми /start и пройди онбординг!",
-            reply_markup=back_to_main(),
+        from app.keyboards.inline import adopt_cta_kb
+        await safe_edit_or_answer(cb.message,
+            "🥚 У тебя пока нет питомца! Заведи его прямо сейчас — "
+            "выбери вид и имя:",
+            reply_markup=adopt_cta_kb(),
         )
         await cb.answer()
         return

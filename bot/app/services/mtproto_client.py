@@ -119,8 +119,13 @@ _DIALOGS_CACHE: dict[tuple[str, int], Any] = {}
 _DIALOGS_CACHE_TS: float = 0.0
 
 def _inner_id(chat_id: int | str) -> int:
-    s = str(chat_id)
-    return int(s[4:]) if s.startswith("-100") else int(s)
+    s = str(chat_id).strip().lstrip("@")
+    if s.startswith("-100"):
+        return int(s[4:])
+    try:
+        return int(s)
+    except ValueError:
+        raise ValueError(f"chat id must be numeric or -100..., got {chat_id!r}") from None
 
 def _participants_filter():
     import inspect
@@ -163,6 +168,7 @@ async def chat_participants_count(chat_id: int | str) -> int | None:
         from telethon.tl.functions.channels import GetFullChannelRequest
         from telethon.tl.functions.messages import GetFullChatRequest
 
+        chat_id = _resolve_numeric_target(chat_id)
         client = await holder.get()
         inner = _inner_id(chat_id)
         try:
@@ -203,6 +209,7 @@ async def chat_participants_count(chat_id: int | str) -> int | None:
 async def iter_all_participants(chat_id: int | str):
     global _LAST_SCAN_ERROR
     _LAST_SCAN_ERROR = ""
+    chat_id = _resolve_numeric_target(chat_id)
     try:
         client = await holder.get()
     except Exception as exc:
@@ -331,10 +338,22 @@ async def iter_all_participants(chat_id: int | str):
                      chat_id, str(exc)[:150])
     return out
 
+def _resolve_numeric_target(chat_id: int | str) -> Any:
+    s = str(chat_id).strip().lstrip("@")
+    if not s or (s[0] != "-" and not s.isdigit()):
+        return chat_id
+    try:
+        _inner_id(s)
+    except ValueError:
+        return chat_id
+    return f"-100{s}" if s.startswith("-") and not s.startswith("-100") else s
+
+
 async def get_chat_member_status(chat_id: int | str, user_id: int) -> str | None:
     try:
         from telethon import functions, types
 
+        chat_id = _resolve_numeric_target(chat_id)
         client = await holder.get()
         inner = _inner_id(chat_id)
 
