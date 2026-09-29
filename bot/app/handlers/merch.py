@@ -17,6 +17,17 @@ from app.config import get_settings
 from app.db.repositories import MerchRepository
 from app.utils.safe_edit import safe_edit_or_answer
 
+
+
+
+
+
+
+def _vrow(b):
+    b._markup = [list([btn]) for btn in list(b.buttons)]
+    b.max_width = 1
+
+
 router = Router(name="merch")
 
 def _is_merch_admin(user_id: int) -> bool:
@@ -67,13 +78,13 @@ async def merch_screen(cb: CallbackQuery, session) -> None:
         products = await repo.products(c.id)
         b.button(text=f"{c.icon} {c.title} · {len(products)} моделей",
                  callback_data=f"merch:cat:{c.code}")
-        b.row()
+        _vrow(b)
     if not cats:
         lines.append("\nКаталог пока пуст — скоро новинки!")
     s = get_settings()
     if s.merch_url:
         b.button(text="🌐 Открыть магазин мерча", url=s.merch_url)
-        b.row()
+        _vrow(b)
     b.button(text="🏠 Меню", callback_data="menu:main")
     await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=b.as_markup())
     await cb.answer()
@@ -96,7 +107,7 @@ async def merch_category(cb: CallbackQuery, session) -> None:
         price_min = min((v.price_rub for v in variants), default=0)
         lines.append(f"• <b>{html.escape(p.name)}</b> — от {price_min:,} ₽ · всего {total_stock} шт.")
         b.button(text=f"{cat.icon} {p.name}", callback_data=f"merch:prod:{p.id}")
-        b.row()
+        _vrow(b)
     b.button(text="⬅️ К категориям", callback_data="menu:merch")
     b.button(text="🏠 Меню", callback_data="menu:main")
     await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=b.as_markup())
@@ -128,7 +139,7 @@ async def merch_product(cb: CallbackQuery, session) -> None:
         for sz in sizes:
             has = any(v.size == sz and v.stock > 0 for v in variants)
             b.button(text=f"{sz}{'' if has else ' ✖'}", callback_data=f"merch:size:{pid}:{sz}")
-        b.row()
+        _vrow(b)
         b.button(text="⬅️ Назад", callback_data=back_cb)
         b.button(text="🏠 Меню", callback_data="menu:main")
         await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=b.as_markup())
@@ -172,7 +183,7 @@ async def merch_size(cb: CallbackQuery, session) -> None:
         ok = v is not None and v.stock > 0
         b.button(text=f"{c}{'' if ok else ' ✖'}",
                  callback_data=f"merch:var:{v.id if v else 0}")
-    b.row()
+    _vrow(b)
     b.button(text="⬅️ К размерам", callback_data=f"merch:prod:{pid}")
     b.button(text="🏠 Меню", callback_data="menu:main")
     await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=b.as_markup())
@@ -193,7 +204,7 @@ async def _render_variant_screen(cb: CallbackQuery, repo: MerchRepository,
     b = InlineKeyboardBuilder()
     if v.stock > 0 and v.reserved_by is None:
         b.button(text="🛒 Забронировать", callback_data=f"merch:res:{v.id}")
-        b.row()
+        _vrow(b)
     elif v.reserved_by is not None:
         text += "\n\n⏳ Эта позиция уже забронирована. Освободится после продажи или отмены брони."
     b.button(text="⬅️ Назад", callback_data=back_cb)
@@ -260,7 +271,7 @@ async def merch_reserve(cb: CallbackQuery, session, bot: Bot) -> None:
     kb = InlineKeyboardBuilder()
     kb.button(text="✅ Подтвердить продажу", callback_data=f"merch:sold:{vid}")
     kb.button(text="❌ Отменить резерв", callback_data=f"merch:cancel:{vid}")
-    kb.row()
+    _vrow(kb)
     kb.button(text="📋 Все брони", callback_data="merch:myres")
     await _notify_merch_admins(bot, admin_text, kb.as_markup())
     b = InlineKeyboardBuilder()
@@ -350,7 +361,7 @@ async def merch_my_reserves(cb: CallbackQuery, session) -> None:
                          f"— 👤 <code>{v.reserved_by}</code>")
             b.button(text=f"✅ Продано #{v.id}", callback_data=f"merch:sold:{v.id}")
             b.button(text=f"❌ Снять #{v.id}", callback_data=f"merch:cancel:{v.id}")
-            b.row()
+            _vrow(b)
         text = "\n".join(lines)
     b.button(text="⬅️ В мерч", callback_data="menu:merch")
     await safe_edit_or_answer(cb.message, text, reply_markup=b.as_markup())
@@ -379,13 +390,13 @@ def _admin_kb(extra_rows=None) -> InlineKeyboardBuilder:
     for row in (extra_rows or []):
         for text, cb_data in row:
             b.button(text=text, callback_data=cb_data)
-        b.row()
+        _vrow(b)
     b.button(text="📦 Каталог", callback_data="madmin:catalog")
     b.button(text="📋 Брони", callback_data="merch:myres")
-    b.row()
+    _vrow(b)
     b.button(text="➕ Новая категория", callback_data="madmin:addcat")
     b.button(text="➕ Новый товар", callback_data="madmin:addprod")
-    b.row()
+    _vrow(b)
     b.button(text="⬅️ В магазин", callback_data="menu:merch")
     b.button(text="🏠 Меню", callback_data="menu:main")
     return b
@@ -427,9 +438,9 @@ async def madmin_catalog(cb: CallbackQuery, session) -> None:
     for c in cats:
         products = await repo.products(c.id)
         b.button(text=f"{c.icon} {c.title} · {len(products)}", callback_data=f"madmin:cat:{c.code}")
-        b.row()
+        _vrow(b)
     b.button(text="✏️ Изменить категории", callback_data="madmin:catmgmt")
-    b.row()
+    _vrow(b)
     b.button(text="⬅️ Назад", callback_data="madmin:home")
     await safe_edit_or_answer(
         cb.message,
@@ -445,11 +456,11 @@ async def madmin_catmgmt(cb: CallbackQuery, session) -> None:
     cats = await repo.categories()
     b = InlineKeyboardBuilder()
     b.button(text="➕ Добавить категорию", callback_data="madmin:addcat")
-    b.row()
+    _vrow(b)
     for c in cats:
         b.button(text=f"✏️ {c.icon} {c.title}", callback_data=f"madmin:catedit:{c.code}")
         b.button(text="🗑", callback_data=f"madmin:catdel:{c.code}")
-        b.row()
+        _vrow(b)
     b.button(text="⬅️ Назад", callback_data="madmin:catalog")
     b.button(text="🏠 Управление", callback_data="madmin:home")
     await safe_edit_or_answer(
@@ -553,9 +564,9 @@ async def madmin_cat_products(cb: CallbackQuery, session) -> None:
         lines.append(f"• id={p.id} {html.escape(p.name)} — остаток {stock}"
                      + (f", брони {res}" if res else ""))
         b.button(text=f"⚙️ {p.name}", callback_data=f"madmin:prod:{p.id}")
-        b.row()
+        _vrow(b)
     b.button(text="➕ Новый товар", callback_data=f"madmin:addprod:{code}")
-    b.row()
+    _vrow(b)
     b.button(text="⬅️ К каталогу", callback_data="madmin:catalog")
     b.button(text="🏠 Управление", callback_data="madmin:home")
     if not products:
@@ -608,12 +619,12 @@ async def madmin_product_menu(cb: CallbackQuery, session) -> None:  # noqa: C901
     for v in variants[:40]:
         b.button(text=f"✏️ {v.size or '—'}/{v.color or '—'} · ост. {v.stock}",
                  callback_data=f"madmin:var:{v.id}")
-        b.row()
+        _vrow(b)
     b.button(text="➕ Добавить позицию", callback_data=f"madmin:addvar:{pid}")
-    b.row()
+    _vrow(b)
     b.button(text="🖼 Фото товара", callback_data=f"madmin:img:{pid}")
     b.button(text="🗑 Удалить товар", callback_data=f"madmin:prodel:{pid}")
-    b.row()
+    _vrow(b)
     from app.db.models import MerchCategory
     from sqlalchemy import select as _select
     cat = (await session.execute(
@@ -664,7 +675,7 @@ async def madmin_addvar_start(cb: CallbackQuery, session, state: FSMContext) -> 
     if row:
         b.row(*[InlineKeyboardButton(text=t, callback_data=d) for t, d in row])
     b.button(text="⌨️ Другой размер…", callback_data=f"madmin:mvsize:{pid}:*")
-    b.row()
+    _vrow(b)
     b.button(text="⬅️ К товару", callback_data=f"madmin:prod:{pid}")
     b.button(text="🏠 Управление", callback_data="madmin:home")
     await safe_edit_or_answer(
@@ -712,7 +723,7 @@ async def madmin_mv_size(cb: CallbackQuery, session, state: FSMContext) -> None:
     if row:
         b.row(*[InlineKeyboardButton(text=t, callback_data=d) for t, d in row])
     b.button(text="⌨️ Другой цвет…", callback_data=f"madmin:mvcolor:{pid}:{size}:*")
-    b.row()
+    _vrow(b)
     b.button(text="⬅️ К размерам", callback_data=f"madmin:addvar:{pid}")
     b.button(text="🏠 Управление", callback_data="madmin:home")
     await safe_edit_or_answer(
@@ -753,10 +764,10 @@ async def _wizard_after_color(cb: CallbackQuery, session, state: FSMContext,
     await state.update_data(step="mv_photo", pid=pid, size=size, color=color)
     b = InlineKeyboardBuilder()
     b.button(text="📷 Пришли фото сообщением", callback_data=f"madmin:mvphotopick:{pid}")
-    b.row()
+    _vrow(b)
     b.button(text="⏭ Без фото — к цене", callback_data=f"madmin:mvspeed:{pid}")
     b.button(text="⬅️ К цветам", callback_data=f"madmin:mvsize:{pid}:{size}")
-    b.row()
+    _vrow(b)
     b.button(text="⚙️ К товару", callback_data=f"madmin:prod:{pid}")
     b.button(text="🏠 Управление", callback_data="madmin:home")
     await safe_edit_or_answer(
@@ -781,7 +792,7 @@ async def madmin_mv_photopick(cb: CallbackQuery, state: FSMContext) -> None:
     b = InlineKeyboardBuilder()
     b.button(text="⏭ Пропустить — без фото", callback_data=f"madmin:mvspeed:{pid}")
     b.button(text="⬅️ Назад", callback_data=f"madmin:addvar:{pid}")
-    b.row()
+    _vrow(b)
     b.button(text="🏠 Управление", callback_data="madmin:home")
     await cb.message.answer("📷 Пришли фото позиции сообщением (или пропуск 👇):",
                             reply_markup=b.as_markup())
@@ -860,15 +871,15 @@ async def madmin_variant_edit(cb: CallbackQuery, session) -> None:
     b = InlineKeyboardBuilder()
     for delta, label in ((1, "+1"), (5, "+5"), (-1, "−1"), (-5, "−5")):
         b.button(text=label, callback_data=f"madmin:stock:{vid}:{delta}")
-    b.row()
+    _vrow(b)
     b.button(text="💳 Цена", callback_data=f"madmin:price:{vid}")
     if v.photo_file_id:
         b.button(text="🖼 Убрать фото", callback_data=f"madmin:vphotodel:{vid}")
     else:
         b.button(text="📷 Добавить фото", callback_data=f"madmin:vphoto:{vid}")
-    b.row()
+    _vrow(b)
     b.button(text="🗑 Удалить позицию", callback_data=f"madmin:vardel:{vid}")
-    b.row()
+    _vrow(b)
     b.button(text="⬅️ К товару", callback_data=f"madmin:prod:{v.product_id}")
     b.button(text="🏠 Управление", callback_data="madmin:home")
     buyer = f"\n👤 Забронирована: <code>{v.reserved_by}</code>" if v.reserved_by is not None else ""
@@ -1006,7 +1017,7 @@ async def merch_admin_input(message: Message, session, state: FSMContext) -> Non
             kb = InlineKeyboardBuilder()
             kb.button(text="➕ Добавить ещё категорию", callback_data="madmin:addcat")
             kb.button(text="✏️ Изменить категории", callback_data="madmin:catmgmt")
-            kb.row()
+            _vrow(kb)
             kb.button(text="📦 Каталог", callback_data="madmin:catalog")
             kb.button(text="🏠 Управление", callback_data="madmin:home")
             return await message.answer(
@@ -1064,10 +1075,10 @@ async def merch_admin_input(message: Message, session, state: FSMContext) -> Non
             await state.clear()
             kb = InlineKeyboardBuilder()
             kb.button(text="🖼 Загрузить фото товара", callback_data=f"madmin:img:{new_pid}")
-            kb.row()
+            _vrow(kb)
             kb.button(text="⚙️ Открыть товар", callback_data=f"madmin:prod:{new_pid}")
             kb.button(text="📦 Каталог", callback_data="madmin:catalog")
-            kb.row()
+            _vrow(kb)
             kb.button(text="➕ Добавить ещё товар", callback_data=f"madmin:addprod:{code}")
             kb.button(text="🏠 Управление", callback_data="madmin:home")
             return await message.answer(
@@ -1082,7 +1093,7 @@ async def merch_admin_input(message: Message, session, state: FSMContext) -> Non
             await session.commit()
             b = InlineKeyboardBuilder()
             b.button(text="📷 Прикрепить фото этой позиции", callback_data=f"madmin:mvphotopick:{pid}")
-            b.row()
+            _vrow(b)
             b.button(text="⏭ Без фото", callback_data=f"madmin:mvspeed:{pid}")
             b.button(text="⏹ Отмена", callback_data=f"madmin:prod:{pid}")
             return await message.answer(
@@ -1099,7 +1110,7 @@ async def merch_admin_input(message: Message, session, state: FSMContext) -> Non
             await state.update_data(step="mv_photo", color=text[:32])
             b = InlineKeyboardBuilder()
             b.button(text="📷 Прикрепить фото этой позиции", callback_data=f"madmin:mvphotopick:{pid}")
-            b.row()
+            _vrow(b)
             b.button(text="⏭ Без фото", callback_data=f"madmin:mvspeed:{pid}")
             b.button(text="⏹ Отмена", callback_data=f"madmin:prod:{pid}")
             return await message.answer(
@@ -1119,10 +1130,10 @@ async def merch_admin_input(message: Message, session, state: FSMContext) -> Non
             kb = InlineKeyboardBuilder()
             kb.button(text="📦 Задать остаток (±1/±5)", callback_data=f"madmin:var:{vid}")
             kb.button(text="🖼 Добавить фото позже", callback_data=f"madmin:vphoto:{vid}")
-            kb.row()
+            _vrow(kb)
             kb.button(text="⚙️ Открыть товар", callback_data=f"madmin:prod:{pid}")
             kb.button(text="➕ Добавить ещё позицию", callback_data=f"madmin:addvar:{pid}")
-            kb.row()
+            _vrow(kb)
             kb.button(text="📦 Каталог", callback_data="madmin:catalog")
             kb.button(text="🏠 Управление", callback_data="madmin:home")
             return await message.answer(

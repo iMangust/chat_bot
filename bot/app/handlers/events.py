@@ -16,6 +16,17 @@ from app.db.repositories import EventRepository
 from app.utils.local_time import now as local_now
 from app.utils.safe_edit import safe_edit_or_answer
 
+
+
+
+
+
+
+def _vrow(b):
+    b._markup = [list([btn]) for btn in list(b.buttons)]
+    b.max_width = 1
+
+
 router = Router(name="events")
 
 MONTHS = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля",
@@ -140,14 +151,14 @@ async def _render_list(cb: CallbackQuery, session) -> None:
         for e in events[:10]:
             b.button(text=f"{e.icon} {_ru_date(e.date)} — {e.title}",
                      callback_data=f"ev:view:{e.id}")
-            b.row()
+            _vrow(b)
         if past:
             for e in reversed(past):
                 b.button(text=f"✔️ Прошло: {e.title}", callback_data=f"ev:view:{e.id}")
-                b.row()
+                _vrow(b)
     if _is_event_admin(cb.from_user.id):
         b.button(text="🛠 Управление мероприятиями", callback_data="evadmin:home")
-        b.row()
+        _vrow(b)
     b.button(text="🏠 Меню", callback_data="menu:main")
     await safe_edit_or_answer(cb.message, text, reply_markup=b.as_markup())
 
@@ -170,17 +181,17 @@ async def _detail_render(cb: CallbackQuery, session, eid: int) -> None:
     b = InlineKeyboardBuilder()
     if ev.url:
         b.button(text="🔗 Подробнее / билеты", url=ev.url)
-        b.row()
+        _vrow(b)
     mark = "↩️ Отменить участие" if joined else "✅ Я пойду!"
     b.button(text=f"{mark} ({len(going)})" if going else mark,
              callback_data=f"ev:going:{eid}")
-    b.row()
+    _vrow(b)
     b.button(text="⬅️ К списку", callback_data="menu:events")
     b.button(text="🏠 Меню", callback_data="menu:main")
-    b.row()
+    _vrow(b)
     if _is_event_admin(cb.from_user.id):
         b.button(text="✏️ Редактировать", callback_data=f"evadmin:item:{eid}")
-        b.row()
+        _vrow(b)
     msg = cb.message
     try:
         if ev.image_url:
@@ -231,12 +242,12 @@ async def _admin_home(cb: CallbackQuery, session) -> None:
             f"Предстоящих: <b>{len(upcoming)}</b> · всего в базе: <b>{len(all_ev)}</b>")
     b = InlineKeyboardBuilder()
     b.button(text="➕ Добавить мероприятие", callback_data="evadmin:add")
-    b.row()
+    _vrow(b)
     b.button(text="📋 Все мероприятия", callback_data="evadmin:list")
-    b.row()
+    _vrow(b)
     b.button(text="⬅️ Назад к списку", callback_data="menu:events")
     b.button(text="🏠 Меню", callback_data="menu:main")
-    b.row()
+    _vrow(b)
     await safe_edit_or_answer(cb.message, text, reply_markup=b.as_markup())
 
 
@@ -260,9 +271,9 @@ async def _admin_list(cb: CallbackQuery, session) -> None:
         for e in all_ev[-30:]:
             b.button(text=f"{e.icon} {e.date or '?'} — {e.title}",
                      callback_data=f"evadmin:item:{e.id}")
-            b.row()
+            _vrow(b)
     b.button(text="➕ Добавить", callback_data="evadmin:add")
-    b.row()
+    _vrow(b)
     b.button(text="⬅️ Назад", callback_data="evadmin:home")
     await safe_edit_or_answer(cb.message, text, reply_markup=b.as_markup())
 
@@ -284,15 +295,15 @@ async def _item_menu(cb: CallbackQuery, session, eid: int) -> None:
     b = InlineKeyboardBuilder()
     for key, label in FIELDS:
         b.button(text=f"✏️ {label}", callback_data=f"evadmin:set:{eid}:{key}")
-        b.row()
+        _vrow(b)
     if ev.image_url:
         b.button(text="🖼 Убрать картинку", callback_data=f"evadmin:nopic:{eid}")
-        b.row()
+        _vrow(b)
     b.button(text="🗑 Удалить мероприятие", callback_data=f"evadmin:delq:{eid}")
-    b.row()
+    _vrow(b)
     b.button(text="⬅️ К списку", callback_data="evadmin:list")
     b.button(text="🏠 Меню", callback_data="menu:main")
-    b.row()
+    _vrow(b)
     await safe_edit_or_answer(cb.message, text, reply_markup=b.as_markup())
 
 
@@ -390,7 +401,7 @@ async def evadmin_del_ask(cb: CallbackQuery, session) -> None:
     b = InlineKeyboardBuilder()
     b.button(text="✅ Да, удалить", callback_data=f"evadmin:del:{eid}")
     b.button(text="❌ Отмена", callback_data=f"evadmin:item:{eid}")
-    b.row()
+    _vrow(b)
     await safe_edit_or_answer(
         cb.message,
         f"⚠️ Удалить мероприятие <b>{html.escape(ev.title)}</b> безвозвратно?",
@@ -488,11 +499,11 @@ async def ev_wizard_text(message: Message, state: FSMContext, session) -> None:
     await state.clear()
     b = InlineKeyboardBuilder()
     b.button(text="🖼 Добавить афишу", callback_data=f"evadmin:set:{ev.id}:image_url")
-    b.row()
+    _vrow(b)
     b.button(text="🔗 Добавить ссылку", callback_data=f"evadmin:set:{ev.id}:url")
-    b.row()
+    _vrow(b)
     b.button(text="🛠 Редактировать", callback_data=f"evadmin:item:{ev.id}")
     b.button(text="📋 К списку", callback_data="evadmin:list")
-    b.row()
+    _vrow(b)
     await message.answer("✅ Мероприятие создано!\n\n" + _summary(ev),
                          reply_markup=b.as_markup())

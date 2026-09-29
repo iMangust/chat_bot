@@ -20,12 +20,23 @@ from app.handlers.tamagotchi import set_pet_page
 from app.services.tamagotchi import SPECIES_DATA
 from app.utils.safe_edit import safe_edit_or_answer
 
+
+
+
+
+
+
+def _vrow(b):
+    b._markup = [list([btn]) for btn in list(b.buttons)]
+    b.max_width = 1
+
+
 router = Router(name="social")
 
 def _friend_kb(pet_name: str, other_id: int) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text=f"🤝 Познакомиться с {pet_name}", callback_data=f"fr:add:{other_id}")
-    kb.row()
+    _vrow(kb)
     kb.button(text="🐾 К питомцу", callback_data="menu:pet")
     return kb.as_markup()
 
