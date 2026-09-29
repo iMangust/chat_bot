@@ -1,12 +1,3 @@
-"""Глобальный error-handler: ни один упавший апдейт не должен «съедать» UX.
-
-Без него любая TelegramBadRequest / необработанная исключение внутри хендлера
-приводит к тому, что callback «висит» (часы на кнопке), а пользователь теряет
-возможность вернуться назад. Здесь мы:
-  • логируем ошибку;
-  • для callback'ов отвечаем пользователю понятным тостом и НЕ даём апдейту
-    упасть (возвращаем True — aiogram считает событие обработанным).
-"""
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
@@ -21,12 +12,6 @@ error_router = Router(name="errors")
 
 @error_router.errors()
 async def on_error(event: Any, exception: Exception | None = None, **kwargs: Any) -> Any:
-    """Страховка диспетчера.
-
-    aiogram передаёт сюда ErrorEvent (поля `update` + `exception`) либо
-    позиционный аргумент — сигнатура намеренно устойчива к обоим вариантам,
-    чтобы сам error-handler не падал с TypeError и не маскировал первопричину.
-    """
     exc = exception
     if exc is None and hasattr(event, "exception"):
         exc = event.exception
@@ -44,8 +29,6 @@ async def on_error(event: Any, exception: Exception | None = None, **kwargs: Any
     return True
 
 class ErrorNotifyMiddleware(BaseMiddleware):
-    """Дублирует страховку на уровне callback'ов (на случай, если ошибка
-    возникла ДО попадания в хендлер, например в мидлваре throttle/FSM)."""
 
     async def __call__(
         self,

@@ -1,14 +1,7 @@
+# Python compiled files
 __pycache__/
-*.py[cod]
-*.egg-info/
-.venv/
-venv/
+*.pyc
+
+# Environment and secrets
 .env
-*.session
-*.session-journal
-bot.db*
-*.log
-logs/
-.idea/
-vscode/
-.DS_Store
+.env.local

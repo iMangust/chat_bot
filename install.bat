@@ -1,27 +1,27 @@
 @echo off
 chcp 65001 >nul
-title TamaBot - ╨г╤Б╤В╨░╨╜╨╛╨▓╨║╨░
+title TamaBot - Установка
 setlocal EnableExtensions
 cd /d "%~dp0bot"
 
 echo.
-echo  [*] ╨Я╤А╨╛╨▓╨╡╤А╨║╨░ Python...
+echo  [*] Проверка Python...
 set "PY="
 py -3 --version >nul 2>&1 && set "PY=py -3"
 if not defined PY python --version >nul 2>&1 && set "PY=python"
 if not defined PY (
-    echo  [!] Python ╨╜╨╡ ╨╜╨░╨╣╨┤╨╡╨╜. ╨г╤Б╤В╨░╨╜╨╛╨▓╨╕╤В╨╡ Python 3.11+ ╤Б python.org
-    echo      ╨╕ ╨╛╨▒╤П╨╖╨░╤В╨╡╨╗╤М╨╜╨╛ ╨╛╤В╨╝╨╡╤В╤М╤В╨╡ "Add Python to PATH".
+    echo  [!] Python не найден. Установите Python 3.11+ с python.org
+    echo      и обязательно отметьте "Add Python to PATH".
     pause
     exit /b 1
 )
 %PY% --version
 
 if not exist venv (
-    echo  [*] ╨б╨╛╨╖╨┤╨░╨╜╨╕╨╡ ╨▓╨╕╤А╤В╤Г╨░╨╗╤М╨╜╨╛╨│╨╛ ╨╛╨║╤А╤Г╨╢╨╡╨╜╨╕╤П venv...
+    echo  [*] Создание виртуального окружения venv...
     %PY% -m venv venv
     if errorlevel 1 (
-        echo  [!] ╨Э╨╡ ╤Г╨┤╨░╨╗╨╛╤Б╤М ╤Б╨╛╨╖╨┤╨░╤В╤М venv.
+        echo  [!] Не удалось создать venv.
         pause
         exit /b 1
     )
@@ -29,27 +29,27 @@ if not exist venv (
 
 set "VENV_PY=venv\Scripts\python.exe"
 
-echo  [*] ╨Ю╨▒╨╜╨╛╨▓╨╗╨╡╨╜╨╕╨╡ pip...
+echo  [*] Обновление pip...
 "%VENV_PY%" -m pip install --upgrade pip
 
-echo  [*] ╨г╤Б╤В╨░╨╜╨╛╨▓╨║╨░ ╨╖╨░╨▓╨╕╤Б╨╕╨╝╨╛╤Б╤В╨╡╨╣ ╨╕╨╖ requirements.txt (╨╝╨╛╨╢╨╡╤В ╨╖╨░╨╜╤П╤В╤М 2-5 ╨╝╨╕╨╜╤Г╤В)...
+echo  [*] Установка зависимостей из requirements.txt (может занять 2-5 минут)...
 "%VENV_PY%" -m pip install -r requirements.txt
 if errorlevel 1 (
-    echo  [!] ╨Ю╤И╨╕╨▒╨║╨░ ╤Г╤Б╤В╨░╨╜╨╛╨▓╨║╨╕ ╨╖╨░╨▓╨╕╤Б╨╕╨╝╨╛╤Б╤В╨╡╨╣. ╨Я╤А╨╛╨▓╨╡╤А╤М╤В╨╡ ╨┐╨╛╨┤╨║╨╗╤О╤З╨╡╨╜╨╕╨╡ ╨║ ╨╕╨╜╤В╨╡╤А╨╜╨╡╤В╤Г
-    echo      ╨╕ ╨┐╨╛╨▓╤В╨╛╤А╨╕╤В╨╡ ╨╖╨░╨┐╤Г╤Б╨║ install.bat
+    echo  [!] Ошибка установки зависимостей. Проверьте подключение к интернету
+    echo      и повторите запуск install.bat
     pause
     exit /b 1
 )
 
 if not exist .env.example (
     > .env.example (
-        echo # ╨б╨║╨╛╨┐╨╕╤А╤Г╨╣╤В╨╡ ╤Н╤В╨╛╤В ╤Д╨░╨╣╨╗ ╨▓ .env ╨╕ ╨╖╨░╨┐╨╛╨╗╨╜╨╕╤В╨╡ ╨╖╨╜╨░╤З╨╡╨╜╨╕╤П
+        echo Set values below, then copy this file to .env
         echo BOT_TOKEN=
         echo TRACKED_CHAT_IDS=[]
         echo ADMIN_IDS=[]
         echo DATABASE_URL=mysql+aiomysql://tamabot:tamabot@127.0.0.1:3306/tamabot?charset=utf8mb4
         echo REDIS_URL=redis://127.0.0.1:6379/0
-        echo # MTProto ╨┤╨╗╤П ╤Б╨╕╨╜╤Е╤А╨╛╨╜╨╕╨╖╨░╤Ж╨╕╨╕ ╨┐╨╛╨┤╨┐╨╕╤Б╤З╨╕╨║╨╛╨▓ ╨║╨░╨╜╨░╨╗╨░ ^(╨╜╨╡╨╛╨▒╤П╨╖╨░╤В╨╡╨╗╤М╨╜╨╛^):
+        echo MTProto for channel subscriber sync ^(optional^):
         echo API_ID=
         echo API_HASH=
         echo PHONE=
@@ -58,15 +58,15 @@ if not exist .env.example (
 
 if not exist .env (
     copy .env.example .env >nul
-    echo  [*] ╨б╨╛╨╖╨┤╨░╨╜ bot\.env - ╨╖╨░╨┐╨╛╨╗╨╜╨╕╤В╨╡ BOT_TOKEN, DATABASE_URL,
-    echo      TRACKED_CHAT_IDS, ADMIN_IDS ^(╨╛╤В╨║╤А╨╛╨╡╤В╤Б╤П ╨▓ ╨С╨╗╨╛╨║╨╜╨╛╤В╨╡^).
+    echo  [*] Создан bot\.env - заполните BOT_TOKEN, DATABASE_URL,
+    echo      TRACKED_CHAT_IDS, ADMIN_IDS ^(откроется в Блокноте^).
     start "" notepad .env
 )
 
 echo.
-echo  [OK] ╨г╤Б╤В╨░╨╜╨╛╨▓╨║╨░ ╨╖╨░╨▓╨╡╤А╤И╨╡╨╜╨░ ╤Г╤Б╨┐╨╡╤И╨╜╨╛.
-echo      ╨Ч╨░╨┐╤Г╤Б╨║ ╨┐╨░╨╜╨╡╨╗╨╕ ╤Г╨┐╤А╨░╨▓╨╗╨╡╨╜╨╕╤П: ╨┤╨▓╨╛╨╣╨╜╨╛╨╣ ╨║╨╗╨╕╨║ ╨╜╨░ run_gui.bat
-echo      ╨д╨░╨╣╨╗ ╨╜╨░╤Б╤В╤А╨╛╨╡╨║: bot\.env
+echo  [OK] Установка завершена успешно.
+echo      Запуск панели управления: двойной клик на run_gui.bat
+echo      Файл настроек: bot\.env
 echo.
 pause
 endlocal

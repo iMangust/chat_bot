@@ -1,12 +1,3 @@
-"""Redis: кулдауны, rate-limit, FSM-стейты, распределённые локи.
-
-Если Redis недоступен — graceful fallback на in-memory словарь
-(для разработки; в проде Redis обязателен).
-
-ВАЖНО про TTL: redis-py>=5 принимает только int или datetime.timedelta
-(строки вызывают DataError "ex must be datetime.timedelta or int").
-Все вызывающие места нормализуют ttl через _norm_ttl.
-"""
 from __future__ import annotations
 
 import time
@@ -24,12 +15,6 @@ redis_client: Redis | None = None
 _mem_store: dict[str, float] = {}
 
 def _norm_ttl(ttl_sec: Any) -> int:
-    """Нормализует TTL к целому числу секунд (int).
-
-    Совместимо с redis-py 5+/8+, где ex должен быть int/timedelta.
-    Дробные значения (например, THROTTLE_SEC = 1.5) округляются вверх,
-    минимум — 1 секунда.
-    """
     import math
     try:
         value = math.ceil(float(ttl_sec))
@@ -38,12 +23,6 @@ def _norm_ttl(ttl_sec: Any) -> int:
     return max(value, 1)
 
 def init_redis() -> Redis:
-    """Создаёт Redis-клиент.
-
-    protocol=2 (RESP2) — обязательно для совместимости со старыми
-    серверами Redis/Memurai (< 6.0), которые не знают команду HELLO.
-    Таймауты защищают от зависания на недоступном сервере.
-    """
     global redis_client
     redis_client = Redis.from_url(
         _settings.redis_url,
@@ -63,11 +42,6 @@ async def close_redis() -> None:
 _warned_errors: set[str] = set()
 
 async def _try_redis() -> Any:
-    """Возвращает рабочий redis-клиент или None (при недоступности).
-
-    Ошибки команд (например, ResponseError от старого сервера) логируются
-    один раз на тип ошибки, чтобы не спамить в лог при каждом апдейте.
-    """
     if redis_client is None:
         return None
     try:
@@ -84,7 +58,6 @@ async def _try_redis() -> Any:
         return None
 
 async def set_cooldown(key: str, ttl_sec: Any) -> bool:
-    """Ставит кулдаун. Возвращает True, если кулдаун новый (можно засчитывать)."""
     r = await _try_redis()
     if r is not None:
         try:
@@ -106,7 +79,6 @@ async def set_cooldown(key: str, ttl_sec: Any) -> bool:
     return True
 
 async def get_cooldown_ttl(key: str) -> int:
-    """Сколько секунд осталось до конца кулдауна (0 — кулдауна нет)."""
     r = await _try_redis()
     if r is not None:
         ttl = await r.ttl(f"cd:{key}")
@@ -117,7 +89,6 @@ async def get_cooldown_ttl(key: str) -> int:
     return max(int(exp - time.monotonic()), 0)
 
 async def acquire_lock(name: str, ttl_sec: int = 60) -> bool:
-    """Простой Redis-lock для задач планировщика (масштабирование на N воркеров)."""
     r = await _try_redis()
     if r is not None:
         try:
@@ -138,13 +109,6 @@ async def release_lock(name: str) -> None:
         await r.delete(f"lock:{name}")
 
 async def remember_for(name: str, ttl_sec: int) -> bool:
-    """«Запомнить на N секунд»: True — если интервал ИСТЁК (или не запоминался),
-    False — если ещё действует. Redis-персистентно, без Redis — in-memory.
-
-    Нужно для редких фоновых задач (например, полный скан участников канала
-    раз в 6 ч): обычный acquire_lock/release_lock не подходит, т.к. задача
-    освобождает лок сразу по завершении.
-    """
     r = await _try_redis()
     if r is not None:
         try:
@@ -161,11 +125,6 @@ async def remember_for(name: str, ttl_sec: int) -> bool:
     return True
 
 async def mem_cached_set(key: str, value: str, ttl_sec: int = 3600) -> str | None:
-    """Ставит значение, возвращает ПРЕДЫДУЩЕЕ (или None). Без Redis — mem-store.
-
-    Примечание: GETSET в redis-py не принимает kwarg ``ex`` (TTL задаётся
-    отдельной командой EXPIRE) — это исправлено после TypeError на проде.
-    """
     r = await _try_redis()
     if r is not None:
         redis_key = f"cache:{key}"

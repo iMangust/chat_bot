@@ -1,17 +1,3 @@
-"""Визуальные эффекты реакций на действия с питомцем.
-
-Telegram не даёт «частиц» как в Tamagotchi-приложениях, но есть два
-нативных канала визуальной обратной связи:
-
-1. ⚡ Toast — всплывающая подпись под кнопкой (``cb.answer(text)``):
-   появляется мгновенно прямо у пальца пользователя, без нового сообщения.
-2. 😀 Реакции на сообщение (``message.react(...)``): карточка питомца
-   «оживает» эмодзи-эффектом — ❤️ при кормёжке, 🫧 при мытье, 💤 при сне,
-   🎉 при победе и т.д. Работает через Bot API 7.2+ (aiogram >= 3.13).
-
-Оба канала best-effort: при ошибке API (старый сервер, нет прав на реакции
-в группе и пр.) молча проходим дальше — эффект украшение, а не функциональность.
-"""
 from __future__ import annotations
 
 import random
@@ -53,22 +39,11 @@ EFFECTS: dict[str, Effect] = {
 _TRAIN_TOAST = {"strength": "train_str", "agility": "train_agi", "intellect": "train_int"}
 
 def effect_for(action: str, stat: str | None = None) -> Effect | None:
-    """Эффект по имени действия; для тренировок уточняется тип стата."""
     if action == "train" and stat:
         action = _TRAIN_TOAST.get(stat, "train_str")
     return EFFECTS.get(action)
 
 async def react_to_message(cb: CallbackQuery, emoji: str, *, bot=None) -> None:
-    """Безопасная эмодзи-реакция бота на сообщение-карточку (best-effort).
-
-    Единственно правильный путь для aiogram 3.x: НЕ использовать shortcut
-    ``message.react(str)`` — конструктор метода валидирует поле ``reaction``
-    списком объектов ReactionType, и «сырая» строка-эмодзи выбивает pydantic
-    ValidationError ещё ДО try/except (см. логи 13:32). Здесь: типизированный
-    ReactionTypeEmoji; бот берётся из ``cb.bot`` (его подставляет сам
-    Диспетчер aiogram при вызове хендлеров). Если бот недоступен или сервер
-    отклонил реакцию — молча выходим: тост под кнопкой пользователь уже видел.
-    """
     msg = cb.message
     chat = getattr(msg, "chat", None)
     if msg is None or chat is None or not emoji:
@@ -92,11 +67,6 @@ async def apply_effect(cb: CallbackQuery, action: str, *,
                        stat: str | None = None,
                        toast_override: str | None = None,
                        bot=None) -> None:
-    """Один вызов = тост под кнопкой + реакции на сообщение-карточку.
-
-    ``toast_override`` позволяет заменить дефолтный текст тоста (например,
-    текстом результата действия, если он короткий).
-    """
     eff = effect_for(action, stat)
     toast = toast_override or (eff.toast if eff else "")
     if toast:

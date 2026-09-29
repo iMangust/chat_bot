@@ -1,16 +1,3 @@
-"""PNG-карточка профиля v2: «питомец в центре», Pillow + системный TTF.
-
-ВАЖНО: растровый шрифт Pillow (`load_default`) покрывает только латиницу —
-с ним кириллица и эмодзи превращались в «квадратики» 🟥. Поэтому здесь:
-  1) ищем настоящий TTF с кириллицей в системных директориях Windows/Linux
-     (+ Bold-вариант для заголовков — карточка перестала быть «серой»);
-  2) перед отрисовкой вырезаем символы вне поддерживаемого набором диапазона,
-     а эмодзи заменяем ASCII-маркерами ([!], [i]) — никаких □;
-  3) если вообще ничего не найдено — встроенный Unicode-шрифт Pillow.
-
-Рендер чистый (данные -> bytes): все источники собираются в card_data.collect.
-Кэширование версии — Redis/mem (get_or_render_card).
-"""
 from __future__ import annotations
 
 import hashlib
@@ -87,13 +74,11 @@ def _font(size: int, bold: bool = False):
         return ImageFont.load_default()
 
 def clean(text: str) -> str:
-    """Эмодзи -> ASCII-маркеры, прочие неподдерживаемые символы вырезаются."""
     text = (text.replace("⚠", "[!]").replace("❗", "[!]").replace("💡", "[i]")
                 .replace("❤", "+").replace("♥", "+"))
     return _ALLOWED_RE.sub("", text).strip()
 
 class ProfileCardRenderer:
-    """Чистая функция рисования: пакет данных из card_data.collect -> PNG bytes."""
 
     def render(self, data: dict) -> bytes:
         probe = Image.new("RGB", (W, 5000), BG_TOP)
@@ -133,7 +118,6 @@ class ProfileCardRenderer:
         self.d.text(xy, clean(text), **kw)
 
     def fit(self, text: str, font, max_w: int) -> str:
-        """Обрезает строку по пиксельную ширину с «…» — текст не вылезает за рамки."""
         d = self.d
         text = clean(text)
         if d.textlength(text, font=font) <= max_w:
@@ -188,9 +172,6 @@ class ProfileCardRenderer:
         return y + av + 14
 
     def _pet_panel(self, data: dict, y: int, draw: bool = True) -> int:
-        """Панель питомца. Высота ДИНАМИЧЕСКАЯ: панель подстраивается под
-        все данные (характеристики, арена, уход, статусы, подсказки), так что
-        информация больше не обрезается."""
         d, put, fit = self.d, self.put, self.fit
         pet = data.get("pet")
         pi = data.get("pet_info")
@@ -364,7 +345,6 @@ class ProfileCardRenderer:
 
     @staticmethod
     def _draw_activity_chart(d, daily: dict[str, int], y0: int, f_small) -> None:
-        """Совместимость со старым низкоуровневым вызовом: рисует график вручную."""
         from datetime import timedelta
         from app.utils.local_time import now as local_now
         now = local_now()
@@ -397,8 +377,6 @@ class ProfileCardRenderer:
             d.text((bx + bw / 2 - tw2 / 2, plot_bot + 3), clean(dl), fill=DIM, font=f_small)
 
     def _chart_h(self, data: dict, y0: int, draw: bool = True) -> int:
-        """Высота графика активности: растягивается до базовой высоты карточки,
-        но никогда не меньше MIN_CHART_H (иначе данные панелей полезут в график)."""
         return max(H - y0 - M, MIN_CHART_H)
 
     def _activity_chart(self, data: dict, y0: int) -> None:
@@ -472,7 +450,6 @@ def card_version(png: bytes) -> str:
     return hashlib.sha256(png).hexdigest()[:12]
 
 async def get_or_render_card(session: AsyncSession, tg_id: int) -> tuple[bytes, bool]:
-    """Возвращает (png, changed). Кэш версии — Redis/mem (без файловых заморочек)."""
     from app.utils.redis import mem_cached_set
     png = await render_profile_card(session, tg_id)
     if png is None:

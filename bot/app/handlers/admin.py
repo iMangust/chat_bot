@@ -1,18 +1,3 @@
-"""Управление «полным Telegram API» (MTProto) из чата с ботом.. Только для ADMIN_IDS, только в ЛС (гейт и фильтр чата).
-
-Команды:
-    /mtproto   — статус Telethon-настройки (без показа секретов!)
-    /syncnow   — немедленная синхронизация реестра доступа подписчиков
-                 (дельта; «/syncnow full» — первичная полная загрузка;
-                  «/syncnow rescan» — полный скан всех участников каждого чата)
-    /accessdebug <user_id> — v2.0.4 подробный дебаг доступа: прогоняет ВСЮ
-                 цепочку гейта для конкретного пользователя и показывает,
-                 чем ответил каждый источник (Bot API / реестр / MTProto /
-                 живой скан) — вместо гадания по логам
-
-v2.0: механика приветствий удалена — подписчик канала/группы получает доступ
-к боту автоматически (гейт проверяет реестр channel_subscribers).
-"""
 from __future__ import annotations
 
 import asyncio
@@ -33,7 +18,6 @@ def _is_admin(message: Message) -> bool:
     return bool(ids) and message.from_user is not None and message.from_user.id in ids
 
 def _parse_ids(text: str | None) -> list[int]:
-    """Достаёт числа user_id из строки («/accessdebug 123, 456» → [123, 456])."""
     import re
     return [int(m) for m in re.findall(r"\d{3,}", text or "")]
 
@@ -111,16 +95,6 @@ async def cmd_syncnow(message: Message, bot: Bot) -> None:
 
 @router.message(F.chat.type == "private", Command("accessdebug"))
 async def cmd_access_debug(message: Message, bot: Bot) -> None:
-    """v2.0.4: прогоняет ВСЮ цепочку гейта для конкретного пользователя.
-
-    v2.0.5: принимает НЕСКОЛЬКО id («/accessdebug 162968450 712408242» или
-    через запятую). Раньше при отказе вывод зависел от внутреннего снимка
-    gate_last_reason, который заполняется только в одной ветке цепочки — и
-    админ получал «нет данных», хотя лог всё знал. Теперь диагностика
-    строится НЕЗАВИСИМО: по чатам гоняются getChatMember, MTProto-проба и
-    (при недоказанности) живой скан; итог совпадает с вердиктом гейта, но
-    объясняет его всегда.
-    """
     if not _is_admin(message):
         return
     uid_list = _parse_ids(message.text)
@@ -135,7 +109,6 @@ async def cmd_access_debug(message: Message, bot: Bot) -> None:
         f"⏳ Прогоняю цепочку доступа для {len(uid_list)} пользователь(ей)…")
     from app.middlewares import gate
     from app.handlers.access import ensure_registry_fresh, last_scan_stats
-    st = get_settings()
     chats = gate.required_chats()
     lines = [f"🔎 <b>Диагностика доступа</b> ({len(uid_list)} пользователь(ей))", ""]
     if not chats:

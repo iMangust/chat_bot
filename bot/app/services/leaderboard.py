@@ -1,9 +1,3 @@
-"""Лидерборды: топы за день/неделю/всё время + еженедельные награды.
-
-Топы считаются на лету из users + chat_messages_log/reactions_log.
-Раз в неделю (воскресенье 00:30 UTC) планировщик делает снапшот в
-leaderboards_snapshot и выдаёт призёрам монеты/XP + уведомление.
-"""
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -26,7 +20,6 @@ def _aware(dt: datetime | None) -> datetime | None:
 
 async def top_messages(session: AsyncSession, since: datetime | None,
                        limit: int = 10) -> list[tuple[User, int]]:
-    """Топ болтунов. since=None — за всё время (денорм. счётчик users)."""
     if since is None:
         rows = list((await session.execute(
             select(User).order_by(User.messages_count.desc()).limit(limit)
@@ -41,7 +34,6 @@ async def top_messages(session: AsyncSession, since: datetime | None,
 
 async def top_reactions(session: AsyncSession, since: datetime | None,
                         limit: int = 10) -> list[tuple[User, int]]:
-    """Топ по полученным реакциям."""
     if since is None:
         rows = list((await session.execute(
             select(User).order_by(User.reactions_received.desc()).limit(limit)
@@ -56,7 +48,6 @@ async def top_reactions(session: AsyncSession, since: datetime | None,
 
 async def top_reactions_given(session: AsyncSession, since: datetime | None,
                               limit: int = 10) -> list[tuple[User, int]]:
-    """Топ по ПОСТАВЛЕННЫМ реакциям (, номинация «Самый эмоциональный»)."""
     if since is None:
         rows = list((await session.execute(
             select(User).order_by(User.reactions_given.desc()).limit(limit)
@@ -71,7 +62,6 @@ async def top_reactions_given(session: AsyncSession, since: datetime | None,
 
 async def top_karma(session: AsyncSession, since: datetime | None,
                     limit: int = 10) -> list[tuple[User, int]]:
-    """«Добрый» топ : забота об общении — ответы + упоминания."""
     cond = [ChatMessageLog.is_counted.is_(True)]
     if since is not None:
         cond.append(ChatMessageLog.created_at >= since)
@@ -85,7 +75,6 @@ async def top_karma(session: AsyncSession, since: datetime | None,
 
 async def top_emotional(session: AsyncSession, since: datetime | None,
                         limit: int = 10) -> list[tuple[User, int]]:
-    """«Самый эмоциональный» : сумма поставленных + полученных реакций."""
     given = await top_reactions_given(session, since, 50)
     received = dict(await top_reactions(session, since, 50))
     total: dict[int, tuple[User, int]] = {}
@@ -99,11 +88,6 @@ async def top_emotional(session: AsyncSession, since: datetime | None,
 
 async def overall_top(session: AsyncSession, since: datetime | None,
                       limit: int = 10) -> list[tuple[User, float, dict[str, int]]]:
-    """Усреднённый топ : сумма мест по всем номинациям, меньше — лучше.
-
-    Возвращает [(user, avg_place, {section: place})]; в расчёт берутся только
-    участники хотя бы одного локального топа (остальные не ранжированы).
-    """
     sections: dict[str, list[tuple[User, int]]] = {
         "talk": await top_messages(session, since, 20),
         "react": await top_reactions(session, since, 20),
@@ -149,7 +133,6 @@ async def top_pets(session: AsyncSession, limit: int = 10) -> list[tuple[Pet, st
     return [(p, name) for p, name in rows]
 
 async def build_weekly_payload(session: AsyncSession, week_start: datetime) -> dict:
-    """Собираем данные недельного снапшота (JSON-safe)."""
     talkers = await top_messages(session, week_start, 10)
     reactors = await top_reactions(session, week_start, 10)
     pets = await top_pets(session, 10)
@@ -161,7 +144,6 @@ async def build_weekly_payload(session: AsyncSession, week_start: datetime) -> d
     }
 
 def leaderboard_text(payload: dict) -> str:
-    """Человеческое представление снапшота (для экрана /award и пост-отчёта)."""
     lines = ["🏆 <b>Итоги прошлой недели</b>\n"]
     if payload.get("messages"):
         lines.append("💬 Болтуны:")
@@ -180,11 +162,6 @@ def leaderboard_text(payload: dict) -> str:
 
 async def snapshot_weekly(session: AsyncSession,
                           now: datetime | None = None) -> dict | None:
-    """Еженедельная задача: снапшот + награды топ-3 болтунов недели.
-
-    Возвращает payload снапшота или None, если эта неделя уже отмечена
-    (идемпотентность через UserStat key='last_week_award').
-    """
     now = now or utcnow()
     this_monday = (now - timedelta(days=now.weekday())).replace(
         hour=0, minute=0, second=0, microsecond=0)

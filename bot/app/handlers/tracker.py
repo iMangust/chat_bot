@@ -1,20 +1,3 @@
-"""Хендлеры трекера активности (сообщения, медиа и реакции в группах).
-
-Важно: aiogram 3 по умолчанию НЕ получает reaction-события — нужно включить
-allowed_updates=[… "message_reaction", "message_reaction_count"] при поллинге
-(см. main.py) и иметь права админа с правом Manage Reaction Messages в группе.
-
-Реакции приходят апдейтом ``message_reaction`` (объект MessageReactionUpdated),
-а НЕ сообщением с полем ``reactions`` — поэтому хендлер зарегистрирован через
-``router.message_reaction``. Старый фильтр ``F.reactions`` никогда не срабатывал,
-и бот молча игнорировал все реакции. Анонимные реакции каналов приходят отдельным
-апдейтом ``message_reaction_count`` (только счётчики без авторов) — см. второй
-хендлер ниже.
-
-Типы сообщений разделяются честно: текст / фото / видео / видеокружок
-(video_note) / голосовое (voice) / аудио / стикер / анимация(GIF) / документ —
-каждому типу своя метка в media_type и свой XP-бонус.
-"""
 from __future__ import annotations
 
 import contextlib
@@ -57,18 +40,12 @@ def _is_tracked(chat_id: int) -> bool:
     return not ids or chat_id in ids
 
 def detect_media_type(message: Message) -> str | None:
-    """Возвращает тип медиа сообщения (photo/video_note/voice/…), либо None."""
     for attr in MEDIA_ATTRS:
         if getattr(message, attr, None):
             return attr
     return None
 
 def _author(message: Message) -> int | None:
-    """Автор засчитываемого сообщения.
-
-    В каналах пост публикует сам канал (from_user=None), а фактический автор —
-    sender_chat. Берём и его, иначе канальная активность «испаряется».
-    """
     if message.from_user is not None and not message.from_user.is_bot:
         return message.from_user.id
     if message.sender_chat is not None and not getattr(message.sender_chat, "is_bot", False):
@@ -77,11 +54,6 @@ def _author(message: Message) -> int | None:
 
 @router.message(F.chat.type.in_({"group", "supergroup", "channel"}))
 async def track_group_message(message: Message, session: AsyncSession) -> None:
-    """Пишет каждое сообщение группы/канала в лог; засчитывает по антифрод-правилам.
-
-    ВАЖНО: каналы (где бот админ) тоже трэкаются — иначе «активность в
-    канале» не начислялась бы вовсе.
-    """
     author = _author(message)
     if author is None:
         return
@@ -124,8 +96,6 @@ async def track_group_message(message: Message, session: AsyncSession) -> None:
                 logger.info("🎭 secret night_owl unlocked for {}", author)
 
 def _reaction_emoji(rt) -> str | None:
-    """Достаёт emoji из ReactionTypeEmoji; для кастомных (пользовательских)
-    реакций возвращает заглушку, чтобы они тоже учитывались."""
     if isinstance(rt, ReactionTypeEmoji):
         return rt.emoji
     if getattr(rt, "type", "") == "custom_emoji":
@@ -133,14 +103,6 @@ def _reaction_emoji(rt) -> str | None:
     return None
 
 async def _fetch_author_via_forward(bot: Bot, chat_id: int, message_id: int) -> int | None:
-    """Автор сообщения через forward_message в ЛС самого бота.
-
-    В aiogram 3.x нет прямого «get message by id» (ограничение Bot API).
-    Пересланное в личные сообщения бота сообщение содержит исходного автора
-    в ``from_user``; сразу удаляем пересылку, чтобы не копить мусор. Если бот
-    не может читать чат/пересылать (нет доступа, канал с анонимными постами) —
-    возвращаем None, начисление по такой реакции пропускаем.
-    """
     me = await bot.get_me()
     try:
         fwd = await bot.forward_message(chat_id=me.id, from_chat_id=chat_id, message_id=message_id)
@@ -158,12 +120,6 @@ async def _fetch_author_via_forward(bot: Bot, chat_id: int, message_id: int) -> 
 @router.message_reaction()
 async def track_reaction_update(update: MessageReactionUpdated,
                                 session: AsyncSession) -> None:
-    """Апдейт message_reaction: засчитываем НОВУЮ реакцию автора на сообщение.
-
-    Приходит MessageReactionUpdated (chat, message_id, old_reaction,
-    new_reaction, user|actor_chat). Считаем только добавление: если список
-    стал длиннее/изменился в плюс — это дарение реакции получателю.
-    """
     if update.chat.type not in ("group", "supergroup", "channel") or not _is_tracked(update.chat.id):
         return
     from_user_id: int | None = None
@@ -199,20 +155,6 @@ async def track_reaction_update(update: MessageReactionUpdated,
 
 @router.message_reaction_count()
 async def track_reaction_count_update(update: MessageReactionCountUpdated) -> None:
-    """Апдейт message_reaction_count: АНОНИМНЫЕ счётчики реакций в каналах.
-
-    Telegram присылает ``message_reaction_count`` вместо ``message_reaction``,
-    когда реакции анонимные (включённая опция «Анонимные реакции» в канале) —
-    в апдейте есть только chat, message_id и суммарные счётчики
-    (``ReactionCount``: тип + total_count), но НЕТ автора действия и НЕТ
-    автора сообщения. Поэтому построчный учёт «кто кому поставил» здесь
-    невозможен: пересчёт дельт по счётчикам дал бы ложные начисления
-    (неизвестно, чья это реакция), а ``get_message`` в анонимном канале не
-    вернёт автора. Ограничение зафиксировано в Bot API 7.0 осознанно —
-    корректный способ учитывать персональные реакции описан выше
-    (``message_reaction`` + автор из ``ChatMessageLog``). Логируем событие,
-    чтобы админ видел факт анонимных реакций и мог сверить статистику.
-    """
     if not _is_tracked(update.chat.id):
         return
     total = sum(rc.total_count for rc in (update.reaction_count or []))

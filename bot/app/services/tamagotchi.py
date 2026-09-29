@@ -1,17 +1,7 @@
-"""Сервис тамагочи: оффлайн-деградация статов, действия, настроение, эволюция.
-
-Баланс (подлежит тюнингу на этапе обкатки):
-- деградация в час: hunger -4, happiness -2, energy -2 (днём) / +6 (во сне),
-  hygiene -3; при hunger<20 или hygiene<20 здоровье падает на 3/час;
-- если health < 50 — питомец болеет (sick_since), лечится предметом «Лекарство»;
-- без входа >24 ч дополнительно -15 happiness разово («заскучал»);
-- XP питомца: кормление +5, игра +8..15 (зависит от результата мини-игры),
-  прогулка +10, тренировка +6. Формула уровня общая: base*level^1.5, base=30.
-"""
 from __future__ import annotations
 
 import random
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from loguru import logger
 from sqlalchemy import func, select
@@ -27,7 +17,6 @@ from app.utils.html_text import esc
 CRIT_MSG = "pet.critical_deny"
 
 def _aware(dt: datetime) -> datetime:
-    """datetime из MySQL DATETIME приходит naive — нормализуем к локальному (камчатскому) времени."""
     return localize(dt)
 
 SEASON_DECAY_MULT = {
@@ -42,11 +31,6 @@ SPECIES_SEASON_DECAY_MULT = {
 }
 
 def season_decay_mult(season: str, stat_key: str, species: str = "") -> float:
-    """Множитель деградации стата для сезона (1.0 = без модификации).
-
-    Общие сезонные правила + весенний бонус ко всем + видовые особенности
-    (например, шиншилла плохо переносит летнюю жару).
-    """
     m = SEASON_DECAY_MULT.get(season, {}).get(stat_key, 1.0)
     if season == "spring" and stat_key == "happy":
         m *= SPRING_ALL_HAPPY_MULT
@@ -143,7 +127,6 @@ def _species(pet) -> dict:
     return SPECIES_DATA.get(_species_key(pet), SPECIES_DATA["cat"])
 
 def species_pref_delta(pet, action: str) -> int:
-    """Насколько питомец любит/не любит действие (к изменению happiness)."""
     return _species(pet)["prefers"].get(action, 0)
 
 ACTION_LABELS = {
@@ -163,10 +146,6 @@ BONUS_LABELS = {
 }
 
 def species_likes_text(sp: dict) -> tuple[str, str]:
-    """«любит» / «не любит» по-русски, с силой предпочтения.
-
-    Пример: («🎾 игры +6, 🚶 прогулки +2», «🫧 мытьё −4»).
-    """
     def fmt(k: str, v: int) -> str:
         name = ACTION_LABELS.get(k, k)
         sign = "+" if v > 0 else "−"
@@ -177,8 +156,6 @@ def species_likes_text(sp: dict) -> tuple[str, str]:
     return ", ".join(likes) or "нет", ", ".join(dislikes) or "нет"
 
 def species_bonuses_text(sp: dict) -> str:
-    """Бонусы вида по-русски; множители ×1 и нули (ничего не меняют) режем,
-    чтобы не вводить в заблуждение списком «всё ×1»."""
     parts = []
     for k, v in sp.get("bonus", {}).items():
         label = BONUS_LABELS.get(k)
@@ -208,7 +185,6 @@ SET_SPECIES_SYNERGY: dict[str, dict[str, tuple[str, float]]] = {
 }
 
 def set_species_synergy(pet, sets_worn: list[str], kind: str) -> float:
-    """Суммарная видовая прибавка к множителю действия для надетых сетов."""
     key = _species_key(pet)
     total = 0.0
     for st in sets_worn:
@@ -260,25 +236,13 @@ MOOD_I18N_KEY = {
 }
 
 def mood_text(mood: str) -> str:
-    """Строка настроения питомца (RU-only словарь строк)."""
     key = MOOD_I18N_KEY.get(mood)
     return t(key) if key else MOOD_TEXT.get(mood, "")
 
 def _mood_value(pet: Pet) -> int:
-    """Числовой «индекс настроения» (0–100): среднее четырёх ключевых
-    статов — ровно то же, что считает compute_mood. Раньше в карточке
-    печаталось «Настроение: <текст>», где текст мог содержать
-    неэкранированный «<» — Telegram падал с «Unsupported start tag "50."»
-    и экран ломался целиком ."""
     return int(round((pet.hunger + pet.happiness + pet.energy + pet.hygiene) / 4))
 
 def render_mood_line(pet: Pet, mood: str | None = None) -> str:
-    """Единая HTML-безопасная строка «💭 Настроение» для всех экранов .
-
-    Все исходящие сообщения идут с parse_mode=HTML, поэтому ЛЮБОЙ
-    динамический текст обязан проходить через esc. Формат:
-    «💭 Настроение: Грустит… удели внимание (37/100)».
-    """
     mood = mood or compute_mood(pet)
     label = esc(mood_text(mood))
     return f"💭 Настроение: {label} ({_mood_value(pet)}/100)"
@@ -290,10 +254,6 @@ class TamagotchiService:
         self.session = session
 
     async def apply_decay(self, pet: Pet, now: datetime | None = None) -> bool:
-        """Пересчитывает статы по прошествии времени. Возвращает True, если что-то изменилось.
-
-        Идемпотентно: после применения обновляет pet.last_update.
-        """
         now = now or local_now()
         last = _aware(pet.last_update)
         hours = (now - last).total_seconds() / 3600.0
@@ -361,13 +321,6 @@ class TamagotchiService:
 
     def _check_cooldown(self, pet: Pet, action: str, seconds: int,
                         now: datetime) -> tuple[bool, int]:
-        """Кулдаун действия хранится в pet.settings_extra как '<action>_at'.: первые FREE_ACTION_USES (3) применения действия за «сессию»
-        не ограничиваются вовсе — раньше после одной партии в «21» питомец
-        мгновенно «запыхался» на 2 минуты. Счётчик живёт в settings_extra
-        ('<action>_uses') и сбрасывается, когда кулдаун истёк полностью
-        (действие давно не использовалось) — т.е. отдых засчитывается сном/
-        паузой, а не кликами подряд.
-        """
         key = f"{action}_at"
         uses_key = f"{action}_uses"
         extra = pet.settings_extra or {}
@@ -383,7 +336,6 @@ class TamagotchiService:
 
     @staticmethod
     def _free_use_left(pet: Pet, action: str) -> bool:
-        """Есть ли у действия льготный (бесплатный от кулдауна) заряд."""
         return int((pet.settings_extra or {}).get(f"{action}_uses", 0)) <= FREE_ACTION_USES
 
     @staticmethod
@@ -402,11 +354,9 @@ class TamagotchiService:
                               uses_key: uses}
 
     def _gear_happy_flat(self, pet: Pet) -> float:
-        """Плоский бонус настроения за действие (комбо-набор «Джентльмен»)."""
         return self.gear_bonuses(pet).get("happy_gain_flat", 0.0)
 
     async def feed(self, pet: Pet, effect: dict[str, float]) -> str:
-        """Эффект из item.effect, напр. {"hunger": +25, "happiness": +5}. Кулдаун 60 сек."""
         now = local_now()
         await self.apply_decay(pet, now)
         if self.is_critical(pet):
@@ -448,7 +398,6 @@ class TamagotchiService:
         return t("pet.eaten", tail=tail)
 
     async def play(self, pet: Pet, won: bool) -> str:
-        """Мини-игра завершена; won — результат. Кулдаун 120 сек. Тратит энергию."""
         now = local_now()
         await self.apply_decay(pet, now)
         if self.is_critical(pet):
@@ -481,11 +430,9 @@ class TamagotchiService:
 
     @staticmethod
     def rps_beaten_by(hand: str) -> str:
-        """Ход, который ПРОИГРЫВАЕТ указанному (камень проигрывает бумаге)."""
         return {"rock": "paper", "paper": "scissors", "scissors": "rock"}[hand]
 
     def guess_range(self, pet: Pet) -> tuple[int, int]:
-        """Диапазон «угадай число»: интеллект расширяет подсказки (сужает диапазон)."""
         half = max(3, 10 - pet.intellect // 2)
         secret = random.randint(1, 20)
         lo, hi = max(1, secret - half), min(20, secret + half)
@@ -507,11 +454,6 @@ class TamagotchiService:
         return t("pet.fell_asleep", time=f"{pet.sleep_until:%H:%M}")
 
     async def wake(self, pet: Pet) -> str:
-        """Принудительно разбудить: начисляем энергию за ФАКТИЧЕСКИ проспанные часы.
-
-        apply_decay уже капает +energy за каждый час сна; здесь лишь фиксируем,
-        что сон окончен, и не даём «фармить» бесконечный сон без кулдауна.
-        """
         now = local_now()
         await self.apply_decay(pet, now)
         if not pet.is_sleeping:
@@ -567,18 +509,11 @@ class TamagotchiService:
         return t("pet.healed")
 
     def on_walk(self, pet: Pet, dt=None) -> bool:
-        """Питомец прямо сейчас гуляет (walk_until выставлен и срок не истёк).: «на прогулке» — состояние занятости: как в жизни, питомца
-        можно покормить или позвать играть, но мыться/тренироваться/спать
-        на улице негде. Истёкший walk_until НЕ считается прогулкой — его
-        добирает _collect_walk_result / apply_decay.
-        """
         if not getattr(pet, "walk_until", None):
             return False
         return _aware(pet.walk_until) > (dt or local_now())
 
     def walk_back_line(self, pet: Pet, dt=None) -> str:
-        """Строка возвращения с прогулки в едином шаблоне времени карточки
-        («Вернётся в HH:MM (через N мин).») —."""
         if not self.on_walk(pet, dt):
             return ""
         back = _aware(pet.walk_until)
@@ -586,7 +521,6 @@ class TamagotchiService:
         return t("pet.walk_back_line", time=f"{back:%H:%M}", minutes=f"{left_min} мин")
 
     async def train(self, pet: Pet, stat: str) -> str:
-        """Тренировка strength/agility/intellect. Кулдаун 180 сек, тратит энергию."""
         for st in ("strength", "agility", "intellect"):
             if getattr(pet, st) is None:
                 setattr(pet, st, 1)
@@ -648,14 +582,6 @@ class TamagotchiService:
                  time=f"{_aware(pet.walk_until):%H:%M}")
 
     async def end_walk(self, pet: Pet) -> str:
-        """Досрочно вернуть питомца с прогулки (, как «Разбудить» для сна).
-
-        Начисляется только то, что реально успело накопиться за проспанные/
-        прогулянные часы: монеты и XP события делятся на долю прогулки
-        (пропорционально, как энергия во сне ×N/8). apply_decay до вызова —
-        чтобы статы были честными на момент возврата. walk_until снимается
-        здесь же, иначе карточка ещё час показывала бы «на прогулке».
-        """
         now = local_now()
         await self.apply_decay(pet, now)
         if not getattr(pet, "walk_until", None):
@@ -697,16 +623,6 @@ class TamagotchiService:
                  reward=reward) + "\n" + text
 
     def finish_walk_event(self, pet: Pet) -> tuple[str, int, int]:
-        """Случайное событие прогулки. Возвращает (текст, delta_coins, delta_xp).
-
-        🌦️ Погода влияет на прогулку активно: в солнце находки ×1.3 и
-        +8 счастья («полезно гулять в хорошую погоду»), в дождь — шанс промокнуть
-        и простудиться, в грозу/мороз прогулка почти бессмысленна. Модификаторы
-        читаются из кэша реальной погоды (walk_mods), сеть здесь не трогается.
-
-        Дружба питомцев: «познакомился» с шансом ~10% — бот позже
-        подберёт случайного питомца-друга (флаг в settings_extra['pending_friend']).
-        """
         roll = random.random()
         sp = _species(pet)
         hol = holiday_effect_mults(local_now())
@@ -1049,7 +965,6 @@ class TamagotchiService:
         return f"{m} мин" if m < 60 else f"{m // 60} ч" + (f" {m % 60} мин" if m % 60 else "")
 
     def active_buffs(self, pet: Pet) -> dict[str, float]:
-        """Живые бафы питомца: {тип: множитель} (истёкшие вычищаются)."""
         extra = pet.settings_extra or {}
         now_ts = local_now().timestamp()
         buffs: dict[str, float] = {}
@@ -1085,13 +1000,11 @@ class TamagotchiService:
         pet.settings_extra = extra
 
     def active_set_codes(self, pet: Pet) -> list[str]:
-        """Коды собранных сетов (по ним индексируются бонусы и видовые синергии)."""
         worn = set(self.customization(pet)[1])
         return [code for code, st in self.PET_SETS.items()
                 if all(e in worn for e in st["items"])]
 
     def gear_bonuses(self, pet: Pet) -> dict[str, float]:
-        """Суммарные бонусы: окрас + надетые вещи + активные комбо-сеты."""
         extra = pet.settings_extra or {}
         color_key = extra.get("color")
         bonuses: dict[str, float] = {}
@@ -1114,11 +1027,6 @@ class TamagotchiService:
         return bonuses
 
     def action_modifier(self, pet: Pet, kind: str) -> float:
-        """Множитель действия (1.0 = без бонусов): экипировка ∪ временные бафы.
-
-        kind: feed | xp | sleep_regen | play_happy | walk_coin | train_yield | duel
-        — суммируются проценты вещей/сетов и активных бафов соответствующего типа.
-        """
         g = self.gear_bonuses(pet)
         pct_key = "sleep_regen_pct" if kind == "sleep_regen" else f"{kind}_pct"
         m = 1.0 + g.get(pct_key, 0.0)
@@ -1136,8 +1044,6 @@ class TamagotchiService:
         return max(0.1, m)
 
     def decay_multiplier(self, pet: Pet, stat_key: str) -> float:
-        """Множитель скорости деградации стата (меньше = лучше): экипировка
-        + временный баф «no_decay» (например, от кофе — энергия не тратится)."""
         g = self.gear_bonuses(pet)
         m = 1.0 + g.get(f"{stat_key}_decay_pct", 0.0)
         m += set_species_synergy(pet, self.active_set_codes(pet), f"{stat_key}_decay")
@@ -1173,7 +1079,6 @@ class TamagotchiService:
         return color, worn
 
     def gear_map(self, pet: Pet) -> dict[str, str | None]:
-        """Что надето в каждом из 6 слотов: {slot: emoji|None}."""
         extra = pet.settings_extra or {}
         gear = extra.get("gear") or {}
         return {slot: (gear.get(slot)
@@ -1181,7 +1086,6 @@ class TamagotchiService:
                 for slot in self.GEAR_SLOTS}
 
     def active_sets(self, pet: Pet) -> list[str]:
-        """Названия собранных сетов; при видовой синергии — с пометкой 🔗."""
         key = _species_key(pet)
         titles = []
         for code in self.active_set_codes(pet):
@@ -1193,7 +1097,6 @@ class TamagotchiService:
 
     async def buy_color(self, session: AsyncSession, pet: Pet,
                         user: User, key: str) -> str:
-        """Покупка/смена окраса. Возвращает текст-результат для экрана."""
         if key not in self.PET_COLORS:
             return "❌ Такой расцветки нет."
         info = self.PET_COLORS[key]
@@ -1213,12 +1116,6 @@ class TamagotchiService:
 
     async def buy_accessory(self, session: AsyncSession, pet: Pet,
                             user: User, emoji: str) -> str:
-        """Экипировка предмета в его слот; повторный клик снимает вещь.
-
-        Владение сохраняется в settings_extra["owned"]: купленную вещь можно
-        снимать и надевать бесплатно (как экипировку в MMORPG), а вот смена
-        вещи на ДРУГУЮ в том же слоте — это новая покупка за полную цену.
-        """
         if emoji not in self.PET_ACCESSORIES:
             return "❌ Такой вещи нет в гардеробе."
         item = self.PET_ACCESSORIES[emoji]
@@ -1270,13 +1167,6 @@ class TamagotchiService:
     RECRUIT_PRICE = 200
 
     def is_critical(self, pet: Pet) -> bool:
-        """Питомец «при смерти»: здоровье на нуле И хотя бы один базовый
-        показатель тоже на нуле. Пока просто 0 по одному стату — ещё можно
-        спасти уходом (лечение/еда), и это мотивирует, а не бесит.
-
-        После реанимации действует grace-период (revive_grace_until): питомец
-        не считается критическим, даже если статы снова упали, — иначе игрок
-        попадал бы в цикл «умер → плати» без шанса спасти уход за монеты."""
         if pet.health > 0 or min(pet.hunger, pet.happiness,
                                  pet.energy, pet.hygiene) > 0:
             return False
@@ -1290,25 +1180,18 @@ class TamagotchiService:
         return True
 
     async def revive(self, pet: Pet) -> str:
-        """Реанимация за revive_cost монет: статы поднимаются с нуля до 30,
-        болезнь снимается. Возвращает текст результата (деньги списывает
-        вызывающий хендлер — он знает баланс владельца)."""
         self._apply_revive_mechanics(pet)
         return f"💖 {esc(pet.name)} откаормлен и полон надежды! Дальше — не запускай уход."
 
     MAX_REVIVES = 3
 
     def revive_cost(self, pet: Pet) -> int:
-        """Стоимость реанимации растёт с каждым разом: 200 → 400 → 600.
-        Возвращает -1, если жизни закончились."""
         used = int((pet.settings_extra or {}).get("revives_used", 0))
         if used >= self.MAX_REVIVES:
             return -1
         return self.RECRUIT_PRICE * (used + 1)
 
     def _apply_revive_mechanics(self, pet: Pet) -> None:
-        """Общие механики реанимации: grace-период, счётчик жизней, снятие
-        штрафа скуки. Используется и платным revive, и бесплатным onboarding-revive."""
         for stat in ("hunger", "happiness", "energy", "hygiene"):
             setattr(pet, stat, clamp(30.0))
         pet.health = clamp(30.0)
@@ -1322,9 +1205,6 @@ class TamagotchiService:
         pet.settings_extra = extra
 
     async def free_revive_for_newbie(self, pet: Pet) -> bool:
-        """Первая реанимация новичка бесплатно: если у пользователя нет монет
-        на платную, но он вообще никогда не реанимировал — дарим шанс.
-        Иначе «смерть» для нового игрока = отвал в первую же неделю."""
         extra = pet.settings_extra or {}
         if int(extra.get("free_revive_used", 0)) or int(extra.get("revives_used", 0)):
             return False
@@ -1336,8 +1216,6 @@ class TamagotchiService:
 
     async def archive_pet(self, session: AsyncSession, pet: Pet,
                           reason: str = "rehomed") -> None:
-        """«Усыновление» питомца: карточка уходит в историю (is_archived),
-        все связанные логи (кормления/прогулки/дуэли) сохраняются."""
         pet.is_archived = True
         pet.archived_at = local_now()
         pet.archive_reason = reason
@@ -1348,7 +1226,6 @@ class TamagotchiService:
 
     async def adopt_new(self, session: AsyncSession, owner_tg_id: int,
                         name: str, species_code: str) -> Pet:
-        """Создаёт нового питомца поверх архивного (generation+1)."""
         from app.db.models import PetSpecies
         prev_max = (await session.execute(
             select(func.max(Pet.generation)).where(Pet.user_id == owner_tg_id)
@@ -1368,7 +1245,6 @@ class TamagotchiService:
 
     async def history(self, session: AsyncSession,
                       owner_tg_id: int) -> list[Pet]:
-        """Архивные питомцы пользователя (старые сверху вниз по поколению)."""
         rows = (await session.execute(
             select(Pet).where(Pet.user_id == owner_tg_id,
                               Pet.is_archived.is_(True))
@@ -1377,7 +1253,6 @@ class TamagotchiService:
         return list(rows)
 
     async def add_pet_xp(self, pet: Pet, gained: int) -> list[int]:
-        """Начисляет XP питомцу; возвращает список новых уровней (для эволюции)."""
         levels: list[int] = []
         pet.xp += gained
         while pet.xp >= pet_xp_needed(pet.level):
@@ -1390,11 +1265,6 @@ class TamagotchiService:
         return levels
 
     async def render_async(self, pet: Pet, owner_first_name: str = "") -> str:
-        """карточка с реальной погодой Камчатки (OpenWeather, фоновый кэш 3 ч).
-
-        Сетевые сбои не ломают UI: kamchatka_weather сам откатывается к
-        сезонной модели. Синхронный render остаётся для тестов/оффлайна.
-        """
         text = self.render(pet, owner_first_name)
         try:
             from app.services.weather import kamchatka_weather, weather_hint_block

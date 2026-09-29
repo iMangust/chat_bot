@@ -1,4 +1,3 @@
-"""⚙️ Экран настроек уведомлений + командные алиасы топов/карточки."""
 from __future__ import annotations
 
 from aiogram import F, Router
@@ -7,7 +6,7 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.repositories import NotificationRepository
-from app.keyboards.inline import back_to_main, main_menu, settings_keyboard
+from app.keyboards.inline import back_to_main,  settings_keyboard
 from app.services.leaderboard import leaderboard_text, snapshot_weekly
 from app.utils.safe_edit import safe_edit_or_answer, answer_safe
 
@@ -50,7 +49,6 @@ async def cb_toggle(cb: CallbackQuery, session: AsyncSession) -> None:
 
 @router.message(Command("award", "awards"), F.chat.type == "private")
 async def cmd_awards(message: Message, session: AsyncSession) -> None:
-    """Итоги прошлой недели + выданные призы."""
     payload = await snapshot_weekly(session)
     if not payload:
         await message.answer("Пока нечего показать — топ будет после первой недели 🏁")
@@ -60,5 +58,4 @@ async def cmd_awards(message: Message, session: AsyncSession) -> None:
 
 @router.message(Command("settings"), F.chat.type == "private")
 async def cmd_settings(message: Message, session: AsyncSession) -> None:
-    """Полноценный экран настроек прямо в ЛС (раньше — заглушка «Воспользуйся меню»)."""
     await _render_settings(session, message, message.from_user.id)

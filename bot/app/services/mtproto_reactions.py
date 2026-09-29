@@ -1,39 +1,3 @@
-"""Реакции через полный Telegram API (MTProto) —.
-
-Почему это нужно
-================
-Bot API доставляет боту апдейт ``message_reaction`` ТОЛЬКО на сообщения,
-которые ОН САМ отправил в чат (или когда у бота есть особые условия).
-Реакции пользователей на ЧУЖИЕ сообщения (посты канала, сообщения других
-людей в группе) бот через Bot API не видит вообще — поэтому «реакции не
-отслеживаются», хотя все права админа включены и allowed_updates настроен.
-
-MTProto-аккаунт (user), состоящий в тех же чатах, получает серверные
-события ``UpdateUserTyping…`` / ``updateNewMessage`` / и главное —
-``UpdateBotMessageReaction`` (для сообщений бота) и реакции на любые
-сообщения в виде сырых TL-update'ов ``UpdateMessageReactions`` (список
-``MessagePeerReaction``: кто и какую реакцию поставил/снял).
-
-Что делает модуль
-=================
-* слушает raw-события Telethon в отслеживаемых чатах;
-* для ``UpdateMessageReactions`` (полный список реаций на сообщение с
-  авторами) вычисляет НОВЫХ авторов реакций относительно прошлого
-  снапшота и засчитывает их через ActivityService.process_reaction —
-  ту же логику XP/антифрода/кэпов, что и Bot API-хендлер;
-* автором сообщения считается владелец реакции «первого уровня»? Нет —
-  автора берём из chat_messages_log (трекер пишет его для групповых
-  сообщений). Для постов КЛАССА «канал» автор = сам канал, а реакция
-  пользователя на пост канала засчитывается как реакция «в никуда» —
-  чтобы не терять активность, считаем получателем автора поста, если он
-  зарегистрирован (через backfill: MTProto видит и сообщения канала —
-  см. log_message_only в ActivityService);
-* дедупликация — уникальность ReactionLog (from_user, message_id, emoji)
-  уже обеспечена репозиторием: повторный event ничего не начислит.
-
-Безопасность: никаких исходящих запросов к Telegram от user-аккаунта,
-кроме чтения live-событий; ошибки одного события не роняют listener.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -49,7 +13,6 @@ _LISTENER_TASK: asyncio.Task | None = None
 _SNAPSHOTS: dict[tuple[int, int], set[tuple[int, str]]] = {}
 
 def _emoji_key(rt) -> str | None:
-    """Ключ реакции из TL-объекта ReactionEmoji/ReactionCustomEmoji."""
     try:
         from telethon.tl.types import ReactionEmoji, ReactionCustomEmoji
     except Exception:
@@ -61,7 +24,6 @@ def _emoji_key(rt) -> str | None:
     return getattr(rt, "emoticon", None)
 
 def _peer_uid(peer) -> int | None:
-    """user_id из PeerUser/PeerChannel/PeerChat (каналы не считаем)."""
     try:
         from telethon.tl.types import PeerUser
     except Exception:
@@ -71,7 +33,6 @@ def _peer_uid(peer) -> int | None:
     return None
 
 async def _credit(from_uid: int, chat_id: int, msg_id: int, emoji: str) -> None:
-    """Зачесть одну новую реакцию, используя общую логику ActivityService."""
     from app.db.session import session_factory
     from app.services.activity import ActivityService
 
@@ -94,12 +55,6 @@ async def _credit(from_uid: int, chat_id: int, msg_id: int, emoji: str) -> None:
                         from_uid, to_user, msg_id)
 
 async def _backfill_channel_post(chat_id: int, msg_id: int) -> int | None:
-    """Пост канала: получаем автора сообщения через MTProto и пишем в лог.
-
-    Бот не получает published-сообщения каналов через Bot API, поэтому
-    chat_messages_log пуст и реакция «некому». User-аккаунт может прочитать
-    сообщение напрямую (get_messages) и определить автора (sender_id).
-    """
     try:
         from app.services.mtproto_client import holder
         client = await holder.get()
@@ -133,7 +88,6 @@ def _tracked_ids() -> set[int]:
     return {abs(int(i)) for i in ids} if ids else set()
 
 def _chat_id_of(peer) -> int | None:
-    """Peer → отрицательный chat_id в нотации Bot API (-100… для каналов)."""
     try:
         from telethon.tl.types import PeerChannel, PeerChat
     except Exception:
@@ -145,19 +99,12 @@ def _chat_id_of(peer) -> int | None:
     return None
 
 def _snapshot_size() -> None:
-    """Гигиена памяти: снапшоты старых сообщений понемногу устаревают."""
     global _SNAPSHOTS
     if len(_SNAPSHOTS) > 4096:
         keep = list(_SNAPSHOTS.items())[len(_SNAPSHOTS) // 2:]
         _SNAPSHOTS = dict(keep)
 
 async def handle_message_reactions(update) -> None:
-    """UpdateMessageReactions: полный список реакций {кто, какую} на сообщение.
-
-    Дельта считается относительно прошлого снапшота: начисляем только новым
-    авторам. Первый sighting сообщения — только запоминаем (не начисляем
-    задним числом за реакции, поставленные до нашего подключения).
-    """
     chat_id = _chat_id_of(getattr(update, "peer", None) or getattr(update, "peer_id", None))
     if chat_id is None:
         return
@@ -186,11 +133,6 @@ async def handle_message_reactions(update) -> None:
             await _credit(uid, chat_id, msg_id, emoji)
 
 async def handle_bot_reaction(update) -> None:
-    """UpdateBotMessageReaction: дельта-событие о реакции на сообщение БОТА.
-
-    Telegram шлёт его user-аккаунту, когда реагируют на посты бота в чатах
-    (actor + old/new списки). Здесь данные уже дельта-типа — new - old.
-    """
     chat_id = _chat_id_of(getattr(update, "peer", None))
     if chat_id is None:
         return
@@ -207,7 +149,6 @@ async def handle_bot_reaction(update) -> None:
             await _credit(actor, chat_id, int(update.msg_id), emoji)
 
 async def _on_raw_update(event) -> None:
-    """Точка входа events.Raw: фильтруем нужные TL-апдейты по типу."""
     try:
         from telethon.tl.types import UpdateBotMessageReaction, UpdateMessageReactions
     except Exception:
@@ -223,13 +164,6 @@ async def _on_raw_update(event) -> None:
 _REACTION_TYPES: tuple[type, ...] | None = None
 
 def _reaction_types() -> tuple[type, ...]:
-    """TL-типы реакций для фильтра events.Raw(types=...).
-
-    ВАЖНО (баг): без types Telethon вызывает обработчик на КАЖДЫЙ
-    сырой апдейт (сотни на минуту), а падение импорта типов молча глушило
-    всю обработку через suppress(Exception). Здесь типы резолвятся явно и
-    ошибка видна в логе.
-    """
     global _REACTION_TYPES
     if _REACTION_TYPES is None:
         from telethon.tl.types import (UpdateBotMessageReaction,
@@ -238,16 +172,7 @@ def _reaction_types() -> tuple[type, ...]:
     return _REACTION_TYPES
 
 async def warm_snapshots(client, hours: int = 24) -> int:
-    """Prime снапшотов реакций на свежих сообщениях отслеживаемых чатов.
-
-    Иначе первый же UpdateMessageReactions после рестарта бота — это
-    «первый sighting» (prev=None), и реакции, поставленные ДО перезапуска,
-    задним числом не засчитываются (правило anti-backfill). Но и новые
-    реакции на таких сообщениях терялись до второго события. Prime решает:
-    читаем последние сообщения, берём их current_reactions и запоминаем как
-    baseline. Возвращает число сообщений со снапшотом.
-    """
-    from datetime import datetime, timedelta, timezone
+    from datetime import timedelta
     tracked = _tracked_ids()
     if not tracked:
         return 0
@@ -278,7 +203,6 @@ async def warm_snapshots(client, hours: int = 24) -> int:
     return primed
 
 async def start_reaction_listener() -> asyncio.Task | None:
-    """Подписаться на raw-события реакций. None — если MTProto не настроен."""
     global _LISTENER_TASK
     from app.services.mtproto_client import (credentials_configured,
                                              holder, telethon_available)

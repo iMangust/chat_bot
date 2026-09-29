@@ -1,14 +1,3 @@
-"""Универсальная постраничная inline-клавиатура (UX).
-
-Единый стандарт для всех экранов с большим числом кнопок:
-* до ``PAGE_SIZE`` (6) содержательных кнопок на страницу;
-* layout 2 кнопки в ряд (длинные подписи — по одной, чтобы не резались);
-* 4-й ряд — страницы: ◀️ · «Название 📖 i/n» · ▶️ (перехлёст зацикливается);
-* фиксированный нижний ряд — ОДНА кнопка выхода 🏠 Меню (без дублей «Назад»).
-
-Callback-данные страниц: ``<prefix>:page:<n>`` — обработчик экрана принимает
-необязательный параметр ``page`` и перерендеривает себя (см. shop/merch/stats).
-"""
 from __future__ import annotations
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -17,17 +6,14 @@ PAGE_SIZE = 6
 NAV_ROW = "◀️"
 
 def _button_width(btn: InlineKeyboardButton) -> int:
-    """Грубая ширина подписи: emoji считаются за 2 символа."""
     text = btn.text or ""
     visual = sum(2 if ord(ch) > 0x2190 else 1 for ch in text)
     return visual
 
 def _two_per_row(buttons: list[InlineKeyboardButton]) -> list[list[InlineKeyboardButton]]:
-    """Раскладывает кнопки рядами ровно по две (стандарт навигации+)."""
     return [list(buttons[i:i + 2]) for i in range(0, len(buttons), 2)]
 
 def _chunk(rows: list[list[InlineKeyboardButton]], size: int) -> list[list[list[InlineKeyboardButton]]]:
-    """Режет плоский список рядов на страницы по ~size кнопок, не разрывая ряды."""
     pages: list[list[list[InlineKeyboardButton]]] = []
     current: list[list[InlineKeyboardButton]] = []
     count = 0
@@ -43,13 +29,6 @@ def _chunk(rows: list[list[InlineKeyboardButton]], size: int) -> list[list[list[
 
 def paged_pages(buttons: list[InlineKeyboardButton],
                 page_size: int = PAGE_SIZE) -> list[list[list[InlineKeyboardButton]]]:
-    """Страницы контентных кнопок (тот же алгоритм, что у paged_keyboard).
-
-    Экраны (shop/inv), которые сами режут список товаров на страницы, обязаны
-    использовать ЭТУ же функцию: иначе текст показывает N страниц, а кнопки
-    paged_keyboard режет по-своему, ◀️/▶️ уходят в clamp — и листание ломается
-    (баг: «стр. 1/4, перейти нельзя»).
-    """
     def _is_service(btn: InlineKeyboardButton | None) -> bool:
         if btn is None:
             return False
@@ -72,16 +51,6 @@ def paged_keyboard(
     url_button: InlineKeyboardButton | None = None,
     pages: list[list[list[InlineKeyboardButton]]] | None = None,
 ) -> tuple[InlineKeyboardMarkup, int]:
-    """Собирает постраничную клавиатуру.
-
-    Возвращает ``(markup, page)`` — страница нормализована в диапазон
-    ``[0, total_pages-1]``, чтобы вызывающий код мог синхронизировать свой
-    рендер текста с фактической страницей кнопок.
-
-    ``pages`` — готовые страницы контентных кнопок (см. paged_pages): экран
-    передаёт их, если сам нарезал список, чтобы текст и кнопки всегда были
-    синхронны.
-    """
     if pages is None:
         pages = paged_pages(buttons, page_size)
 

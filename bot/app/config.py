@@ -1,13 +1,3 @@
-"""Конфигурация приложения.
-
-Все секреты только из окружения (.env). Никаких хардкод-токенов.:.env ищется по абсолютным путям (бот можно запускать из любой
-директории), плюс поддерживаются «короткие» имена ключей MTProto из
-.env.example (API_ID / API_HASH / PHONE) — раньше они молча игнорировались,
-и синхронизация «не происходила» при полностью раскомментированном блоке.: фикс падения на Windows (TypeError в dotenv: файл передавался
-объектом вместо пути) + устойчивое чтение.env.: фикс UnicodeDecodeError на Windows-1251/BOM:.env читается с
-автоподбором кодировки (utf-8-sig → cp1251 → latin-1); ошибки парсинга
-больше не роняют импорт конфига.
-"""
 from __future__ import annotations
 
 import os
@@ -16,20 +6,11 @@ from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 _ENV_ENCODINGS = ("utf-8-sig", "cp1251", "latin-1")
 
 def _read_env_values(path: str) -> dict[str, str]:
-    """Прочитать пары KEY=VALUE из.env без жёсткой привязки к кодировке.
-
-    Исторические падения на Windows (/1.5.14):
-      - dotenv_values(TextIOWrapper) — TypeError (новые версии принимают
-        только путь/строку);
-      - UTF-8-файл с кириллицей в системной cp1251 — UnicodeDecodeError.
-    Поэтому читаем байты сами, подбираем кодировку (utf-8-sig → cp1251 →
-    latin-1) и парсим простым KEY=VALUE без python-dotenv.
-    """
     raw = Path(path).read_bytes()
     text = None
     for enc in _ENV_ENCODINGS:
@@ -70,14 +51,6 @@ def _env_files() -> tuple[str, ...]:
     return tuple(p for p in _ENV_CANDIDATES if Path(p).is_file()) or (".env",)
 
 def _alias_short_mtproto_keys() -> None:
-    """API_ID/API_HASH/PHONE (как в.env.example) == TELEGRAM_API_ID/.../PHONE.
-
-    Pydantic читает только точные имена полей; чтобы блок вида
-        API_ID=12345678
-    работал без префикса, прокидываем значения в os.environ ДО создания
-    Settings (реальные переменные окружения имеют приоритет над.env, но
-    если их нет — алиасы подхватятся). Ничего не логируем: ключи секретны.
-    """
     vals: dict[str, str] = {}
     for path in _env_files():
         try:

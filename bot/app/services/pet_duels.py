@@ -1,21 +1,3 @@
-"""Недельные соревнования питомцев (PVP).
-
-Идея: раз в неделю стартует «арена» — питомцы дерутся на характеристиках.
-Победа не рандомная: сила удара = f(level, strength/agility/intellect), но
-исход каждой конкретной дуэли слегка разбавлен удачей (±20%), чтобы аутсайдер
-мог выиграть одну встречу, но не всю неделю.
-
-Баланс:
-  power = level*10 + strength*4 + agility*3 + intellect*2 + mood_bonus
-  побеждает тот, у кого power*roll выше; roll ~ U(0.8..1.2)
-  награда за победу: +25 очков арены владельцу монетами, питомцу +12 XP;
-  поражение: +5 очков (утешительный), питомцу +3 XP.
-  Призы недели топ-3 по очам: 300/150/75 монет владельцам.
-
-Антифрод: не больше DAILY_FIGHT_LIMIT боёв на питомца в сутки (кулдаун
-FIGHT_COOLDOWN_SEC между боями того же питомца), противник подбирается +-3
-уровня — фарм «на слабых» ограничен подбором.
-"""
 from __future__ import annotations
 
 import random
@@ -38,18 +20,11 @@ FIGHT_COOLDOWN_SEC = 90
 WEEKLY_PRIZES = {1: 300, 2: 150, 3: 75}
 
 def week_key(dt: datetime | None = None) -> str:
-    """ISO-ключ текущей недели: '2026-W39' (сброс очков происходит сам собой —
-    новая неделя = новая строка PetDuel)."""
     dt = dt or local_now()
     y, w, _ = dt.isocalendar()
     return f"{y}-W{w:02d}"
 
 def duel_power(pet: Pet) -> int:
-    """«Боевая мощь» питомца из характеристик, уровня и экипировки.
-
-    В MMORPG-логике бонусы дают и тренировки, и снаряжение: окрасы
-    («Теневой», «Корона»), вещи и комбо-наборы (duel_power в gear_bonuses).
-    """
     mood_bonus = 5 if pet.happiness >= 70 else (0 if pet.happiness >= 40 else -5)
     sick = -10 if pet.health < 50 else 0
     tired = -8 if pet.energy < 25 else 0
@@ -63,7 +38,6 @@ def duel_power(pet: Pet) -> int:
                + pet.intellect * 2 + mood_bonus + sick + tired + gear)
 
 def resolve_duel(a: Pet, b: Pet, rng: random.Random | None = None) -> tuple[Pet, Pet]:
-    """Возвращает (winner, loser). Удача ±20% одной встречи не решает неделю."""
     rng = rng or random
     pa = duel_power(a) * rng.uniform(0.8, 1.2)
     pb = duel_power(b) * rng.uniform(0.8, 1.2)
@@ -80,12 +54,6 @@ async def get_or_create_row(session: AsyncSession, pet_id: int, wk: str) -> PetD
     return row
 
 async def pick_opponent(session: AsyncSession, pet: Pet) -> Pet | None:
-    """Соперник: живой (не спит), уровень +-3, не сам питомец.
-
-    Случайность — на стороне Python (random.choice по пулу из 10): кросс-СУБД
-    «ORDER BY RAND/random» в SQLAlchemy без компиляторов даёт разные имена
-    функций в sqlite/Postgres, а выборка равных по уровню всё равно маленькая.
-    """
     lo, hi = max(1, pet.level - 3), pet.level + 3
     rows = list((await session.execute(
         select(Pet).where(Pet.level >= lo, Pet.level <= hi,
@@ -96,7 +64,6 @@ async def pick_opponent(session: AsyncSession, pet: Pet) -> Pet | None:
     return random.choice(rows) if rows else None
 
 def duel_cooldown_left(pet: Pet, now=None) -> int:
-    """Секунд до конца кулдауна боя (0 — можно драться)."""
     now = now or local_now()
     last = (pet.settings_extra or {}).get("duel_last_ts")
     if not last:
@@ -110,7 +77,6 @@ def duel_cooldown_left(pet: Pet, now=None) -> int:
     return max(0, int(FIGHT_COOLDOWN_SEC - (now - ts).total_seconds()))
 
 async def fight(session: AsyncSession, pet: Pet) -> dict:
-    """Проводит один бой. Возвращает результат для экрана или причину отказа."""
     now = local_now()
     wk = week_key(now)
     my = await get_or_create_row(session, pet.id, wk)
@@ -154,7 +120,6 @@ async def fight(session: AsyncSession, pet: Pet) -> dict:
     }
 
 async def arena_screen(session: AsyncSession, tg_id: int) -> tuple[str, object]:
-    """Текст арены недели + клавиатура (кнопка «⚔️ Вызов» с учётом кулдауна)."""
     from app.keyboards.inline import arena_keyboard
 
     wk = week_key()
@@ -181,7 +146,6 @@ async def arena_screen(session: AsyncSession, tg_id: int) -> tuple[str, object]:
 
 async def weekly_top(session: AsyncSession, wk: str | None = None,
                      limit: int = 10) -> list[tuple[Pet, User, PetDuel]]:
-    """Топ арены недели: (питомец, владелец, строка боя)."""
     wk = wk or week_key()
     rows = (await session.execute(
         select(PetDuel, Pet, User)
@@ -194,7 +158,6 @@ async def weekly_top(session: AsyncSession, wk: str | None = None,
     return [(p, u, d) for d, p, u in rows]
 
 async def finish_week(session: AsyncSession, prev_week: str | None = None) -> bool:
-    """Закрывает прошлую неделю: призы топ-3 + снапшот. Идемпотентно по маркеру."""
     from app.db.models import LeaderboardSnapshot
     now = local_now()
     if prev_week is None:

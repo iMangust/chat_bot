@@ -1,20 +1,3 @@
-"""Безопасное редактирование сообщений ботом.
-
-Проблемы, которые решает этот модуль:
-
-1. ``TelegramBadRequest: there is no text in the message to edit`` —
-   возникает, когда бот пытается вызвать ``edit_text`` на сообщении без
-   текста (фото/видео/кружок/стикер) или на пустом медиа-сообщении
-   (например, пользователь переслал картинку и нажал inline-кнопку под ней).
-2. ``Message is not modified`` — редактирование идентичным текстом.
-3. Потеря «контекста экрана»: при ошибке редактирования падает весь
-   апдейт, и пользователь не может никуда вернуться.
-
-Стратегия: пробуем отредактировать; если сообщение не содержит текста
-(или текст не изменился, или редактирование невозможно по другой причине) —
-молча отправляем НОВОЕ сообщение с тем же содержимым. Так навигация бота
-никогда не «ломается» на медиа-сообщениях.
-"""
 from __future__ import annotations
 
 from aiogram.enums import ParseMode
@@ -25,7 +8,6 @@ from loguru import logger
 DEFAULT_PARSE_MODE = ParseMode.HTML
 
 def _has_editable_text(message: Message) -> bool:
-    """True, если в сообщении есть непустой текст (caption тоже считается)."""
     text = (message.text or message.caption or "").strip()
     return bool(text)
 
@@ -37,15 +19,6 @@ async def safe_edit_or_answer(
     parse_mode: str | None = "HTML",
     **kwargs,
 ) -> Message:
-    """Редактирует ``target``, а если нельзя — шлёт новое сообщение.
-
-    Возвращает итоговое сообщение (отредактированное или новое), чтобы
-    вызывающий код мог продолжить работу с ним.
-
-    ``parse_mode`` по умолчанию — HTML: без него aiogram передаёт ``None``
-    напрямую в API и Telegram показывает сырые теги (<b>...</b>) вместо
-    жирного текста.
-    """
     from app.utils.text_split import split_message
     chunks = split_message(text)
     if len(chunks) > 1 and _has_editable_text(target):
@@ -125,7 +98,6 @@ def _strip_tags(text: str) -> str:
     return _TAG_RE.sub("", text)
 
 def _looks_like_html_error(exc: BaseException) -> bool:
-    """Telegram BadRequest про сломанную разметку (в т.ч. edit_text)."""
     low = str(exc).lower()
     return ("can't parse" in low or "unsupported start tag" in low
             or "unbalanced" in low or "entity" in low or "tag" in low)
@@ -138,15 +110,6 @@ async def safe_edit_html(
     parse_mode: str | None = "HTML",
     **kwargs,
 ) -> Message:
-    """edit_text с гарантированным фолбэком на битом HTML .
-
-    Продакшен-баг: карточка питомца содержала неэкранированный «<»
-    («Настроение: <b>50.</b>» — Telegram видел открывающий тег «50.»),
-    edit_text падал с BadRequest, и пользователь получал тост
-    «Упс, что-то пошло не так». Здесь: при ошибке парсинга Entities
-    редактируем очищенным от тегов текстом — экран никогда не «ломается»,
-    а текст остаётся читаемым.
-    """
     from app.utils.text_split import split_message
     chunks = split_message(text)
     last = target
@@ -185,11 +148,6 @@ async def safe_edit_html(
 
 async def answer_safe(message: Message, text: str, *, reply_markup=None,
                       parse_mode: str | None = "HTML", **kwargs) -> Message:
-    """Безопасный message.answer: режет текст >4096 и чинит битый HTML.
-
-    Прямые `message.answer(...)` в текстовых командах (/pet, /stats…) падали
-    с TelegramBadRequest, если рендер превышал лимит или разметка была битой.
-    """
     from app.utils.text_split import split_message
     last = message
     for i, chunk in enumerate(split_message(text)):
@@ -208,7 +166,6 @@ async def answer_safe(message: Message, text: str, *, reply_markup=None,
 
 async def answer_cb(cb: CallbackQuery, text: str, *, reply_markup=None,
                     parse_mode: str | None = "HTML", **kwargs) -> None:
-    """Сокращение: безопасный ответ на callback (edit → fallback answer)."""
     if cb.message is None:
         return
     await safe_edit_or_answer(cb.message, text, reply_markup=reply_markup,

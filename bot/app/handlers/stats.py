@@ -1,8 +1,7 @@
-"""Экраны статистики, достижений и топов."""
 from __future__ import annotations
 
 import html
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
@@ -28,7 +27,6 @@ def _medal(i: int) -> str:
     return ["🥇", "🥈", "🥉"][i - 1] if i <= 3 else f"{i}."
 
 async def _top_lines(session: AsyncSession, period_label: str, since: datetime | None) -> list[str]:
-    """Строки топа болтунов за период (since=None — за всё время)."""
     users = UserRepository(session)
     lines: list[str] = []
     if since is None:
@@ -77,7 +75,6 @@ MEDIA_LABELS: list[tuple[str, str]] = [
 ]
 
 def _breakdown_text(breakdown: dict[str, int], top: int = 8) -> str:
-    """ Компактные строки «тип — кол-во» с долей от всех сообщений."""
     total_msgs = sum(v for k, v in breakdown.items() if k not in ("reply", "mentions"))
     if not total_msgs:
         return ""
@@ -96,11 +93,6 @@ def _breakdown_text(breakdown: dict[str, int], top: int = 8) -> str:
     return "\n".join(lines)
 
 def _render_achievements(items, page: int = 0, page_size: int = 8) -> tuple[str, int, int]:
-    """Собирает текст страницы ачивок.
-
-    Возвращает (text, page, total_pages). Все пользовательские/справочные
-    строки экранируются — иначе Telegram показывает сырые <b>...</b>.
-    """
     total_pages = max(1, (len(items) + page_size - 1) // page_size)
     page = max(0, min(page, total_pages - 1))
     chunk = items[page * page_size:(page + 1) * page_size]
@@ -124,16 +116,10 @@ def _render_achievements(items, page: int = 0, page_size: int = 8) -> tuple[str,
 
 @router.callback_query(F.data.startswith("ach:noop"))
 async def ach_noop(cb: CallbackQuery) -> None:
-    """Клик по неразрывной подписи «🏆 Достижения 📖 i/n» — снять «часики».
-
-    Без этого callback висит до таймаута Telegram (UI «зависает», а диспетчер
-    считает апдейт необработанным).
-    """
     await cb.answer()
 
 @router.callback_query(F.data.startswith("top:noop"))
 async def top_noop(cb: CallbackQuery) -> None:
-    """Аналогично: центральная кнопка навигации топов."""
     await cb.answer()
 
 @router.callback_query(F.data == "menu:ach")
@@ -163,8 +149,6 @@ def _since_for(period: str, now) -> datetime | None:
     return None
 
 async def _top_section(session: AsyncSession, period: str, section: str) -> str:
-    """Один раздел топа: все номинации выводятся по одной на страницу
-    навигации (топ был единым длинным сообщением)."""
     now = local_now()
     since = _since_for(period, now)
     lines = [f"🏅 <b>Топы чата · {PERIODS[period]} · {section_label(section)[0]} {section_label(section)[1]}</b>\n"]
@@ -248,7 +232,6 @@ TOP_SECTIONS: list[tuple[str, str]] = [
 ]
 
 def section_label(section: str) -> tuple[str, str]:
-    """(эмодзи, название) раздела топа."""
     for key, label in TOP_SECTIONS:
         if key == section:
             emoji, _, title = label.partition(" ")
@@ -258,11 +241,6 @@ def section_label(section: str) -> tuple[str, str]:
 _TOP_CTX: dict[str, int] = {}
 
 def _parse_top_cb(data: str) -> tuple[str, str]:
-    """Колбэк топов: 'top:<period>:<section>' -> (period, section).
-
-    Старые форматы ('menu:top', 'top:week') совместимо мапятся на
-    (week, talk) — чтобы кнопки из уже разосланных сообщений не ломались.
-    """
     parts = data.split(":")
     period, section = "week", "talk"
     if len(parts) >= 2 and parts[1] in PERIODS:
@@ -282,14 +260,12 @@ async def top_screen(cb: CallbackQuery, session: AsyncSession) -> None:
 
 @router.message(Command("top"), F.chat.type == "private")
 async def cmd_top(message: Message, session: AsyncSession) -> None:
-    """Алиас команды — недельный топ болтунов прямо в ЛС (листай разделы кнопками)."""
     _TOP_CTX["me"] = message.from_user.id
     text = await _top_section(session, "week", "talk")
     await answer_safe(message, text, reply_markup=top_tabs("week", "talk"))
 
 @router.message(Command("ach", "achievements"), F.chat.type == "private")
 async def cmd_ach(message: Message, session: AsyncSession) -> None:
-    """Алиас команды — достижения прямо в ЛС (первая страница)."""
     svc = AchievementService(session)
     items = await svc.list_for_user(message.from_user.id)
     text, page, total_pages = _render_achievements(items, page=0)
@@ -298,7 +274,6 @@ async def cmd_ach(message: Message, session: AsyncSession) -> None:
 
 @router.message(Command("stats"), F.chat.type == "private")
 async def cmd_stats(message: Message, session: AsyncSession) -> None:
-    """Полная статистика прямо в ЛС (раньше — заглушка «Воспользуйся меню»)."""
     users = UserRepository(session)
     user = await users.get(message.from_user.id)
     if user is None:

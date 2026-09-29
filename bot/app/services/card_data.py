@@ -1,17 +1,5 @@
-"""Сбор данных для PNG-карточки профиля (v2 — «питомец в центре»).
-
-Рендерер (profile_card.py) отделён от источников: здесь только SQL/сервисы,
-здесь же решается, КАКИЕ цифры видит игрок. Раньше карточка несла 4 плитки
-и одну строку о питомце; теперь — витальные статы, характеристики с вкладом
-в дуэли, арена-баланс недели, статусы (сон/болезнь/прогулка), возраст,
-место в топе и достижения.
-
-Все запросы устойчивы к отсутствующим таблицам/данным: любая секция умеет
-откатиться к безопасному дефолту, чтобы карточка не падала на живой БД.
-"""
 from __future__ import annotations
 
-from datetime import timedelta
 
 from loguru import logger
 from sqlalchemy import func, select
@@ -38,7 +26,6 @@ from app.utils.formatting import xp_needed_for_level
 from app.utils.local_time import now as local_now
 
 def _fmt_age(dt) -> str:
-    """Возраст '23 дня' / '5 мес.' / '1 год 2 мес.' по локальному (камч.) времени."""
     dt = _aware(dt)
     if dt is None:
         return ""
@@ -61,7 +48,6 @@ def vitals(pet: Pet) -> list[tuple[str, float]]:
     ]
 
 def vital_advice(pet: Pet) -> list[str]:
-    """Короткие подсказки по критичным витальным статам (<35%)."""
     tips = []
     if pet.hunger < 35:
         tips.append("проголодался — покорми")
@@ -76,7 +62,6 @@ def vital_advice(pet: Pet) -> list[str]:
     return tips
 
 def stat_contribs(pet: Pet) -> list[tuple[str, int, str]]:
-    """Характеристики + человекочитаемый вклад в механику."""
     return [
         ("Сила", pet.strength, "дуэли: грубая мощь"),
         ("Ловкость", pet.agility, "уклонения в дуэлях"),
@@ -84,7 +69,6 @@ def stat_contribs(pet: Pet) -> list[tuple[str, int, str]]:
     ]
 
 def pet_statuses(pet: Pet) -> list[str]:
-    """Активные состояния: сон (сколько осталось), прогулка, болезнь."""
     now = local_now()
     out: list[str] = []
     if pet.is_sleeping and pet.sleep_until is not None:
@@ -110,7 +94,6 @@ def pet_statuses(pet: Pet) -> list[str]:
     return out
 
 async def collect(session: AsyncSession, tg_id: int) -> dict | None:
-    """Полный «пакет» данных для рендера. None — пользователя ещё нет в БД."""
     user = (await session.execute(select(User).where(User.tg_id == tg_id))).scalar_one_or_none()
     if user is None:
         return None

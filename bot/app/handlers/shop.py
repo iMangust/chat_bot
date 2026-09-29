@@ -1,13 +1,3 @@
-"""Магазин и инвентарь.
-
-Экономика: монеты капают за активность (1/сообщение с кулдауном) и прогулки.
-Цены подобраны так, чтобы «базовая еда» была доступна почти сразу, а вкусняшки —
-целью на несколько дней. Покупки идут в pet_inventory; кормление из инвентаря
-использует реальные эффекты предметов.
-
-🧢 Мерч канала живёт в отдельном разделе (app/handlers/merch.py) — он про канал,
-а не про питомца. Здесь мерча нет; в магазине оставлена только кнопка-переход.
-"""
 from __future__ import annotations
 
 import html
@@ -138,13 +128,6 @@ def shop_keyboard(items: list[Item], user_coins: int) -> "InlineKeyboardBuilder 
 @router.callback_query(F.data.startswith("shop:next"))
 async def shop_screen(cb: CallbackQuery, session: AsyncSession,
                       page: int | None = None) -> None:
-    """Экран магазина. page — явный номер страницы (используется после
-    покупки: cb.data менять нельзя — объект frozen,).
-
-    Листание: ◀️/▶️ генерируются как ``shop:page:<n>`` (абсолютный индекс),
-    но старые инстансы сообщений могли содержать ``shop:back`` / ``shop:next``
-    (относительные) — они обрабатываются здесь же, иначе клик по ним не имеет
-    обработчика и кнопка «не работает» (жалоба пользователя)."""
     set_pet_page(cb.message.chat.id, 1)
     users = UserRepository(session)
     user = await users.get(cb.from_user.id)
@@ -213,7 +196,6 @@ async def shop_screen(cb: CallbackQuery, session: AsyncSession,
 
 @router.callback_query(F.data.in_({"shop:noop", "inv:noop"}))
 async def shop_noop(cb: CallbackQuery) -> None:
-    """Клик по неразрывной подписи страницы — просто снять «часики»."""
     await cb.answer()
 
 @router.callback_query(F.data.startswith("buy:"))

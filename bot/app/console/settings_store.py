@@ -1,24 +1,10 @@
-"""Хранилище настроек для веб-оболочки: чтение/валидация/запись.env «как есть».
-
-Оболочка (app/web) редактирует тот же файл bot/.env, что и запуск бота,
-поэтому после изменения настроек достаточно перезапуска бота.
-
-Принципы:
-* комментарии и порядок ключей в файле сохраняются (редактируем только строки
-  KEY=VALUE или дописываем новые ключи в конец);
-* кодировка — автоподбор (utf-8-sig → cp1251 → latin-1), запись всегда UTF-8;
-* значения проходят валидацию по полям pydantic-настроек Settings, а также
-  проверяются «короткие» алиасы MTProto из.env.example (API_ID/API_HASH/...);
-* секреты (BOT_TOKEN, TELEGRAM_PASSWORD, API_HASH, MTPROTO_SESSION_STRING)
-  наружу не отдаются — только признак «значение задано».
-"""
 from __future__ import annotations
 
 import os
 import re
 from pathlib import Path
 
-from app.config import _ENV_ENCODINGS, Settings, get_settings
+from app.config import _ENV_ENCODINGS, Settings
 
 SECRET_KEYS = {"BOT_TOKEN", "TELEGRAM_PASSWORD", "API_HASH",
                "TELEGRAM_API_HASH", "MTPROTO_SESSION_STRING"}
@@ -26,7 +12,6 @@ SECRET_KEYS = {"BOT_TOKEN", "TELEGRAM_PASSWORD", "API_HASH",
 _KEY_RE = re.compile(r"^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$")
 
 def env_path() -> Path:
-    """Путь к рабочему.env (тот же порядок поиска, что у app.config)."""
     for cand in (os.getenv("ENV_FILE"),
                  str(Path(__file__).resolve().parents[2] / ".env")):
         if cand and Path(cand).is_file():
@@ -50,7 +35,6 @@ def read_env_lines(path: Path | None = None) -> list[str]:
     return text.replace("\r\n", "\n").replace("\r", "\n").lstrip("\ufeff").split("\n")
 
 def parse_env(path: Path | None = None) -> dict[str, str]:
-    """KEY→VALUE из файла (без комментариев; последние значения важнее)."""
     out: dict[str, str] = {}
     for line in read_env_lines(path):
         m = _KEY_RE.match(line.strip())
@@ -63,7 +47,6 @@ def parse_env(path: Path | None = None) -> dict[str, str]:
     return out
 
 def write_env(updates: dict[str, str], path: Path | None = None) -> None:
-    """Точечно обновить ключи в.env, сохранив комментарии и порядок."""
     path = path or env_path()
     lines = read_env_lines(path)
     remaining = dict(updates)
@@ -94,7 +77,6 @@ def write_env(updates: dict[str, str], path: Path | None = None) -> None:
         os.environ[k] = v
 
 def _coerce(key: str, value: str):
-    """Проверка значения на совместимость с полем Settings (или алиасом)."""
     s = value.strip()
     field = getattr(Settings, "model_fields", {})
     fname = key.lower()
@@ -135,7 +117,6 @@ ALLOWED_ALIASES = {"API_ID", "API_HASH", "PHONE", "SESSION_STRING",
                    "ANSWER_MODE", "CHANNEL_USERNAME"}
 
 def validate_updates(updates: dict[str, str]) -> tuple[dict[str, str], list[str]]:
-    """Возвращает (очищенные значения, список предупреждений). Бросает ValueError."""
     clean: dict[str, str] = {}
     warns: list[str] = []
     fields = set(getattr(Settings, "model_fields", {}))
@@ -164,7 +145,6 @@ def validate_updates(updates: dict[str, str]) -> tuple[dict[str, str], list[str]
     return clean, warns
 
 def settings_view() -> dict:
-    """Все настройки для UI: текущие значения из.env + описания полей Settings."""
     raw = parse_env()
     fields = Settings.model_fields
     items = []
@@ -223,8 +203,6 @@ def _as_str(v) -> str:
 _COMMENT_CACHE: dict[str, str] = {}
 
 def _line_comment(key: str) -> str:
-    """Комментарий-описание над ключом (или на той же строке) из.env.example —
-    помогает оператору в интерфейсе."""
     if key in _COMMENT_CACHE:
         return _COMMENT_CACHE[key]
     example = env_path().with_name(".env.example")

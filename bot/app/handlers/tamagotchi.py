@@ -1,13 +1,7 @@
-"""Хаб тамагочи: экран питомца + действия через callback-кнопки.
-
-UX: все действия редактируют ОДНО сообщение (карточку питомца) — чтобы не
-засорять ЛС. Уведомления об эволюции/ачивках — отдельными сообщениями.
-"""
 from __future__ import annotations
 
 import random
 import re
-from datetime import datetime, timezone
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -35,12 +29,6 @@ router = Router(name="tamagotchi")
 _aware_dt = _aware
 
 class AdoptConfirm(StatesGroup):
-    """Двухшаговое подтверждение «усыновить нового» .
-
-    Раньше контекст жил в модульном dict (_ADOPT_CTX): текли память без TTL,
-    терялся при рестарте и ломался при нескольких воркерах. FSM-стейт хранится
-    в Redis (в dev — в памяти процесса) и очищается вместе с диалогом.
-    """
     confirm = State()
 
 async def _get_pet(session: AsyncSession, tg_id: int) -> Pet | None:
@@ -49,7 +37,6 @@ async def _get_pet(session: AsyncSession, tg_id: int) -> Pet | None:
 _PET_PAGE_CTX: dict[int, int] = {}
 
 def pet_page_for(chat_id: int) -> int:
-    """Последняя открытая страница хаба для этого чата (0 по умолчанию)."""
     return _PET_PAGE_CTX.get(int(chat_id), 0) % max(1, pet_page_count())
 
 def set_pet_page(chat_id: int, page: int) -> int:
@@ -58,12 +45,6 @@ def set_pet_page(chat_id: int, page: int) -> int:
     return page
 
 def _collect_walk_result(svc: TamagotchiService, pet: Pet, session: AsyncSession):
-    """Если срок прогулки истёк — возвращаем текст события и начисления.
-
-    ВАЖНО: walk_until снимает только этот хендлер (не apply_decay) — иначе
-    фоновый тик scheduler'а «съедал» флаг раньше пользователя, и награды за
-    прогулку терялись молча.
-    """
     if pet.walk_until is None:
         return None
     if local_now() < _aware_dt(pet.walk_until):
@@ -160,13 +141,6 @@ HELP_TEXT = (
 )
 
 def _split_html(text: str, limit: int = 4000) -> list[str]:
-    """Режет длинный текст на сообщения <=limit, НЕ разрывая HTML-теги.
-
-    Лимит Telegram — 4096 символов; единый /help (~4800) стабильно падал с
-    TelegramBadRequest («message text is too long») — справка не открывалась.
-    Режем по границам строк; если чанк заканчивается при незакрытом <b>/<i>/…,
-    дозакрываем его и открываем те же теги в следующем чанке.
-    """
     tag_re = re.compile(r"</?(b|i|u|s|code|pre|tg-spoiler)>")
     chunks: list[str] = []
     cur: list[str] = []
@@ -174,8 +148,8 @@ def _split_html(text: str, limit: int = 4000) -> list[str]:
     open_stack: list[str] = []
 
     def close_part(part: str, stack: list[str]) -> str:
-        for t in reversed(stack):
-            part += f"</{t}>"
+        for tag in reversed(stack):
+            part += f"</{tag}>"
         return part
 
     def reopen(stack: list[str]) -> str:
@@ -208,7 +182,6 @@ def _split_html(text: str, limit: int = 4000) -> list[str]:
 
 @router.message(Command("help"), F.chat.type == "private")
 async def cmd_help(message: Message) -> None:
-    """Справка отправляется пачкой: весь гид заведомо длиннее лимита 4096."""
     from app.utils.text_split import split_message, strip_html_tags
     try:
         for chunk in _split_html(HELP_TEXT):
@@ -220,7 +193,6 @@ async def cmd_help(message: Message) -> None:
 
 @router.message(Command("weather", "погода"), F.chat.type == "private")
 async def cmd_weather(message: Message) -> None:
-    """/weather — живая погода Камчатки + полный разбор плюсов/минусов для питомца."""
     from app.services.weather import kamchatka_weather, weather_hint_block_fresh
     try:
         w = await kamchatka_weather()
@@ -240,7 +212,6 @@ async def cmd_weather(message: Message) -> None:
 
 @router.message(Command("pet"), F.chat.type == "private")
 async def cmd_pet(message: Message, session: AsyncSession) -> None:
-    """Текстовый дубликат кнопки «🐾 Питомец» (команда есть в меню Telegram)."""
     svc = TamagotchiService(session)
     pet = await _get_pet(session, message.from_user.id)
     if pet is None:
@@ -257,7 +228,6 @@ async def cmd_pet(message: Message, session: AsyncSession) -> None:
 
 @router.callback_query(F.data == "menu:pet")
 async def pet_screen(cb: CallbackQuery, session: AsyncSession) -> None:
-    """Открыть хаб питомца на последней посещённой странице."""
     svc = TamagotchiService(session)
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
@@ -279,13 +249,11 @@ async def pet_screen(cb: CallbackQuery, session: AsyncSession) -> None:
 
 @router.callback_query(F.data == "pet:noop")
 async def pet_hub_noop(cb: CallbackQuery) -> None:
-    """Клик по неразрывной подписи страницы хаба — просто снять «часики»."""
     await cb.answer()
 
 @router.callback_query(F.data == "pet:page:0")
 @router.callback_query(F.data.startswith("pet:page:"))
 async def pet_page_screen(cb: CallbackQuery, session: AsyncSession) -> None:
-    """Навигация ◀️/▶️ по страницам хаба (Уход → Вещи → Досуг)."""
     try:
         page = int(cb.data.split(":")[-1])
     except ValueError:
@@ -325,9 +293,6 @@ async def pet_page_screen(cb: CallbackQuery, session: AsyncSession) -> None:
 
 @router.callback_query(F.data == "pet:revive")
 async def act_revive(cb: CallbackQuery, session: AsyncSession) -> None:
-    """💖 Реанимация : платная, цена растёт 200→400→600, максимум 3 раза.
-    Новичку без монет первая реанимация — бесплатно (one-shot), чтобы смерть
-    на первой неделе не убивала мотивацию."""
     svc = TamagotchiService(session)
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
@@ -372,7 +337,6 @@ async def act_revive(cb: CallbackQuery, session: AsyncSession) -> None:
 @router.callback_query(F.data == "pet:adopt_confirm", AdoptConfirm.confirm)
 async def pet_adopt_confirm(cb: CallbackQuery, session: AsyncSession,
                             state: FSMContext) -> None:
-    """Подтверждение усыновления (кнопка «✅ Да»): архивируем текущего, открываем пикер."""
     svc = TamagotchiService(session)
     data = await state.get_data()
     await state.clear()
@@ -392,7 +356,6 @@ async def pet_adopt_confirm(cb: CallbackQuery, session: AsyncSession,
 @router.callback_query(F.data == "pet:adopt_cancel", AdoptConfirm.confirm)
 async def pet_adopt_cancel(cb: CallbackQuery, session: AsyncSession,
                            state: FSMContext) -> None:
-    """Отмена усыновления (кнопка «⬅️ Отмена»): снимаем стейт, возвращаем карточку."""
     await state.clear()
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
@@ -405,8 +368,6 @@ async def pet_adopt_cancel(cb: CallbackQuery, session: AsyncSession,
 @router.callback_query(F.data == "pet:adopt")
 async def pet_adopt_screen(cb: CallbackQuery, session: AsyncSession,
                            state: FSMContext) -> None:
-    """🥚 «Усыновить нового»: архивируем текущего (с подтверждением через
-    повторное нажатие) и открываем пикер вида."""
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
         from app.keyboards.inline import species_picker
@@ -429,14 +390,11 @@ async def pet_adopt_screen(cb: CallbackQuery, session: AsyncSession,
     await cb.answer()
 
 def _species_picker_text() -> str:
-    """тот же экран выбора вида, что в онбординге (единый источник — start.py),
-    чтобы «любит/не любит» и бонусы нигде не разъезжались и были по-русски."""
     from app.handlers.start import species_picker_text
     return species_picker_text()
 
 @router.callback_query(F.data == "pet:history")
 async def pet_history_screen(cb: CallbackQuery, session: AsyncSession) -> None:
-    """📜 Экран истории питомцев : все архивные поколения владельца."""
     svc = TamagotchiService(session)
     pets = await svc.history(session, cb.from_user.id)
     current = await _get_pet(session, cb.from_user.id)
@@ -458,15 +416,6 @@ async def pet_history_screen(cb: CallbackQuery, session: AsyncSession) -> None:
 
 async def _after_action(cb: CallbackQuery, session: AsyncSession, result_text: str,
                         *, fx: str | None = None, stat: str | None = None) -> None:
-    """Единый постобработчик: перерендер карточки + лог действия + эффекты.
-
-    ``fx`` — имя визуального эффекта (см. app/utils/fx.py): всплывающая
-    подпись под кнопкой + эмодзи-реакции на карточке питомца. Без него —
-    просто тихий ack (старое поведение).
-
-    Если прогулка завершилась (walk_until ещё висит, но срок истёк),
-    добираем её награды и только затем снимаем флаг.
-    """
     svc = TamagotchiService(session)
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
@@ -532,10 +481,6 @@ async def act_feed(cb: CallbackQuery, session: AsyncSession) -> None:
 
 @router.callback_query(F.data == "pet:play")
 async def act_play(cb: CallbackQuery, session: AsyncSession) -> None:
-    """MVP-игра «угадай число» упрощена до честного рандома с бонусом ловкости.
-
-    На этапе 3.5 заменим на полноценную мини-игру с FSM (ввод числа / RPS).
-    """
     svc = TamagotchiService(session)
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
@@ -562,7 +507,6 @@ async def act_sleep(cb: CallbackQuery, session: AsyncSession) -> None:
 
 @router.callback_query(F.data == "pet:wake")
 async def act_wake(cb: CallbackQuery, session: AsyncSession) -> None:
-    """Принудительно разбудить: накопленная за сон энергия сохраняется."""
     svc = TamagotchiService(session)
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
@@ -633,11 +577,6 @@ async def act_walk(cb: CallbackQuery, session: AsyncSession) -> None:
 
 @router.callback_query(F.data == "pet:end_walk")
 async def act_end_walk(cb: CallbackQuery, session: AsyncSession) -> None:
-    """: досрочно вернуть питомца с прогулки (как «⏰ Разбудить» для сна).
-
-    Начисляется только то, что реально успело накопиться за прошедшее время;
-    полный расчёт награды — если срок уже истёк, но результат не собран.
-    """
     svc = TamagotchiService(session)
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
@@ -647,4 +586,3 @@ async def act_end_walk(cb: CallbackQuery, session: AsyncSession) -> None:
     if returned:
         await PetRepository(session).log_action(pet.id, "walk_done")
     await _after_action(cb, session, result, fx="wake" if returned else None)
-

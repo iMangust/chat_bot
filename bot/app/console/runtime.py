@@ -1,14 +1,3 @@
-"""Управляемая версия жизненного цикла бота (используется GUI-оболочкой).
-
-Бот запускается внутри asyncio-цикла событий GUI-оболочки (run_gui.bat),
-поэтому сигнальные обработчики не нужны, а статус/логи должны быть доступны
-вызывающему коду. Модуль предоставляет:
-
-*:class:`BotRuntime` — запуск/остановка aiogram-бота + планировщика;
-*:class:`UiLogHandler` — sink loguru, который буферизует лог-записи и
-  опционально транслирует их через колбэк;
-* глобальный singleton-экземпляр runtime (для статуса и аптайма).
-"""
 from __future__ import annotations
 
 import asyncio
@@ -39,12 +28,6 @@ from app.tasks.scheduler import build_scheduler
 from app.utils.redis import close_redis, init_redis
 
 class UiLogHandler:
-    """Sink loguru: буфер последних строк + колбэк слушателю.
-
-    Колбэк вызывается синхронно из того же потока, что пишет лог (то есть из
-    event loop'а), поэтому принимающая сторона может использовать
-    ``call_from_thread`` внутри своего колбэка.
-    """
 
     def __init__(self, maxlen: int = 1000) -> None:
         self.buffer: deque[str] = deque(maxlen=maxlen)
@@ -68,14 +51,6 @@ class UiLogHandler:
 ui_log_handler = UiLogHandler()
 
 def _detach_router(router: Dispatcher) -> None:
-    """Открепить все дочерние роутеры от диспетчера (рекурсивно).
-
-    aiogram 3.x в ``Router.parent_router`` (setter) запрещает повторное
-    прикрепление: «Router is already attached to …». Без отвязки второй
-    runtime.start (кнопка «Запустить/Перезапустить» в панели) падал именно
-    на этом. Хендлеры при этом не дублируются: они остаются зарегистрированными
-    в самих роутерах — меняем только ссылку на родителя.
-    """
     stack = [router]
     while stack:
         node = stack.pop()
@@ -87,7 +62,6 @@ def _detach_router(router: Dispatcher) -> None:
                 sub._parent_router = None
 
 def _reset_router_state(dp: Dispatcher) -> None:
-    """Открепить роутеры от диспетчера и подчистить его кэши."""
     _detach_router(dp)
     with contextlib.suppress(Exception):
         dp.resolve_used_update_types()
@@ -105,7 +79,6 @@ def _reset_router_state(dp: Dispatcher) -> None:
                             f._dispatcher = None
 
 class BotRuntime:
-    """Запуск и остановка бота по требованию (singleton —:data:`runtime`)."""
 
     def __init__(self) -> None:
         self.state: str = "stopped"
@@ -118,7 +91,6 @@ class BotRuntime:
         self.last_error: str | None = None
 
     async def start(self) -> None:
-        """Полный старт: Redis → БД → сиды → роутеры → поллинг."""
         if self.state != "stopped":
             raise RuntimeError(f"бот уже в состоянии {self.state!r}")
         settings = get_settings()
@@ -239,7 +211,6 @@ class BotRuntime:
             raise
 
     def _on_polling_done(self, task: asyncio.Task) -> None:
-        """Если поллинг упал сам — фиксируем ошибку и чиним состояние."""
         if task.cancelled():
             return
         exc = task.exception()
@@ -251,7 +222,6 @@ class BotRuntime:
             self.state = "stopped"
 
     async def stop(self) -> None:
-        """Graceful shutdown: планировщик → поллинг → Redis/engine/session."""
         if self.state not in ("running", "starting"):
             return
         self.state = "stopping"
@@ -304,7 +274,6 @@ class BotRuntime:
         return time.time() - self.started_at
 
     def jobs_info(self) -> list[tuple[str, str]]:
-        """[(id, следующее срабатывание)] активных задач планировщика."""
         if self._scheduler is None or not self._scheduler.running:
             return []
         out = []
@@ -316,8 +285,6 @@ class BotRuntime:
 runtime = BotRuntime()
 
 def setup_file_logging(level: str = "INFO") -> Path:
-    """Настроить loguru: консоль подавляется (её перехватывает оболочка),
-    файл логов остаётся обязательным."""
     logger.remove()
     logger.add(ui_log_handler, level=level)
     Path("logs").mkdir(exist_ok=True)

@@ -1,47 +1,3 @@
-"""Глобальный доступ (v2.0): только ЛС и только подписчики отслеживаемых чатов.
-
-Правила бота:
-1. Взаимодействие с ботом — исключительно в личных сообщениях. В группах и
-   каналах бот молчит: не отвечает на команды и кнопки, ничего не пишет
-   (пассивный трекер активности остаётся — см. handlers/tracker.py).
-2. Подписка хотя бы на ОДИН из обязательных чатов (TRACKED_CHAT_IDS; при
-   пустом списке — CHANNEL_USERNAME / CHANNEL_CHAT_ID) = полный доступ.
-   Нет подписки — просьба подписаться. Никаких приветствий/рассылок: бот
-   первым не пишет никогда (старая welcome-механика удалена в v2.0).
-
-Как проверяется подписка (по возрастанию стоимости):
-  1) положительный кэш (SUBSCRIBE_CACHE_SEC);
-  2) Bot API getChatMember — статус member/administrator/creator сразу даёт
-     доступ и фиксируется в реестре (быстрый путь, без обращения к БД);
-  3) MTProto-глаза (userbot): при включённой приватности («скрытый список
-     участников») Bot API отдаёт состоящих в чате людей как left/kicked/
-     restricted — Telethon видит их честно. Проба идёт ПОСЛЕ реестра:
-     дешёвый SELECT раньше дорогого RPC;
-  4) реестр channel_subscribers: туда записи попадают только из достоверных
-     источников членства (события chat_member/new_chat_members, сообщение
-     автора в чате, MTProto-сканы) — «нет прав» у реального участника
-     исключён даже при недоступном MTProto;
-  5) MTProto-проба конкретного пользователя + живой скан всех участников
-     (разовый, с дебаунсом): если ни события, ни синк человека ещё не
-     видели, гейт сам обновляет реестр и пропускает его — доступ больше не
-     зависит от того, успел ли пройтись cron-дельта-синк.
-Любой сбой Telegram => fail-open: бот не имеет права «мирать» в ЛС из-за
-недоступности API. Если ни один чат не настроен — доступ разрешён (dev-режим),
-админ получает разовое предупреждение.
-
-v2.0.1 (лог «участники по-прежнему не могут взаимодействовать»): Bot API
-getChatMember при включённой приватности канала отдаёт РЕАЛЬНЫХ участников со
-статусом 'left' — старая версия гейта после такого ответа почти мгновенно
-выдавала заглушку «подпишись», потому что обе страховки были сломаны:
-  * реестр был пуст (события chat_member приходят только на вступление, а
-     дельта-синк заносит лишь новых);
-  * MTProto-проба вызывалась внутри цикла и падала молча (см. ниже).
-Теперь порядок проверок гарантированно спасает подписчика: сначала реестр
-(дешёвый SELECT), затем MTProto-проба, затем живой скан участников.
-
-Отладочный лог каждого решения гейта (уровень DEBUG) — чтобы вопрос
-«почему N не может пользоваться ботом» отвечался одной строкой в логе.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -49,8 +5,6 @@ import contextlib
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
-
-_bg_tasks: set = set()
 
 from aiogram import BaseMiddleware
 from aiogram.enums import ChatType
@@ -68,28 +22,14 @@ _pos_cache: dict[Any, float] = {}
 _neg_cache: dict[Any, float] = {}
 _warned_no_admin: set[str] = set()
 _warned_no_gating: set[str] = set()
+_bg_tasks: set[asyncio.Task] = set()
 
 gate_last_reason: dict[str, Any] = {}
 
 class _SyntheticPrivateChat:
-    """Заглушка чата: приватный тип для ЛС-колбэков без message.chat."""
     type = ChatType.PRIVATE
 
 def required_chats() -> list[tuple[str, str]]:
-    """Чаты, подписка хотя бы на ОДИН из которых обязательна: [(id, username)].
-
-    Источник — TRACKED_CHAT_IDS (см. config): взаимодействие разрешено только
-    подписчикам одного из отслеживаемых канала/группы. Если список пуст,
-    используем CHANNEL_CHAT_ID / CHANNEL_USERNAME (одиночный канал).
-
-    v2.0.5 (важное): канал и его группа обсуждения объединяются в СПИСОК
-    всегда. Раньше при заполненном TRACKED_CHAT_IDS канал проверялся лишь
-    тогда, когда был перечислен там явно; если админ указывал только группу,
-    гейт требовал членства исключительно в группе — и человек, состоящий в
-    канале (но не в группе), получал ложный отказ. Тот же класс ошибки, что
-    «фильтр по chat.type» в v1.6.x: проверочная цепочка обязана включать ВСЕ
-    известные боту чаты проекта.
-    """
     st = get_settings()
     seen: set[str] = set()
     chats: list[tuple[str, str]] = []
@@ -109,7 +49,6 @@ def required_chats() -> list[tuple[str, str]]:
     return chats
 
 def subscribe_kb() -> "Any":
-    """Клавиатура для неподписанных: ссылка на канал + проверка подписки."""
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
     st = get_settings()
     rows = []
@@ -130,7 +69,6 @@ def subscribe_kb() -> "Any":
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 def reset_subscribe_cache(user_id: int | None = None) -> None:
-    """Сбрасывает кэш проверки подписки (по пользователю или весь целиком)."""
     if user_id is None:
         _pos_cache.clear()
         _neg_cache.clear()
@@ -139,13 +77,6 @@ def reset_subscribe_cache(user_id: int | None = None) -> None:
         _neg_cache.pop(user_id, None)
 
 async def _notify_admin(bot, text_key: str, uid: str, text: str) -> None:
-    """Предупреждает админа (ADMIN_IDS) о проблеме конфигурации гейта.
-
-    Разовость обеспечивает вызывающий (_notify_no_* добавляют ключ в множества
-    ДО планирования таска): иначе первый же тап помечал бы канал «предупреждён»,
-    а реальная отправка ещё даже не началась — и при сбое Telegram/подавлении
-    исключения админ не узнал бы никогда (так и было до v2.0.1).
-    """
     ids = get_settings().admin_ids
     if not ids:
         return
@@ -155,28 +86,9 @@ async def _notify_admin(bot, text_key: str, uid: str, text: str) -> None:
         logger.warning("gate admin notice for {} failed to send: {}", uid, exc)
 
 async def known_subscriber_in_db(user_id: int) -> bool:
-    """Числится ли пользователь в реестре с ПОДТВЕРЖДЁННЫМ членством.
-
-    Возвращает False при любой ошибке БД — гейт тогда опирается на остальные
-    источники (MTProto / живой скан / fail-open).
-    """
     return bool(await known_subscriber_ids([user_id]))
 
 async def known_subscriber_ids(user_ids: list[int] | set[int]) -> set[int]:
-    """Множество id из user_ids, у которых в channel_subscribers есть НЕПУСТОЙ
-    список чатов ``chats`` (достоверный сигнал присутствия).
-
-    v2.0.3 (важное уточнение безопасности): раньше достаточно было ЛЮБОЙ
-    строки — но строку создаёт и /start без подтверждения подписки
-    (ever_contacted, chats=[]), и старые welcome-записи после миграции.
-    Такая «строка без чата» открывала бы доступ неподписанному человеку,
-    стоит ему один раз нажать «Проверить подписку». Право доступа доказывает
-    именно непустой ``chats`` (запись туда делают только события вступления,
-    сообщения автора в чате, MTProto-сканы и живые проверки API/MTProto).
-
-    Один запрос вместо N (batch). Ошибка БД => пустое множество
-    (поведение как раньше — консервативно).
-    """
     ids = {int(u) for u in user_ids if u}
     if not ids:
         return set()
@@ -196,18 +108,6 @@ async def known_subscriber_ids(user_ids: list[int] | set[int]) -> set[int]:
         return set()
 
 def _remember_membership(bot, user_id: int, cid: str, source: str) -> None:
-    """Фиксирует подтверждённое членство в реестре (фоновая задача).
-
-    Реестр — страховочный источник доступа (следующие тапы проходят по нему,
-    даже когда Bot API «ослепает» на приватности). Идемпотентно; ошибки БД
-    не влияют на выдачу доступа.
-
-    v2.0.6: для критического пути (Bot API ответил 'member' во время
-    проверки доступа) запись идёт НАПРЯМУЮ в БД (add_membership_sql), а не
-    через ORM-UPSERT: параллельный писатель (MTProto-скан/событие чата) мог
-    перезаписать строку поверх stale-снимка и стереть только что доказанное
-    членство — человек оставался без страховки до следующего подтверждения.
-    """
     async def _run() -> None:
         try:
             if source == "bot-api" and cid:
@@ -232,19 +132,6 @@ def _remember_membership(bot, user_id: int, cid: str, source: str) -> None:
         t.add_done_callback(_bg_tasks.discard)
 
 async def _live_scan(bot, user_id: int) -> bool:
-    """Живой скан участников + повторная проверка реестра.
-
-    Тонкость v2.0.1: ensure_registry_fresh возвращает «скан запускался», а не
-    «человек найден» (например, чат уже сканировали минуту назад — дебаунс).
-    Поэтому реестр перепроверяется ВСЕГДА после попытки скана: иначе свежий
-    подписчик получал бы заглушку до следующего cron-дельта-синка.
-
-    v2.0.2 (лог 23:41): раньше при сбое ensure_registry_fresh (дебаунс,
-    недоступный MTProto, ошибка БД) результат молча становился False — и
-    живой человек из реестра получал «🔒 подпишись». Теперь перед выдачей
-    отказа реестр перечитывается НАПРЯМУЮ (SELECT без кэша): запись,
-    созданную синком секундой ранее, гейт обязан увидеть сразу.
-    """
     try:
         from app.handlers.access import ensure_registry_fresh
         await ensure_registry_fresh(bot, user_id)
@@ -253,7 +140,6 @@ async def _live_scan(bot, user_id: int) -> bool:
     return await known_subscriber_in_db(user_id)
 
 def is_subscribed_cached(user_id: int) -> bool | None:
-    """Вердикт гейта из кэша без RPC: True/False или None (нет свежей записи)."""
     now = time.monotonic()
     pos = _pos_cache.get(user_id)
     if pos is not None and pos > now:
@@ -264,22 +150,6 @@ def is_subscribed_cached(user_id: int) -> bool | None:
     return None
 
 async def _mtproto_status(target: str | int, user_id: int):
-    """MTProto-проба статуса пользователя. Возвращает ('ok', status) либо
-    ('error', причина).
-
-    v2.0.1: get_chat_member_status сам по себе «никогда не бросает» и
-    возвращает None при любой проблеме, но импорт/вызов могут упасть и сами
-    по себе (Telethon не установлен, битый конфиг, таймаут сети). Раньше эта
-    ошибка терялась в DEBUG-логе MTProto-клиента, а гейт молча блокировал
-    реального подписчика («участники не могут взаимодействовать»). Теперь
-    сбой различим: ('error',...) логируется явно и переводит проверку на
-    следующий источник (реестр → живой скан), а не в заглушку.
-
-    v2.0.4 (подробный дебаг): kind='silent' — проба вернула None без
-    исключения (клиент не в чате / PARTICIPANTS_TOO_LARGE / entity не
-    найдена). Причина берётся из last_scan_error и попадает в лог отказа
-    вместо абстрактного «probe returned None».
-    """
     try:
         from app.services.mtproto_client import get_chat_member_status
         st = await get_chat_member_status(target, user_id)
@@ -295,7 +165,6 @@ async def _mtproto_status(target: str | int, user_id: int):
         return ("error", f"{type(exc).__name__}: {str(exc)[:120]}")
 
 async def _registry_row_state(user_id: int) -> str:
-    """Диагностика строки реестра для логов гейта: существует ли, что в chats."""
     try:
         from app.db.models import ChannelSubscriber
         from app.db.session import session_factory
@@ -308,22 +177,6 @@ async def _registry_row_state(user_id: int) -> str:
         return f"read failed: {type(exc).__name__}: {str(exc)[:80]}"
 
 async def is_channel_subscribed(bot, user_id: int) -> bool:
-    """True — пользователь подписан хотя бы на ОДИН обязательный чат
-    (TRACKED_CHAT_IDS; при пустом списке — CHANNEL_USERNAME/CHANNEL_CHAT_ID),
-    либо проверка недоступна (fail-open).
-
-    Положительный результат кэшируется на SUBSCRIBE_CACHE_SEC, отрицательный —
-    на _NEG_TTL_SEC (короткий, чтобы «Я подписался» срабатывало почти сразу).
-    Любая ошибка API => fail-open: бот обязан оставаться отзывчивым даже при
-    недоступном канале/сбое Telegram — молчание в ЛС недопустимо.
-
-    Ключевое правило v2.0.1: ОТРИЦАТЕЛЬНЫЙ ответ Bot API ('left'/'kicked'/
-    'restricted') НЕ является доказательством отсутствия подписки. При
-    включённой приватности канала так отдаются РЕАЛЬНЫЕ участники. Поэтому
-    перед блокировкой запускается цепочка страховок — реестр (дешёвый SELECT)
-    → MTProto-проба пользователя → живой скан участников. Заглушка «подпишись»
-    выдаётся только когда все источники промолчали.
-    """
     chats = required_chats()
     if not chats:
         logger.error("subscription gate disabled: TRACKED_CHAT_IDS/CHANNEL_* are empty — "
@@ -410,20 +263,6 @@ async def _mtproto_and_scan_fallback(bot, user_id: int,
                                      chats: list[tuple[str, str]],
                                      api_status: dict[str, str] | None = None,
                                      ) -> bool:
-    """Страховочная цепочка для случаев, когда Bot API НЕ подтвердил членство
-    (приватность канала, статус 'bot', сбой по одному из чатов).
-
-    Порядок: реестр (дешёвый SELECT) → MTProto-проба пользователя → живой
-    скан участников. True — доступ доказан и закэширован; False — все
-    источники промолчали (лог отказа печатает вызывающий).
-
-    v2.0.4 (подробный дебаг): каждый шаг пишет INFO/WARNING со своей причиной,
-    а перед финальным отказом сверяет полноту последнего живого скана с
-    точным числом участников чата (GetFullChannel). Если скан собрал заметно
-    меньше половины — это тихая недопустимость выборки Telethon (см.
-    mtproto_client._LAST_SCAN_ERROR), и бот честно говорит об этом вместо
-    ложного «не подписан».
-    """
     if await known_subscriber_in_db(user_id):
         logger.info("gate: allow {} — not visible via Bot API (privacy?) "
                     "but present in channel_subscribers registry", user_id)
@@ -493,14 +332,12 @@ async def _mtproto_and_scan_fallback(bot, user_id: int,
     return False
 
 async def last_scan_error_safe() -> str:
-    """Причина молчания MTProto для диагностики (никогда не бросает)."""
     with contextlib.suppress(Exception):
         from app.services.mtproto_client import last_scan_error
         return await last_scan_error() or ""
     return ""
 
 def _notify_no_admin(bot, uid: str) -> None:
-    """Разово предупреждает админа, что бот не может проверять чат."""
     if uid in _warned_no_admin:
         return
     _warned_no_admin.add(uid)
@@ -536,14 +373,6 @@ def _notify_no_gating(bot) -> None:
 _ENTRY_COMMANDS = {"start", "help"}
 
 def _is_entry_command(message: Message, bot_username: str = "") -> bool:
-    """Команда входа (/start, /help) — работает и для неподписанных.
-
-    v2.0.6: принимает и адресную форму «/start@Sasha_Ovs_bot» (Telegram
-    подставляет @username бота в кнопки «Начать» из deep-link/меню команд;
-    раньше такая команда НЕ считалась входом и глушилась гейтом даже у
-    подписчика — ровно боевой лог 10:45: «gate: allow …», а ответа нет).
-    Команда, адресованная ДРУГОМУ боту (/start@OtherBot), входом не считается.
-    """
     text = message.text or ""
     if not text.startswith("/"):
         return False
@@ -557,14 +386,6 @@ def _is_entry_command(message: Message, bot_username: str = "") -> bool:
     return True
 
 async def _resolve_bot_username(bot) -> str:
-    """Юзернейм бота (для распознавания адресных команд «/start@NameBot»).
-
-    v2.0.6: после `await bot.init` aiogram уже знает имя (bot.username /
-    bot.me) — берём его без сетевого вызова; иначе один раз дёргаем getMe и
-    кэшируем по экземпляру. Пустая строка = «имя неизвестно» → любая
-    адресная форма считается обращённой к нам (fail-open: подписчик не
-    потеряет вход из-за недоступности getMe).
-    """
     name = getattr(bot, "username", None) or getattr(
         getattr(bot, "me", None), "username", None)
     if name:
@@ -586,14 +407,6 @@ async def _resolve_bot_username(bot) -> str:
 _BOT_USERNAME_CACHE: dict[int, str] = {}
 
 def _addressed_to_this_bot(text: str, bot_username: str) -> bool:
-    """/start@OtherBot — команда ДРУГОМУ боту из общего чата.
-
-    v2.0.6 (боевой лог 10:45): Telegram доставляет такие апдейты нашему боту
-    (он состоит в группе), а гейт считал их «командами» и глушил молча —
-    человек видел только безмолвие. Для служебных сообщений это безразлично,
-    но ЛС-текст вида «/start@Sasha_Ovs_bot» — обращение именно к нам, и оно
-    обязано дойти до хендлеров.
-    """
     body = text[1:].split()[0] if text.startswith("/") else ""
     if "@" not in body:
         return True
@@ -601,13 +414,6 @@ def _addressed_to_this_bot(text: str, bot_username: str) -> bool:
     return not bot_username or name == bot_username.lower().lstrip("@")
 
 def _is_serviceable_group_message(event) -> bool:
-    """Групповое сообщение, которое ведут служебные (безмолвные) хендлеры.
-
-    Пропускаем к диспетчеру только служебные события: приход/уход участника
-    (учёт подписчиков для гейта) и обычные текстовые/медиа-сообщения
-    (пассивный трекер активности ничего не пишет в чат). Команды (/start
-    и т.п.) в группах глотаются целиком — бот на них молчит.
-    """
     if not isinstance(event, Message):
         return False
     if event.new_chat_members or event.left_chat_member:
@@ -625,7 +431,6 @@ def _target_user(event) -> User | None:
     return None
 
 class AccessGateMiddleware(BaseMiddleware):
-    """Outer-middleware на все апдейты: приватные чаты + подписка на канал."""
 
     async def __call__(
         self,

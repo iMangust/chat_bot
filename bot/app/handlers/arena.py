@@ -1,8 +1,3 @@
-"""Недельная Арена питомцев (PVP) + гардероб (кастомизация окраса/аксессуаров).
-
-UX: экраны редактируют одно сообщение; бой даёт короткий отчёт поверх топа.
-Команда /arena — текстовый алиас кнопки «🏟 Арена».
-"""
 from __future__ import annotations
 
 from aiogram import F, Router
@@ -34,7 +29,6 @@ async def arena_open(cb: CallbackQuery, session: AsyncSession) -> None:
 
 @router.callback_query(F.data == "arena:noop")
 async def arena_noop(cb: CallbackQuery) -> None:
-    """Кнопка-заглушка, когда бой недоступен (кулдаун/лимит): просто подсказка."""
     await cb.answer("Питомец пока не готов к бою ⏳", show_alert=True)
 
 @router.message(Command("arena"), F.chat.type == "private")
@@ -154,7 +148,6 @@ async def style_open(cb: CallbackQuery, session: AsyncSession) -> None:
 
 @router.callback_query(F.data.startswith("style:slot:"))
 async def style_slot(cb: CallbackQuery, session: AsyncSession) -> None:
-    """Открыть список вещей выбранного слота."""
     pet = await _pet_or_alert(cb, session)
     if pet is None:
         return
@@ -170,7 +163,6 @@ async def style_slot(cb: CallbackQuery, session: AsyncSession) -> None:
 
 @router.callback_query(F.data.startswith("style:page:"))
 async def style_page(cb: CallbackQuery, session: AsyncSession) -> None:
-    """Листание страниц внутри слота."""
     pet = await _pet_or_alert(cb, session)
     if pet is None:
         return
@@ -209,7 +201,6 @@ async def style_color(cb: CallbackQuery, session: AsyncSession) -> None:
 
 @router.callback_query(F.data.startswith("style:wear:"))
 async def style_wear(cb: CallbackQuery, session: AsyncSession) -> None:
-    """Купить/надеть/снять вещь в её слоте (стиле old style:acc для совместимости)."""
     pet = await _pet_or_alert(cb, session)
     if pet is None:
         return
@@ -236,6 +227,3 @@ async def style_wear(cb: CallbackQuery, session: AsyncSession) -> None:
     else:
         await cb.answer(notice[:120], show_alert=len(notice) > 120)
 
-@router.callback_query(F.data.startswith("style:acc:"))
-async def style_acc_legacy(cb: CallbackQuery, session: AsyncSession) -> None:
-    await style_wear(cb, session)

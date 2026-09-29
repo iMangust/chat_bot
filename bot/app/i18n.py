@@ -1,10 +1,3 @@
-"""Строки интерфейса бота (RU-only).
-
-Английский перевод и переключение языков удалены из кодовой базы: бот
-рассчитан на русскоязычную аудиторию. Модуль оставлен как единый словарь
-``STRINGS`` + функции ``t``/``tf`` — точки вызова в хендлерах/сервисах
-не меняются; неизвестный ключ возвращается как есть (UI не падает).
-"""
 from __future__ import annotations
 
 from typing import Any
@@ -84,8 +77,6 @@ STRINGS: dict[str, str] = {
 }
 
 def tf(lang: str | None, key: str, **params: Any) -> str:
-    """Перевод по явному «языку» (параметр сохранён для совместимости
-    сигнатуры — всегда возвращает русскую строку)."""
     text = STRINGS.get(key) or key
     try:
         return text.format(**params) if params else text
@@ -93,5 +84,4 @@ def tf(lang: str | None, key: str, **params: Any) -> str:
         return text
 
 def t(key: str, **params: Any) -> str:
-    """Русская строка по ключу."""
     return tf(DEFAULT_LANG, key, **params)

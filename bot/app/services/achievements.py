@@ -1,15 +1,7 @@
-"""Сервис достижений: сид справочника, проверка условий, награды.
-
-Принципы защиты от накрутки:
-- условия привязаны только к *засчитанным* счётчикам (is_counted=True);
-- пороговые значения подобраны так, чтобы их нельзя было закрыть флудом
-  (кулдаун 10 сек => 100 сообщений ≈ минимум 17 минут осмысленной активности);
-- secret-ачивки выдаются только явными вызовами check(..., force_codes=[...]).
-"""
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -94,7 +86,6 @@ ACHIEVEMENTS: list[AchievementDef] = [
 _BY_CODE = {a.code: a for a in ACHIEVEMENTS}
 
 async def seed_achievements(session: AsyncSession) -> int:
-    """Идемпотентно загружает справочник достижений. Возвращает число созданных."""
     existing = {
         row for row in (await session.execute(select(Achievement.code))).scalars()
     }
@@ -115,12 +106,6 @@ async def seed_achievements(session: AsyncSession) -> int:
     return created
 
 class AchievementService:
-    """Проверяет прогресс и выдаёт награды.
-
-    `check(user_id, counters)` принимает словарь вида
-    {condition_type.value: current_value}. Для messages_total дополнительно
-    можно передать 'messages_day' — маппится на условие messages_day.
-    """
 
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -128,7 +113,6 @@ class AchievementService:
 
     async def check(self, user_id: int, counters: dict[str, int],
                     force_codes: list[str] | None = None) -> list[Achievement]:
-        """Возвращает список ТОЛЬКО ЧТО разблокированных достижений."""
         newly: list[Achievement] = []
         seen_ids: set[int] = set()
         ach_rows = (await self.session.execute(select(Achievement))).scalars().all()
@@ -152,10 +136,6 @@ class AchievementService:
         return newly
 
     async def unlock(self, achievement: Achievement, user_id: int) -> Achievement | None:
-        """Прямая выдача по объекту достижения (админ-команды, секреты).
-
-        Возвращает achievement, если оно открылось сейчас, иначе None.
-        """
         unlocked_now = await self.repo.upsert_progress(
             user_id, achievement.id, achievement.condition_value)
         if unlocked_now:
@@ -164,7 +144,6 @@ class AchievementService:
         return None
 
     async def unlock_by_code(self, user_id: int, code: str) -> Achievement | None:
-        """Прямая выдача (секретки, ручные награды админом)."""
         a = (await self.session.execute(
             select(Achievement).where(Achievement.code == code)
         )).scalar_one_or_none()
@@ -213,11 +192,6 @@ class AchievementService:
                         user_id, a.code, a.reward_xp, a.reward_coins)
 
     async def list_for_user(self, user_id: int) -> list[tuple[Achievement, UserAchievement | None]]:
-        """Полный список ачивок с прогрессом пользователя (для экрана 🏆).
-
-        Сортировка: сначала разблокированные (по дате), затем по редкости и
-        порогу условия — так «Открыто: 2/20» на первой странице видно сразу.
-        """
         rows = {r.achievement_id: r for r in await self.repo.get_progress_rows(user_id)}
         out = []
         for a in (await self.session.execute(select(Achievement))).scalars():

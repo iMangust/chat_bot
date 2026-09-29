@@ -1,4 +1,3 @@
-"""Хендлеры /start, онбординг (имя питомца), главное меню."""
 from __future__ import annotations
 
 import contextlib
@@ -23,7 +22,7 @@ from app.utils.formatting import progress_bar, xp_needed_for_level
 from app.utils.safe_edit import safe_edit_or_answer
 from app.config import get_settings
 from loguru import logger
-from app.middlewares.gate import is_channel_subscribed, reset_subscribe_cache, subscribe_kb
+from app.middlewares.gate import is_channel_subscribed, reset_subscribe_cache
 
 router = Router(name="start")
 
@@ -34,12 +33,6 @@ class Onboarding(StatesGroup):
     choosing_pet_name = State()
 
 def species_picker_text() -> str:
-    """Описание видов для экрана выбора (используется в онбординге).
-
-    Только по-русски: занятия и бонусы читаются из единого справочника
-    ACTION_LABELS / BONUS_LABELS (app.services.tamagotchi), служебные
-    английские коды («play», «coin_mult») пользователю не показываем.
-    """
     from app.services.tamagotchi import species_bonuses_text, species_likes_text
 
     lines = []
@@ -59,7 +52,7 @@ def species_picker_text() -> str:
 
 WELCOME_DM = (
     "👋 Привет, <b>{name}</b>!\n\n"
-    "Я — бот-компаньон канала (v1.5). Вот что я умею:\n"
+    "Я — бот-компаньон канала . Вот что я умею:\n"
     "• 🐾 Виртуальный питомец-тамагочи — корми, мой, играй, тренируй, гуляй;\n"
     "   он растёт (яйцо → легенда), болеет и лечится вместе с тобой;\n"
     "• 🌦️ Живая погода Петропавловска-Камчатского (OpenWeather): солнце бодрит\n"
@@ -85,11 +78,6 @@ def _channel_line() -> str:
     return f"📢 Наш канал: t.me/{ch}\n" if ch else ""
 
 def invite_link_for(tg_id: int) -> str:
-    """Реферальная ссылка ведёт на КАНАЛ (не в группу): t.me/<channel>?start=invite_<id>.
-
-    Если CHANNEL_USERNAME не задан — честно возвращаем пустую строку, чтобы нигде
-    не появилась битая/групповая ссылка.
-    """
     ch = get_settings().channel_username
     if not ch:
         return ""
@@ -123,16 +111,6 @@ private_only = F.chat.type == "private"
 @router.message(CommandStart(), private_only)
 async def cmd_start(message: Message, state: FSMContext, session: AsyncSession,
                     command: CommandObject | None = None) -> None:
-    """Основной вход: регистрация + онбординг + информативное главное меню.
-
-    Deep-link `?start=invite_<tg_id>`: новичок регистрируется, связка
-    «пригласивший → новичок» сохраняется в БД (User.referrer_id). Награда
-    пригласившему выдаётся ОДНОКРАТНО в ActivityService._credit_referral —
-    когда новичок проявит первую засчитанную активность в чате (защита от
-    накрутки пустыми регистрациями). Здесь дополнительно показываем новичку,
-    КТО его пригласил, — так связка «ссылка на канал → /start в боте»
-    работает end-to-end.
-    """
     users = UserRepository(session)
     user = await users.get_or_create(
         tg_id=message.from_user.id,
@@ -173,22 +151,12 @@ async def cmd_start(message: Message, state: FSMContext, session: AsyncSession,
 
 @router.callback_query(F.data == "gate:check")
 async def cb_gate_check(cb: CallbackQuery, bot: Bot, session: AsyncSession) -> None:
-    """«Я подписался — проверить»: после успешной проверки сразу в меню.
-
-    v2.0.6 (боевой лог 10:45): раньше при неудаче здесь висело «Подписка не
-    найдена 😔» без всякого диагноза — человек состоял в канале, но источник
-    молчал, и причина терялась. Теперь перед ответом прогоняется полная
-    цепочка гейта с подробным логом (gate: DENY … | Bot API: … | registry: …),
-    а пользователю показывается понятная подсказка; админ получает сырой
-    диагноз отдельным сообщением.
-    """
     reset_subscribe_cache(cb.from_user.id)
     if not await is_channel_subscribed(bot, cb.from_user.id):
         uid = cb.from_user.id
         diag = []
         with contextlib.suppress(Exception):
             from app.middlewares.gate import _registry_row_state, required_chats
-            st = get_settings()
             api_notes = []
             for cid, uname in required_chats():
                 target = f"@{uname}" if uname else cid
@@ -235,12 +203,6 @@ async def cb_onboard_start(cb: CallbackQuery, state: FSMContext,
 @router.callback_query(F.data == "onb:skip")
 async def cb_onboard_skip(cb: CallbackQuery, state: FSMContext,
                           session: AsyncSession) -> None:
-    """Онбординг без питомца : статистика/топы работают и так.
-
-    Питомец — опция: пользователь может завести его позже кнопкой
-    «🥚 Усыновить» (pet:adopt) или из пикера вида. Ачивку first_steps не
-    выдаём — она про рождение питомца.
-    """
     users = UserRepository(session)
     user = await users.get_or_create(cb.from_user.id, cb.from_user.first_name or "",
                                      cb.from_user.username)
@@ -376,7 +338,6 @@ async def cb_main_menu(cb: CallbackQuery, session: AsyncSession,
 @router.callback_query(F.data.startswith("menu:page:"))
 async def cb_main_menu_page(cb: CallbackQuery, session: AsyncSession,
                             state: FSMContext) -> None:
-    """◀️/▶️ главного меню : страницы «Игра» и «Профиль»."""
     if await state.get_state() is not None:
         await state.clear()
     try:
@@ -387,7 +348,6 @@ async def cb_main_menu_page(cb: CallbackQuery, session: AsyncSession,
 
 @router.callback_query(F.data == "menu:noop")
 async def cb_main_menu_noop(cb: CallbackQuery) -> None:
-    """Клик по неразрывной подписи страницы — просто снять «часики»."""
     await cb.answer()
 
 async def _render_main_menu(cb: CallbackQuery, session: AsyncSession,

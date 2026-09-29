@@ -1,19 +1,3 @@
-"""Единый MTProto-клиент (Telethon) для всего «полного Telegram API».. Назначение:
-* один переиспользуемый клиент на процесс (подключение + keepalive);
-* конфигурирование из Settings (креды приходят ТОЛЬКО из.env / окружения —
-  в коде никаких реальных ключей, см..env.example с серыми примерами);
-* ленивая инициализация: без api_id/api_hash модуль импортопригоден, а
-  вызовы дают понятную ошибку вместо падения бота;
-* режимы стринг-сессии Telethon ('BQ...') и файла *.session.
-
-Используется:
-* app.services.mtproto_sync  — чтение списка участников канала (get_full_channel);
-* app.services.userbot       — ответы от user-аккаунта (режимы user/hybrid);
-* app.handlers.admin         — команды /mtproto, /syncnow.
-
-ВАЖНО: это user-аккаунт. Флуд/рассылки с него запрещены правилами Telegram;
-используйте второй (service) аккаунт, не личный.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -38,12 +22,10 @@ def telethon_available() -> bool:
         return False
 
 def credentials_configured() -> bool:
-    """Есть ли api_id+api_hash (минимум для подключения при готовой сессии)."""
     st = get_settings()
     return bool(st.telegram_api_id and st.telegram_api_hash)
 
 def session_configured() -> bool:
-    """Есть ли чем авторизоваться: строковая сессия или существующий файл."""
     from pathlib import Path
     st = get_settings()
     if st.mtproto_session_string:
@@ -52,7 +34,6 @@ def session_configured() -> bool:
     return p.with_suffix(".session").is_file() or p.is_file()
 
 class MtprotoClientHolder:
-    """Ленинный синглтон Telethon-клиента."""
 
     def __init__(self) -> None:
         self._client: Any | None = None
@@ -60,13 +41,6 @@ class MtprotoClientHolder:
         self._me: Any | None = None
 
     async def _authorized(self) -> bool:
-        """Telethon: is_user_authorized — КОРУТИНА (await обязателен).
-
-        Синхронный вызов давал RuntimeWarning «coroutine was never awaited»
-        и всегда True (bool coroutine-объекта), из-за чего использовался
-        отключённый клиент.: проверяем is_connected синхронно,
-        авторизацию — только через await.
-        """
         c = self._client
         if c is None or not getattr(c, "is_connected", lambda: False)():
             return False
@@ -76,7 +50,6 @@ class MtprotoClientHolder:
             return False
 
     async def get(self) -> Any:
-        """Подключённый клиент либо RuntimeError с внятной подсказкой."""
         if await self._authorized():
             return self._client
         async with self._lock:
@@ -128,13 +101,6 @@ class MtprotoClientHolder:
         return self._me
 
     def is_connected(self) -> bool:
-        """Синхронная проверка «клиент жив».
-
-        ВАЖНО: у Telethon is_user_authorized — КОРУТИНА. Её синхронный вызов
-        всегда возвращает coroutine-объект (truthy) и печатает RuntimeWarning
-        «coroutine was never awaited» (лог). Здесь проверяем только
-        фактическое соединение; авторизацию делает await _authorized.
-        """
         c = self._client
         return bool(c is not None and getattr(c, "is_connected", lambda: False)())
 
@@ -153,20 +119,10 @@ _DIALOGS_CACHE: dict[tuple[str, int], Any] = {}
 _DIALOGS_CACHE_TS: float = 0.0
 
 def _inner_id(chat_id: int | str) -> int:
-    """Bot API id (-100xxxxxxxxxx) → внутренний id канала (Telethon)."""
     s = str(chat_id)
     return int(s[4:]) if s.startswith("-100") else int(s)
 
 def _participants_filter():
-    """Совместимый со всеми Telethon фильтр «все участники» .
-
-    Telethon <=1.41: ChannelParticipantsSearch(name=""). В 1.42+ поле `name`
-    убрали — конструирование с ним кидало TypeError, из-за чего падала ВСЯ
-    MTProto-проверка участника в гейте доступа (регрессия; в логах:
-    «member status... failed»). Перебираем сигнатуры и берём первую
-    работающую; в самом крайнем случае — Recent (последние по активности,
-    участник почти всегда внутри выборки).
-    """
     import inspect
 
     from telethon import types
@@ -184,17 +140,14 @@ def _participants_filter():
         return types.ChannelParticipantsRecent()
 
 def _participants_limit() -> int:
-    """Максимальная страница выборки участников (лимит API — 200)."""
     return 200
 
 _LAST_SCAN_ERROR: str = ""
 
 async def last_scan_error() -> str:
-    """Последняя диагностика сбора участников (для честных логов/команды)."""
     return _LAST_SCAN_ERROR or ""
 
 def _peer_inner_id(entity: Any) -> int | None:
-    """Внутренний id канала/группы из Peer-объекта entity.peer."""
     peer = getattr(entity, "peer", None)
     for attr in ("channel_id", "chat_id"):
         val = getattr(peer, attr, None)
@@ -206,13 +159,6 @@ def _peer_inner_id(entity: Any) -> int | None:
     return None
 
 async def chat_participants_count(chat_id: int | str) -> int | None:
-    """Точное число участников чата глазами MTProto (GetFullChannel/GetFullChat).
-
-    Используется диагностикой гейта: позволяет отличить «скан молча собрал
-    меньше половины чата» от «список реально полный». Возвращает None, если
-    узнать число не удалось (клиент не в чате, нет прав, ошибка сети) —
-    caller тогда делает вывод только по собранным данным. НИКОГДА не бросает.
-    """
     try:
         from telethon.tl.functions.channels import GetFullChannelRequest
         from telethon.tl.functions.messages import GetFullChatRequest
@@ -255,19 +201,6 @@ async def chat_participants_count(chat_id: int | str) -> int | None:
         return None
 
 async def iter_all_participants(chat_id: int | str):
-    """Все НЕ-боты-участники чата глазами MTProto-аккаунта .
-
-    Возвращает list[dict]: {"id", "first_name", "username"} — включая людей со
-    включённой приватностью (скрытый список участников). Пустой список =>
-    аккаунт не в чате / канал недоступен / PARTICIPANTS_TOO_LARGE / ошибка
-    (наружу НЕ бросаем — caller решает сам; причина — в last_scan_error).: раньше использовался сырой GetParticipantsRequest(offset=N) — при
-    фильтре «все» Telegram разрешает пагинацию только до offset≤~10000, а без
-    точного access_hash канала запрос и вовсе падает (в логах: rescan давал
-    «0 участник(ов)», хотя дельта-синк тех же людей видел). Теперь основной
-    путь — Telethon client.get_participants(entity): он сам передаёт хэши
-    участников между страницами и ходит бесконечно долго; сырые страницы —
-    только запасной путь для unit-тестов с моками.
-    """
     global _LAST_SCAN_ERROR
     _LAST_SCAN_ERROR = ""
     try:
@@ -311,7 +244,6 @@ async def iter_all_participants(chat_id: int | str):
     collected = False
 
     async def _collect(coro_or_iter) -> None:
-        """Собрать участников: список (await) OR async-итератор."""
         obj = coro_or_iter
         if hasattr(obj, "__await__") and not hasattr(obj, "__aiter__"):
             obj = await obj
@@ -400,25 +332,6 @@ async def iter_all_participants(chat_id: int | str):
     return out
 
 async def get_chat_member_status(chat_id: int | str, user_id: int) -> str | None:
-    """Статус участника глазами MTProto-аккаунта — фолбэк для Bot API.. Bot API (getChatMember) принципиально не видит «анонимных»
-    участников: при включённой приватности («Keep Groups Private» / скрытый
-    список участников) состоящий в чате человек отдаётся как left/kicked, и
-    гейт ложно блокирует настоящих подписчиков. Userbot-аккаунт, состоящий в
-    чате, через GetParticipantsRequest видит таких пользователей честно.
-
-    Возвращает 'member'/'administrator'/'creator'/'left'/None;
-    None => MTProto не настроен/не в чате/ошибка — caller решает сам
-    (обычно fail-open по базе подписчиков). НИКОГДА не бросает наружу.
-
-    v2.0.1 (лог «участники не могут взаимодействовать»): раньше проба делала
-    ОДНУ страницу GetParticipantsRequest(offset=0, limit=N). При фильтре
-    ChannelParticipantsSearch("") Telegram сортирует выдачу по релевантности
-    поиска, а не по дате вступления, и человек мог просто не попасть в первые
-    N записей — проба возвращала None, гейт блокировал реального подписчика.
-    Теперь используется iter_all_participants (полный обход с пагинацией и
-    жонглированием access_hash, тот же путь, что у MTProto-синков), сырая
-    одностраничная проба осталась только запасным путём.
-    """
     try:
         from telethon import functions, types
 
@@ -488,18 +401,6 @@ async def get_chat_member_status(chat_id: int | str, user_id: int) -> str | None
         return None
 
 async def resolve_channel_entity(target: str | int) -> Any:
-    """Entity канала/группы по username или внутреннему id (-100...).
-
-    Для числовых id без access_hash GetFullChannel требует точное разрешение;
-    пробуем username/@ссылку, затем ищем среди диалогов аккаунта.: поддержка малых групп (PeerChat). Ранее искали только Channel —
-    для обычных групповых чатов (id без префикса -100) поиск всегда давал
-    RuntimeError («prime... failed: RuntimeError» в логах), и baseline
-    снапшотов реакций не строился ни для одного группового чата. Теперь:
-      • -100… → ищем PeerChannel/Channel с внутренним id;
-      • просто отрицательный id (группа) → Chat с этим id;
-      • положительный «голый» id канала → тоже пробуем как внутренний.
-    Диалоги кэшируются на 60 с (iter_dialogs — дорогой запрос).
-    """
     from telethon.tl.types import Channel, Chat, PeerChannel, PeerChat
     client = await holder.get()
     s = str(target).strip()

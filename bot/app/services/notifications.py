@@ -1,17 +1,6 @@
-"""Сервис очеловеченных уведомлений.
-
-Все пуши идут через NotificationQueue — мгновенно не спамим, планировщик
-флашит очередь раз в минуту (не более N за тик, с учётом персональных
-настроек и rate-limit Telegram).
-
-Правила:
-- «питомец скучает» — не чаще раза в pet_warning_min_hours на юзера;
-- стрик под угрозой — вечером, если сегодня ещё не заходил;
-- ежедневный отчёт — раз в сутки, только онбординутым с питомцем.
-"""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,7 +12,6 @@ from app.utils.local_time import now as local_now
 
 async def queue_notification(session: AsyncSession, user_id: int, kind: str,
                              text: str, send_at: datetime | None = None) -> bool:
-    """Ставит уведомление в очередь. False — если персональная настройка выключена."""
     ns = await session.get(NotificationSetting, user_id)
     if ns is not None:
         flag = {
@@ -42,7 +30,6 @@ async def queue_notification(session: AsyncSession, user_id: int, kind: str,
 
 async def has_recent(session: AsyncSession, user_id: int, kind: str,
                      within: timedelta) -> bool:
-    """Есть ли свежее неотправленное/отправленное уведомление этого рода?"""
     cutoff = local_now() - within
     row = (await session.execute(
         select(NotificationQueue.id).where(
@@ -72,12 +59,6 @@ async def build_streak_warning(user: User) -> str:
             f"Напиши что-нибудь в чат — даже «спасибо» засчитается 🙂")
 
 async def queue_levelup(session: AsyncSession, user_id: int, levels: list[int]) -> bool:
-    """Левелап — «важное» событие: ставим в очередь (без мгновенного DM).
-
-    Планировщик флэшит очередь раз в минуту, поэтому серия быстрых левелапов
-    не превращается в спам. kind="levelup" учитывается в персональных
-    настройках как и остальные пуши (achievement/pet/streak/daily).
-    """
     if not levels:
         return False
     top = max(levels)

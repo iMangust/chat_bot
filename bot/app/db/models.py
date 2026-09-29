@@ -1,12 +1,7 @@
-"""SQLAlchemy 2.0 модели (асинхронные).
-
-Покрывает MVP: пользователи, лог сообщений, реакции, достижения, питомцы,
-инвентарь/предметы, настройки чатов, очередь уведомлений.
-"""
 from __future__ import annotations
 
 import enum
-from datetime import datetime, timezone
+from datetime import datetime
 
 from sqlalchemy import (
     BigInteger, Boolean, DateTime, Enum, Float, ForeignKey, Index,
@@ -15,31 +10,19 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 def utcnow() -> datetime:
-    """Метка «сейчас» — камчатское локальное время (см. app.utils.local_time).
-
-    Имя сохранено для обратной совместимости импортов; фактически возвращает
-    aware-datetime с фиксированным смещением UTC+12 (Asia/Kamchatka).
-    """
     from app.utils.local_time import now as kamchatka_now
     return kamchatka_now()
 
 def localnow() -> datetime:
-    """Канонический псевдоним: текущее время по Камчатке."""
     return utcnow()
 
 class Base(DeclarativeBase):
     __table_args__ = {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"}
 
 def _ta(*args):
-    """Собирает __table_args__: индексы/констрейны + mysql utf8mb4."""
     return (*args, {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"})
 
 class _JsonIntList(TypeDecorator):
-    """Список целых id поверх JSON: всегда числа, никогда строки.
-
-    Миграции v1.6 собирают chats из BIGINT-колонок SQL; если ORM когда-то
-    запишет "123" строкой, сравнение членства в гейте молча сломается.
-    Нормализуем на записи (None/мусор -> [], всё остальное -> int)."""
     impl = JSON
     cache_ok = True
 
@@ -160,7 +143,6 @@ class AchievementRarity(str, enum.Enum):
     legendary = "legendary"
 
 class ConditionType(str, enum.Enum):
-    """Тип счётчика, к которому привязано условие достижения."""
     messages_total = "messages_total"
     messages_day = "messages_day"
     streak_days = "streak_days"
@@ -308,29 +290,6 @@ class PetFriend(Base):
     since: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 class ChannelSubscriber(Base):
-    """Реестр подписчиков (v2.0: одна строка на человека, PK = user_id).
-
-    Смысл таблицы ОДИН: бот обязан знать всех, кто состоит на канал/группу
-    обсуждения, чтобы дать им доступ к себе. Правило v2.0: «подписан — значит
-    доступ есть». Никаких приветствий/рассылок — старая welcome-механика
-    (очереди DM, backoff для закрытых ЛС, статусы pending/sent/blocked)
-    удалена целиком: бот первым не пишет никогда.
-
-    Источники сигнала о подписке (Bot API НЕ шлёт «человек подписался»):
-      * chat_member канала и группы обсуждения — бот админ в обоих, самый
-        точный путь (событие приходит и на «Провариваемся»-комменты, id вида
-        -1004467842206_42: aiogram приводит его к чистому id группы);
-      * new_chat_members в группе обсуждения;
-      * первое сообщение пользователя в отслеживаемом чате (пассивный трекер);
-      * /start в ЛС (контакт — фиксируем ever_contacted);
-      * MTProto-синхронизация участников (видит «анонимных», которых Bot API
-        отдаёт как left/restricted из-за приватности);
-      * живой скан участников из гейта при первом обращении человека.
-
-    Все источники ведут в SubscriberRepository.record_membership.
-    chats (JSON) — список чатов, где подтверждено членство: достоверный
-    сигнал присутствия для гейта доступа (см. middlewares/gate.py).
-    """
     __tablename__ = "channel_subscribers"
     __table_args__ = _ta(
         Index("ix_channel_subscribers_first_seen", "first_seen"),
@@ -349,8 +308,6 @@ class ChatSettings(Base):
     __tablename__ = "chat_settings"
 
     chat_id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=False)
-    welcome_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    welcome_text: Mapped[str | None] = mapped_column(Text)
     cooldown_sec: Mapped[int] = mapped_column(Integer, default=10)
     min_length: Mapped[int] = mapped_column(Integer, default=5)
     config: Mapped[dict] = mapped_column(JSON, default=dict)
@@ -375,14 +332,6 @@ class LeaderboardSnapshot(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 class PetDuel(Base):
-    """Недельные соревнования питомцев (PVP).
-
-    Питомцы дерутся «на характеристиках» (сила/ловкость/интеллект + уровень),
-    без RNG-рулетки: честный расчёт в services.pet_duels. Счёт побед копится
-    в неделе (week_key = ISO-неделя 'YYYY-Www'); по понедельникам планировщик
-     берёт топ-3 по очам и выдаёт призы, после чего счёт обнуляется новым
-    week_key (старые строки остаются как история — leaderboards_snapshot).
-    """
     __tablename__ = "pet_duels"
     __table_args__ = _ta(
         UniqueConstraint("pet_id", "week_key", name="uq_pet_duel_week"),
@@ -399,7 +348,6 @@ class PetDuel(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 class UserStat(Base):
-    """Пользовательские счётчики для ачивок (invites и т.п.)."""
     __tablename__ = "user_stats"
     __table_args__ = _ta(UniqueConstraint("user_id", "key", name="uq_user_stat"),)
 
@@ -410,7 +358,6 @@ class UserStat(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 class NotificationSetting(Base):
-    """Персональные настройки уведомлений (экран ⚙️ Настройки)."""
     __tablename__ = "notification_settings"
 
     user_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("users.tg_id", ondelete="CASCADE"),

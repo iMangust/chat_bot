@@ -1,9 +1,3 @@
-"""Соцвзаимодействия питомцев: друзья и рекомендации.
-
-Дружба даёт пассивный бонус: +1 счастье в сутки за каждого друга (до 5),
-учитывается в еженедельном топе питомцев. Взаимная — оформляется тем же
-действием со стороны второго владельца (или «предложением» отсюда).
-"""
 from __future__ import annotations
 
 import random
@@ -14,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import Pet, PetFriend
 
 async def list_friends(session: AsyncSession, pet_id: int) -> list[Pet]:
-    """Питомцы-друзья (в обе стороны связи)."""
     rows = (await session.execute(
         select(Pet).join(PetFriend, or_(PetFriend.pet_id == Pet.id,
                                         PetFriend.friend_pet_id == Pet.id))
@@ -35,7 +28,6 @@ async def are_friends(session: AsyncSession, a_id: int, b_id: int) -> bool:
 MAX_FRIENDS = 5
 
 async def make_friends(session: AsyncSession, pet: Pet, other: Pet) -> tuple[bool, str]:
-    """Заводит дружбу. Возвращает (успех, сообщение для экрана)."""
     if pet.id == other.id:
         return False, "Нельзя подружить питомца с самим собой 🙂"
     if await are_friends(session, pet.id, other.id):
@@ -61,7 +53,6 @@ async def unfriend(session: AsyncSession, pet_id: int, other_id: int) -> None:
     ))
 
 async def suggest_friend(session: AsyncSession, pet: Pet) -> Pet | None:
-    """Рекомендует питомца: уровень +-2, не друг, не сам себя."""
     lo, hi = max(1, pet.level - 2), pet.level + 2
     friends = {f.id for f in await list_friends(session, pet.id)}
     rows = list((await session.execute(

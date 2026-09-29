@@ -1,30 +1,3 @@
-"""Опциональная синхронизация подписчиков через Telegram API (MTProto).
-
-Зачем это нужно
----------------
-Bot API принципиально НЕ отдаёт список участников канала и не шлёт событие
-«человек подписался», если бот не админ с подпиской на chat_member. Поэтому
-доступ к боту мог не появиться у тех, кто сам не «засветился»: не вступал
-при запущенном боте, не писал сообщения и не нажимал /start.
-
-Пользовательский аккаунт (Telethon) видит канал целиком: get_full_channel
-возвращает участников даже без админ-прав. Этот модуль закрывает пробел:
-
-    python -m app.services.mtproto_sync [--first-run]
-
-собирает id участников обязательных чатов (gate.required_chats) и заносит их
-в реестр доступа channel_subscribers. Гейт (middlewares/gate.py) пускает в
-бот любого, кто есть в этом реестре, — без каких-либо рассылок.
-
-Безопасность (почему это НЕ спам-рассылка):
-* мы НИЧЕГО не отправляем с user-аккаунта — только читаем;
-* аккаунт должен быть вторым («сервисным»), а не личным;
-* включается только при заданных TELEGRAM_API_ID/HASH + MTPROTO_SESSION_STRING;
-  без них вся функциональность бота работает как раньше (Bot API);
-* после первичной синхронизации сессию лучше отозвать (Settings → Devices).
-
-Секреты — только из.env (пример в.env.example), никогда не в коде/репо.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -36,13 +9,6 @@ from loguru import logger
 from app.config import get_settings
 
 async def collect_participant_ids() -> list[int]:
-    """Список user_id участников всех обязательных чатов (без дублей).
-
-    Требует telethon (устанавливается опционально: pip install telethon>=1.36).
-    Клиент и авторизация — через app.services.mtproto_client (единственный
-    источник конфигов; ключи читаются из.env, в коде их нет). Если ни
-    чего нет — будет интерактивный логин по PHONE (не для продакшена).
-    """
     from telethon.tl.functions.channels import GetFullChannelRequest
 
     from app.services.mtproto_client import holder, resolve_channel_entity
@@ -120,16 +86,6 @@ async def collect_participant_ids() -> list[int]:
     return sorted(ids)
 
 async def collect_participants_by_chat() -> dict[int, set[int]]:
-    """Участники каждого обязательного чата отдельно: {chat_id: {user_id}}.
-
-    v2.0.3: дельта-синку нужен разрез по чатам — сверять реестр надо «кто
-    состоит в ЭТОМ чате», а не общим списком под первый чат (иначе участник
-    группы получал членство в канале, и наоборот; см. sync_subscribers).
-    Реализация тонкая: для каждого чата временно сужает список
-    gate.required_chats до него одного и вызывает collect_participant_ids —
-    одна точка сбора участников на весь модуль (Telethon-механика, логи и
-    подсказки PARTICIPANTS_TOO_LARGE переиспользуются как есть).
-    """
     from app.middlewares import gate as gate_mod
 
     chats = list(gate_mod.required_chats())
@@ -155,23 +111,6 @@ async def collect_participants_by_chat() -> dict[int, set[int]]:
     return out
 
 async def sync_subscribers(first_run: bool = False) -> dict:
-    """Заносит участников каналов в реестр доступа channel_subscribers.
-
-    v2.0.3 (боевые логи 22:25/23:41 — «подписан, но доступа нет»): раньше
-    дельта-режим фильтровал по курсору «id > максимального известного»,
-    считая Telegram-id монотонными метками свежести. Это ложь для старых
-    аккаунтов: человек, состоящий в канале с момента его основания, имеет
-    НИЗКИЙ id и никогда не проходил фильтр — cron-синки годами пропускали
-    таких подписчиков, реестр оставался без их строк, а гейт (при скрытом
-    списке участников Bot API отдаёт 'left') не находил человека ни в одном
-    источнике ⇒ заглушка «🔒 подпишись» у реально подписанного пользователя.
-
-    Теперь дельта-синк сверяет СПИСОК УЧАСТНИКОВ каждого чата с реестром
-    напрямую: заносит всех, кого в реестре ещё нет (или кто числится, но без
-    членства в этом чате). Идемпотентен, стоимость — один SELECT + апдейты
-    только новых. first_run сохранён в сигнатуре для совместимости вызовов
-    и теперь означает то же, что и обычный прогон (полная сверка).
-    """
     from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
     from app.db.repositories import SubscriberRepository
 
@@ -206,19 +145,6 @@ async def sync_subscribers(first_run: bool = False) -> dict:
     return result
 
 async def full_rescan_subscribers() -> dict:
-    """: полный автоматический скан ВСЕХ участников обязательных чатов.
-
-    В отличие от дельта-режима (только id > курсора — «свежие регистрации»),
-    здесь обходим весь список каждого чата и заносим в реестр доступа
-    channel_subscribers каждого человека, которого ещё нет в базе — даже если
-    он никогда не взаимодействовал с ботом. Заодно подтягиваем
-    first_name/username для старых записей. С этого момента гейт пускает
-    таких людей в бота (подписчик = доступ).
-
-    Источник списка — MTProto (Telethon): Bot API принципиально не отдаёт
-    участников канала. Приватность пользователей списку не мешает —
-    GetParticipantsRequest видит и скрытых участников.
-    """
     from app.db.models import ChannelSubscriber
     from app.db.repositories import SubscriberRepository
     from app.db.session import session_factory
@@ -288,7 +214,6 @@ async def full_rescan_subscribers() -> dict:
     return result
 
 async def _self_bot_id() -> int:
-    """id основного бота — он не «подписчик», в реестре доступа ему не место."""
     tok = get_settings().bot_token
     try:
         return int(tok.split(":")[0])
@@ -296,17 +221,10 @@ async def _self_bot_id() -> int:
         return -1
 
 def mtproto_configured() -> bool:
-    """Можно ли вообще запускать MTProto-синк (ключи + чем авторизоваться)."""
     from app.services.mtproto_client import credentials_configured, telethon_available
     return telethon_available() and credentials_configured()
 
 async def autosync_if_configured(first_run: bool | None = None) -> dict | None:
-    """Синк при старте бота: полная синхронизация при первой загрузке базы.
-
-    first_run=None → автоопределение: база подписчиков пуста (или это первый
-    прогон после) ⇒ тянем ВСЕХ участников канала разом; иначе дельту.
-    Возвращает None, если MTProto не настроен (бот живёт только на Bot API).
-    """
     if not mtproto_configured():
         return None
     from sqlalchemy.ext.asyncio import async_sessionmaker
@@ -321,11 +239,6 @@ async def autosync_if_configured(first_run: bool | None = None) -> dict | None:
     return await sync_subscribers(first_run=full)
 
 async def login_and_print_session_string() -> str:
-    """Интерактивный логин (--login): телефон → код → 2FA.
-
-    Создаёт *.session рядом с cwd и печатает MTPROTO_SESSION_STRING для
-    безинтерактивного деплоя. Секреты в лог не пишутся.
-    """
     from app.services.mtproto_client import holder
     client = await holder.get()
     string = await client.session.save_to_string()

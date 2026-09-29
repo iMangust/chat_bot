@@ -1,24 +1,7 @@
-"""🧢 Мерч канала — отдельное меню, не связанное с питомцем.
-
-Мерч — это про сам канал (футболки, худи, кружки, стикерпаки), поэтому он
-вынесен из 🛒 Магазина питомца в собственный раздел главного меню:
-
-    menu:merch          → категории (👕 Футболки / 🧥 Худи / ☕ Аксессуары)
-    merch:cat:<code>    → товары категории
-    merch:item:<id>     → карточка товара (размер/описание/цена)
-    merch:buy:<id>      → оформление покупки
-    merch:ok:<id>       → подтверждение заказа
-
-Данные берутся из конфига (MERCH_ITEMS) либо из дефолтной витрины ниже.
-Формат MERCH_ITEMS (через; между позициями):
-    Категория|Название|Цена ₽|Описание|Размеры(S,M,L,XL)
-Первые два сегмента обязательны; остальные — по желанию.
-"""
 from __future__ import annotations
 
 import html
 import json
-from datetime import datetime, timezone
 
 from aiogram import F, Router
 from aiogram.types import (CallbackQuery, InlineKeyboardButton,
@@ -61,7 +44,6 @@ DEFAULT_MERCH: list[dict] = [
 ]
 
 def _parse_items() -> list[dict]:
-    """Витрина из MERCH_ITEMS («Категория|Название|Цена|Описание|Размеры»), иначе дефолт."""
     raw = (get_settings().merch_items or "").strip()
     if not raw:
         return [dict(m, sizes=list(m["sizes"])) for m in DEFAULT_MERCH]
@@ -101,14 +83,12 @@ def _find(idx_str: str) -> dict | None:
     return items[idx] if 0 <= idx < len(items) else None
 
 def _back_kb(target: str, label: str = "⬅️ Назад") -> InlineKeyboardBuilder:
-    """Одна кнопка возврата (для экранов «пусто» и финальных)."""
     b = InlineKeyboardBuilder()
     b.button(text=label, callback_data=target)
     return b
 
 @router.callback_query(F.data == "menu:merch")
 async def merch_screen(cb: CallbackQuery, session=None) -> None:
-    """Главный экран мерча: категории."""
     settings = get_settings()
     groups = _items_by_cat()
     lines = ["🧢 <b>Мерч канала</b>",
@@ -129,7 +109,6 @@ async def merch_screen(cb: CallbackQuery, session=None) -> None:
 
 def _category_kb(buttons: list[InlineKeyboardButton], code: str,
                  title: str, page: int, total_pages: int) -> InlineKeyboardMarkup:
-    """Клавиатура витрины категории: листание merch:page:<n>:<code> + фикс. низ."""
     b2 = InlineKeyboardBuilder()
     for btn in buttons:
         b2.add_button(btn)
@@ -200,7 +179,6 @@ async def merch_item(cb: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("merch:buy:"))
 async def merch_buy(cb: CallbackQuery, session) -> None:
-    """Подтверждение заказа: пишем в logs/merch_orders.jsonl и просим контакт."""
     it = _find(cb.data.split(":")[1])
     if it is None:
         return await cb.answer("Товар не найден 😅", show_alert=True)
@@ -244,5 +222,4 @@ async def merch_buy(cb: CallbackQuery, session) -> None:
 
 @router.callback_query(F.data.startswith("merch:noop"))
 async def merch_noop(cb: CallbackQuery) -> None:
-    """Клик по неразрывной подписи страницы — просто снять «часики»."""
     await cb.answer()

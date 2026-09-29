@@ -1,9 +1,8 @@
-"""Репозитории: слой запросов к БД (чистые async-функции, без бизнес-логики)."""
 from __future__ import annotations
 
 import contextlib
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from sqlalchemy import Integer, func, insert, select, update
 from sqlalchemy.exc import IntegrityError
@@ -57,7 +56,6 @@ class UserRepository:
         return list((await self.session.execute(stmt)).scalars())
 
     async def active_since(self, since: datetime) -> list[int]:
-        """ID пользователей, у которых была засчитанная активность после `since`."""
         stmt = (
             select(ChatMessageLog.user_id)
             .where(ChatMessageLog.created_at >= since, ChatMessageLog.is_counted.is_(True))
@@ -66,7 +64,6 @@ class UserRepository:
         return list((await self.session.execute(stmt)).scalars())
 
     async def bump_stat(self, tg_id: int, key: str, delta: int = 1) -> int:
-        """Атомарно увеличивает счётчик UserStat; возвращает новое значение."""
         row = (await self.session.execute(
             select(UserStat).where(UserStat.user_id == tg_id, UserStat.key == key)
         )).scalar_one_or_none()
@@ -85,7 +82,6 @@ class UserRepository:
         return row.value if row else 0
 
     async def set_referrer(self, tg_id: int, referrer_id: int) -> bool:
-        """Запоминаем пригласившего. True — если запись создана впервые."""
         user = await self.get(tg_id)
         if user is None or user.tg_id == referrer_id:
             return False
@@ -97,7 +93,6 @@ class UserRepository:
         return first_time
 
     async def count_invited(self, referrer_id: int) -> int:
-        """Сколько пользователей приведено по ссылке referrer_id."""
         return (await self.session.execute(
             select(func.count()).select_from(User).where(User.referrer_id == referrer_id)
         )).scalar_one()
@@ -111,7 +106,6 @@ class UserRepository:
         return ns
 
     async def top_period_messages(self, since: datetime, limit: int = 10) -> list[tuple[User, int]]:
-        """Топ за период по засчитанным сообщениям: [(User, cnt)]."""
         cnt = func.count().label("cnt")
         sub = (
             select(ChatMessageLog.user_id.label("uid"), cnt)
@@ -129,7 +123,6 @@ class UserRepository:
         return [(r[0], r[1]) for r in (await self.session.execute(stmt)).all()]
 
     async def top_period_reactions(self, since: datetime, limit: int = 10) -> list[tuple[User, int]]:
-        """Топ за период по ПОЛУЧЕННЫМ реакциям (засчитанным)."""
         cnt = func.count().label("cnt")
         sub = (
             select(ReactionLog.to_user.label("uid"), cnt)
@@ -151,7 +144,6 @@ class ActivityRepository:
         self.session = session
 
     async def get_message_author(self, chat_id: int, message_id: int) -> int | None:
-        """Автор сообщения из локального лога (None — если сообщение не видели)."""
         stmt = (
             select(ChatMessageLog.user_id)
             .where(ChatMessageLog.chat_id == chat_id,
@@ -161,16 +153,6 @@ class ActivityRepository:
         return (await self.session.execute(stmt)).scalar_one_or_none()
 
     async def log_message(self, entry: ChatMessageLog) -> ChatMessageLog:
-        """Пишет запись лога, идемпотентно по (chat_id, message_id).
-
-        Telegram может доставить один и тот же апдейт повторно (ретраи
-        long-polling/webhook после таймаута) — без дедупликации это плодит
-        дубли в статистике. Диалект upsert выбирается строго по имени диалекта
-        соединения: sqlite/postgres имеют ON CONFLICT, MySQL — только
-        INSERT IGNORE / ON DUPLICATE KEY. Жёсткий выбор sqlite-варианта для
-        всего, что не postgres, ронял трекер на проде с MySQL
-        (UnsupportedCompilationError: visit_on_conflict_do_nothing).
-        """
         values = dict(
             user_id=entry.user_id, chat_id=entry.chat_id,
             message_id=entry.message_id, length=entry.length,
@@ -214,12 +196,6 @@ class ActivityRepository:
 
     async def daily_counts(self, tg_id: int, days: int = 7,
                            since: datetime | None = None) -> "dict[str, int]":
-        """Сообщения по дням (для графика в карточке профиля).
-
-        Возвращает {'2026-09-19': 12,...}; пустые дни отсутствуют — рисовальщик
-        сам достраивает нули. Даты нормализуются к UTC-полудню, чтобы bucket
-        был стабильным на SQLite (TEXT) и Postgres (timestamptz).
-        """
         from datetime import timezone as _tz
         now = since or datetime.now(_tz.utc)
         start = now - timedelta(days=days - 1)
@@ -243,14 +219,6 @@ class ActivityRepository:
 
     async def media_breakdown(self, tg_id: int,
                               since: datetime | None = None) -> dict[str, int]:
-        """Разбивка засчитанных сообщений по типам .
-
-        Ключи: text / photo / video / audio(голос+музыка) / voice / video_note
-        (кружок) / sticker / animation / document / poll / other; отдельно —
-        reply (ответы) и mentions (сумма упоминаний). Специальные флаги
-        is_reply/mentions_count складываются поверх типа, поэтому один и тот
-        же message может попасть и в «photo», и в «reply».
-        """
         cond = [ChatMessageLog.user_id == tg_id, ChatMessageLog.is_counted.is_(True)]
         if since is not None:
             cond.append(ChatMessageLog.created_at >= since)
@@ -286,7 +254,6 @@ class ActivityRepository:
         )
 
     async def log_reaction(self, entry: ReactionLog) -> bool:
-        """Возвращает True, если реакция новая (не дубль)."""
         dup = await self.session.execute(
             select(func.count()).select_from(ReactionLog).where(
                 ReactionLog.from_user == entry.from_user,
@@ -301,7 +268,6 @@ class ActivityRepository:
         return True
 
     async def day_totals(self, day: datetime) -> list[tuple[int, int]]:
-        """Топ за день: [(user_id, cnt)] — используется для лидерборда/ачивки top1_day."""
         start = day.replace(hour=0, minute=0, second=0, microsecond=0)
         stmt = (
             select(ChatMessageLog.user_id, func.count().label("cnt"))
@@ -321,12 +287,6 @@ class PetRepository:
         self.session = session
 
     async def get_by_user(self, user_id: int) -> Pet | None:
-        """Текущий (неархивный) питомец пользователя.
-
-        Без фильтра is_archived select вернул бы несколько строк (архив +
-        текущий) и упал с MultipleResultsFound: при «смене» питомец не
-        удаляется, а уходит в архив.
-        """
         stmt = select(Pet).where(Pet.user_id == user_id,
                                  Pet.is_archived.is_(False))
         return (await self.session.execute(stmt)).scalars().first()
@@ -359,7 +319,6 @@ class PetRepository:
         return list((await self.session.execute(stmt)).scalars())
 
     async def add_friend(self, pet_id: int, friend_pet_id: int) -> bool:
-        """Добавляет дружбу в обе стороны; False — если уже дружат."""
         dup = (await self.session.execute(
             select(PetFriend).where(PetFriend.pet_id == pet_id,
                                     PetFriend.friend_pet_id == friend_pet_id)
@@ -372,7 +331,6 @@ class PetRepository:
         return True
 
     async def top_pets(self, limit: int = 10) -> list[Pet]:
-        """Соревнование питомцев: по уровню, затем по XP."""
         stmt = select(Pet).order_by(Pet.level.desc(), Pet.xp.desc()).limit(limit)
         return list((await self.session.execute(stmt)).scalars())
 
@@ -403,7 +361,6 @@ class AchievementRepository:
 
     async def upsert_progress(self, user_id: int, achievement_id: int,
                               progress: int) -> bool:
-        """Обновляет прогресс; возвращает True если ачивка ТОЛЬКО ЧТО разблокирована."""
         now = local_now()
         row = (await self.session.execute(
             select(UserAchievement).where(
@@ -434,22 +391,6 @@ class AchievementRepository:
         return False
 
 class SubscriberRepository:
-    """channel_subscribers — реестр членства для гейта доступа (v2.0).
-
-    Смысл таблицы ОДИН: бот обязан знать всех, кто состоит на канал/группу,
-    чтобы дать им доступ к себе («подписан — значит доступ есть»). Старая
-    welcome-механика (очереди pending/sent/blocked, backoff для закрытых ЛС,
-    рассылка DM) удалена в v2.0 целиком: бот первым не пишет никогда.
-
-    Правила:
-      * одна строка на пользователя; членство в чатах — список chats (JSON);
-      * все сигналы (события chat_member/new_chat_members, MTProto-сканы,
-        сообщение автора в чате, /start) идут через record_membership;
-      * real_event=True — достоверный сигнал присутствия; косвенные контакты
-        (/start, текст в чате) тоже полезны: they обновляют last_seen_at и
-        флаги взаимодействия, но право доступа всё равно доказывает либо
-        запись в chats, либо живая проверка API в гейте.
-    """
 
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -458,21 +399,6 @@ class SubscriberRepository:
                                 first_name: str = "", username: str | None = None,
                                 real_event: bool = False,
                                 contacted: bool = False) -> bool:
-        """Заносит/обновляет подписчика. True — если запись изменилась.
-
-        Идемпотентна: повторное событие из того же чата ничего не дублирует.
-        Выход из чата записи не удаляет (см. handlers/access.handle_chat_member):
-        утрата части членств не должна лишать доступа, если человек остался
-        хотя бы в одном обязательном чате — актуальность доказывает API-проверка.
-
-        v2.0.5: при изменении ``chats`` сбрасывается ПОЛОЖИТЕЛЬНЫЙ кэш гейта
-        для этого пользователя. Раньше строка вида chats=[] (созданная /start
-        неподписанного или миграцией) попадала в 15-секундный отрицательный
-        кэш; если MTProto-синк заносил человека в реестр сразу после этого,
-        повторный тап в течение TTL возвращал ложный DENY из кэша, игнорируя
-        свежую запись («подписан — а бот всё равно отказывает»). Теперь любое
-        пополнение реестра мгновенно «видится» гейтом.
-        """
         from app.db.models import ChannelSubscriber
         uid = int(user_id)
         row = (await self.session.execute(
@@ -515,30 +441,7 @@ class SubscriberRepository:
             await self.session.commit()
         return changed
 
-    async def add_if_new(self, user_id: int, chat_id: int,
-                         first_name: str = "", username: str | None = None,
-                         reset_welcome: bool = False) -> bool:
-        """Старый API MTProto-синка/тестов: теперь просто record_membership.
-
-        reset_welcome игнорируется сознательно: welcome-очереди больше нет.
-        """
-        return await self.record_membership(
-            user_id, chat_id, first_name=first_name, username=username,
-            real_event=True)
-
     async def add_membership_sql(self, user_id: int, chat_id: int) -> None:
-        """Гарантированная запись членства напрямую в БД (без ORM-identity-map).
-
-        v2.0.6: критический путь подтверждения подписки (Bot API ответил
-        'member' во время проверки доступа). Обычный record_membership читает
-        строку через SELECT + refresh и пишет поверх — если параллельный
-        писатель (MTProto-скан, событие чата) в этот момент создал/перезаписал
-        строку, его коммит затирает наше членство (last-write-wins по stale
-        снимку). Здесь же UPDATE выполняется на стороне СУБД поверх уже
-        закоммиченного состояния: чат добавляется к ФАКТИЧЕСКИ сохранённому
-        списку, гонка исключена. Идемпотентно; ошибки не глотаются молча —
-        вызывающий логирует их (доступ при этом уже выдан из API-ответа).
-        """
         from app.db.models import ChannelSubscriber
         uid, cid = int(user_id), int(chat_id)
         row = (await self.session.execute(
@@ -562,7 +465,6 @@ class SubscriberRepository:
         await self.session.commit()
 
     async def registry_stats(self) -> dict:
-        """Сводка реестра для админской команды /subscribers."""
         from app.db.models import ChannelSubscriber
         total = int((await self.session.execute(
             select(func.count()).select_from(ChannelSubscriber)
@@ -574,11 +476,6 @@ class SubscriberRepository:
         return {"total": total, "contacted": contacted}
 
     async def get(self, user_id: int, chat_id: int | None = None):
-        """Строка подписчика (chat_id принимается для совместимости вызовов).: перечитываем через SELECT, а не session.get: при
-        expire_on_commit=False identity-map иначе отдаёт stale-кэш — строку
-        могли изменить UPDATE'ом из другого места репозитория (chats),
-        и «обработчик перезаписал чат» выглядел бы так, будто событие lost.
-        """
         from app.db.models import ChannelSubscriber
         row = (await self.session.execute(
             select(ChannelSubscriber)
@@ -590,14 +487,12 @@ class SubscriberRepository:
         return row
 
     async def exists(self, user_id: int) -> bool:
-        """Есть ли человек в реестре (достоверный сигнал членства для гейта)."""
         from app.db.models import ChannelSubscriber
         stmt = (select(ChannelSubscriber.user_id)
                 .where(ChannelSubscriber.user_id == int(user_id)).limit(1))
         return (await self.session.execute(stmt)).scalars().first() is not None
 
     async def known_ids(self, user_ids) -> set[int]:
-        """Множество id из user_ids, которые числятся в реестре (batch)."""
         from app.db.models import ChannelSubscriber
         ids = {int(u) for u in user_ids if u}
         if not ids:
@@ -615,14 +510,6 @@ class SubscriberRepository:
         return await self.count()
 
     async def member_ids_by_chat(self, chat_id: int) -> set[int]:
-        """user_id из реестра, у которых чат ``chat_id`` в списке ``chats``.
-
-        Используется дельта-синком MTProto: заносить нужно ВСЕХ участников,
-        а не только «свежие регистрации» (id > курсора). Раньше delta-sync
-        пропускал старых подписчиков, и человек, который состоял в канале до
-        появления бота, так и оставался без строки в реестре («подписан, но
-        доступа нет» — боевые логи 23:41/22:25).
-        """
         from app.db.models import ChannelSubscriber
         cid = int(chat_id)
         rows = (await self.session.execute(
@@ -631,14 +518,6 @@ class SubscriberRepository:
         return {int(uid) for uid, chats in rows if cid in list(chats or [])}
 
     async def last_seen_user_id(self) -> int | None:
-        """Максимальный известный user_id (исторический курсор дельта-синка).
-
-        v2.0.3: дельта-синк больше НЕ использует его как фильтр («id >
-        курсора ⇒ новый») — он пропускал старых подписчиков канала, которые
-        состоят в нём с момента, предшествующего регистрации Telegram: у них
-        низкие id, и cron никогда их не заносил («подписан, но доступа нет»,
-        боевые логи 22:25/23:41). Метод оставлен для совместимости тестов.
-        """
         from app.db.models import ChannelSubscriber
         stmt = select(func.max(ChannelSubscriber.user_id))
         v = (await self.session.execute(stmt)).scalar_one_or_none()

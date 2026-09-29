@@ -1,10 +1,3 @@
-"""Нарезка длинных сообщений под лимит Telegram (4096 символов).
-
-Любой «длинный экран» (/help, простыня топов, карточка с погодой) теперь
-режется по границам строк с запасом в 4000 символов — раньше единое сообщение
-стабильно падало с TelegramBadRequest («… is too long»), из-за чего справка
-вообще не открывалась.
-"""
 from __future__ import annotations
 
 import re
@@ -13,7 +6,6 @@ TG_LIMIT = 4096
 SAFE_LIMIT = 4000
 
 def split_message(text: str, limit: int = SAFE_LIMIT) -> list[str]:
-    """Режет текст по строкам; одна строка длиннее лимита — режется жёстко."""
     if len(text) <= limit:
         return [text]
     chunks: list[str] = []
@@ -40,5 +32,4 @@ def split_message(text: str, limit: int = SAFE_LIMIT) -> list[str]:
     return [c for c in (ch.strip("\n") for ch in chunks) if c]
 
 def strip_html_tags(text: str) -> str:
-    """Убирает теги Telegram HTML (для plain-фолбэка)."""
     return re.sub(r"</?(b|i|u|s|code|pre|a|tg-spoiler)[^>]*>", "", text)

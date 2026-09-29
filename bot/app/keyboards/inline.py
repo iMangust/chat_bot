@@ -1,10 +1,3 @@
-"""Инлайн-клавиатуры бота.
-
-Единая стилистика навигации :
-* контент — по 2 кнопки в ряд, максимум 3 ряда на страницу;
-* 4-й ряд — ◀️ · «Название 📖 i/n» · ▶️ (перехлёст зациклен);
-* выход с экрана — ОДНА кнопка «🏠 Меню» внизу (без дублей «⬅️ Назад»).
-"""
 from __future__ import annotations
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -13,11 +6,9 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from app.config import get_settings
 
 def _two_per_row(buttons: list[InlineKeyboardButton]) -> list[list[InlineKeyboardButton]]:
-    """Раскладывает кнопки по две в ряд (непарная — одна)."""
     return [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
 
 def _page_nav(prefix: str, page: int, total: int, title: str) -> list[InlineKeyboardButton]:
-    """Ряд навигации: ◀️ · «Название 📖 i/n» · ▶️, зацикливание страниц."""
     total = max(1, total)
     prev_cb = f"{prefix}:page:{(page - 1) % total}"
     next_cb = f"{prefix}:page:{(page + 1) % total}"
@@ -47,7 +38,6 @@ def menu_page_count() -> int:
 
 def main_menu(link: str | None = None, reward: int = 0,
               page: int = 0) -> InlineKeyboardMarkup:
-    """Пагинированное главное меню: 2 кнопки в ряд, ◀️ i/n ▶️, один выход 🏠."""
     settings = get_settings()
     page %= len(MENU_PAGES)
     title, actions = MENU_PAGES[page]
@@ -89,18 +79,6 @@ WALK_BLOCKED_CB = {"pet:wash", "pet:sleep", "pet:train"}
 
 def pet_hub(page: int = 0, critical: bool = False,
             sleeping: bool = False, walking: bool = False) -> InlineKeyboardMarkup:
-    """Постраничный хаб питомца (2 в ряд, ◀️ i/n ▶️, один выход 🏠).
-
-    critical=True: на странице «Уход» вместо обычных действий — реанимация
-    и усыновление нового. sleeping=True: кнопка «💤 Спать» превращается
-    в «⏰ Разбудить». walking=True : кнопки мытья/сна/тренировок
-    скрываются — на прогулке они недоступны (сервис всё равно честно
-    откажет по этим же callback'ам, если нажать со старого сообщения).
-    walking=True : «🚶 Прогулка» превращается в «🏠 Вернуть с
-    прогулки» (pet:end_walk) — досрочный возврат, начисляется только
-    накопленное.
-    «📜 История» есть на каждой странице.
-    """
     n = len(PET_PAGES)
     page %= n
     title, actions = PET_PAGES[page]
@@ -126,7 +104,6 @@ def pet_hub(page: int = 0, critical: bool = False,
     return InlineKeyboardMarkup(inline_keyboard=kb_rows)
 
 def games_menu() -> InlineKeyboardMarkup:
-    """Экран выбора мини-игры. Подписи объясняют механику."""
     b = InlineKeyboardBuilder()
     b.button(text="🔢 Угадай число · 🧠 помогает", callback_data="game:guess")
     b.row()
@@ -137,7 +114,6 @@ def games_menu() -> InlineKeyboardMarkup:
     return b.as_markup()
 
 def rps_keyboard() -> InlineKeyboardMarkup:
-    """Ходы для камня-ножницы-бумаги."""
     b = InlineKeyboardBuilder()
     b.button(text="🪨 Камень", callback_data="rps:rock")
     b.button(text="✂️ Ножницы", callback_data="rps:scissors")
@@ -147,7 +123,6 @@ def rps_keyboard() -> InlineKeyboardMarkup:
     return b.as_markup()
 
 def twentyone_keyboard() -> InlineKeyboardMarkup:
-    """Ходы игрока в «21»: взять карту или остановиться."""
     b = InlineKeyboardBuilder()
     b.button(text="➕ Ещё карту", callback_data="bj:hit")
     b.button(text="✋ Хватит", callback_data="bj:stand")
@@ -156,7 +131,6 @@ def twentyone_keyboard() -> InlineKeyboardMarkup:
     return b.as_markup()
 
 def guess_hint_keyboard(secret_lo: int, secret_hi: int) -> InlineKeyboardMarkup:
-    """Подсказка диапазона для угадайки: быстрые кнопки-варианты."""
     b = InlineKeyboardBuilder()
     mid = (secret_lo + secret_hi) // 2
     for n in (secret_lo, mid, secret_hi):
@@ -166,18 +140,11 @@ def guess_hint_keyboard(secret_lo: int, secret_hi: int) -> InlineKeyboardMarkup:
     return b.as_markup()
 
 def back_to_main() -> InlineKeyboardMarkup:
-    """Одиночная кнопка выхода «🏠 Меню» для промежуточных экранов."""
     b = InlineKeyboardBuilder()
     b.button(text="🏠 Меню", callback_data="menu:main")
     return b.as_markup()
 
 def adopt_confirm_kb() -> InlineKeyboardMarkup:
-    """Экран подтверждения усыновления : явные «✅ Да» / «⬅️ Назад».
-
-    Раньше подтверждением служил повторный клик по той же «🥚 Усыновить», а на
-    экране висела только «🏠 Меню» — пользователи не понимали, что делать, и
-    случайно отменяли флоу. Теперь кнопки подписаны явно.
-    """
     b = InlineKeyboardBuilder()
     b.button(text="✅ Да, усыновить", callback_data="pet:adopt_confirm")
     b.button(text="⬅️ Отмена", callback_data="pet:adopt_cancel")
@@ -185,7 +152,6 @@ def adopt_confirm_kb() -> InlineKeyboardMarkup:
     return b.as_markup()
 
 def train_menu() -> InlineKeyboardMarkup:
-    """Экран тренировок: выбор характеристики."""
     b = InlineKeyboardBuilder()
     b.button(text="💪 Сила", callback_data="pet:train:strength")
     b.button(text="🏃 Ловкость", callback_data="pet:train:agility")
@@ -195,7 +161,6 @@ def train_menu() -> InlineKeyboardMarkup:
     return b.as_markup()
 
 def start_pet_name_suggestions(names: list[str]) -> InlineKeyboardMarkup:
-    """Кнопки с вариантами имени питомца (онбординг)."""
     b = InlineKeyboardBuilder()
     for n in names:
         b.button(text=f"✨ {n}", callback_data=f"onb:name:{n}")
@@ -213,7 +178,6 @@ def welcome_start_button() -> InlineKeyboardMarkup:
     return b.as_markup()
 
 def species_picker() -> InlineKeyboardMarkup:
-    """Выбор вида питомца + «просто смотреть»: питомец — опция, не обязанность."""
     from app.services.tamagotchi import SPECIES_DATA
     b = InlineKeyboardBuilder()
     for code, sp in SPECIES_DATA.items():
@@ -224,7 +188,6 @@ def species_picker() -> InlineKeyboardMarkup:
     return b.as_markup()
 
 def adopt_cta_kb() -> InlineKeyboardMarkup:
-    """Экран «питомца нет»: завести или вернуться в меню."""
     b = InlineKeyboardBuilder()
     b.button(text="🥚 Усыновить питомца", callback_data="pet:adopt")
     b.button(text="🏠 Меню", callback_data="menu:main")
@@ -232,7 +195,6 @@ def adopt_cta_kb() -> InlineKeyboardMarkup:
     return b.as_markup()
 
 def pet_history_kb(has_current: bool = True) -> InlineKeyboardMarkup:
-    """Экран истории питомцев."""
     b = InlineKeyboardBuilder()
     if has_current:
         b.button(text="🐾 К текущему", callback_data="menu:pet")
@@ -243,7 +205,6 @@ def pet_history_kb(has_current: bool = True) -> InlineKeyboardMarkup:
 
 def achievements_list(pairs: list, page: int = 0,
                       total_pages: int | None = None) -> InlineKeyboardMarkup:
-    """Постраничная навигация ачивок: ◀️ · «🏆 Достижения 📖 i/n» · ▶️."""
     if total_pages is None:
         total_pages = max(1, (len(pairs) + 8 - 1) // 8)
     total_pages = max(1, total_pages)
@@ -259,7 +220,6 @@ TOP_SECTION_LABELS = {"talk": "💬 Болтуны", "react": "💖 Реакци
                       "karma": "💚 Добряки"}
 
 def top_tabs(active: str = "week", section: str = "talk") -> InlineKeyboardMarkup:
-    """Топы: сверху вкладки периода, ниже ◀️ раздел · i/n · ▶️, один выход 🏠."""
     from app.handlers.stats import TOP_SECTIONS
     keys = [k for k, _ in TOP_SECTIONS]
     idx = keys.index(section) if section in keys else 0
@@ -283,7 +243,6 @@ def top_tabs(active: str = "week", section: str = "talk") -> InlineKeyboardMarku
     return b.as_markup()
 
 def settings_keyboard(flags: dict[str, bool]) -> InlineKeyboardMarkup:
-    """Экран ⚙️ Настройки: тумблеры уведомлений (по 2 в ряд)."""
     labels = {
         "pet_reminders": "🐾 Питомец скучает",
         "streak_reminders": "🔥 Стрик под угрозой",
@@ -299,11 +258,6 @@ def settings_keyboard(flags: dict[str, bool]) -> InlineKeyboardMarkup:
     return b.as_markup()
 
 def arena_keyboard(can_fight: bool = True, hint: str = "") -> InlineKeyboardMarkup:
-    """Арена: кнопка боя (или некликабельная подсказка кулдауна) + выход 🏠.
-
-    В aiogram 3 «disabled» — это объект DisabledButton, а не bool; вместо
-    серой кнопки показываем некликабельную подсказку (arena:noop).
-    """
     b = InlineKeyboardBuilder()
     if can_fight:
         b.button(text="⚔️ Вызов", callback_data="arena:fight")
@@ -314,13 +268,6 @@ def arena_keyboard(can_fight: bool = True, hint: str = "") -> InlineKeyboardMark
 
 def style_keyboard(svc, pet, slots_page: int = 0,
                    item_page: int = 0) -> InlineKeyboardMarkup:
-    """Гардероб MMORPG: окрас → слот экипировки → список вещей слота.
-
-    svc — TamagotchiService (каталоги PET_COLORS / PET_ACCESSORIES / GEAR_SLOTS),
-    pet — питомец (нужен для owned/gear/customization).
-    slots_page — индекс открытого слота (None-страница 0 = только окрасы),
-    item_page — пагинация внутри списка вещей слота.
-    """
     from app.services.tamagotchi import STYLE_ITEMS_PER_PAGE
 
     b = InlineKeyboardBuilder()
@@ -373,7 +320,6 @@ def style_keyboard(svc, pet, slots_page: int = 0,
     return b.as_markup()
 
 def open_slot_of(cb_data: str) -> int | None:
-    """Определяет, какой слот сейчас открыт на экране гардероба, по колбэку."""
     parts = cb_data.split(":")
     try:
         if parts[1] == "slot":

@@ -1,4 +1,3 @@
-"""Формулы баланса XP/уровней и визуальные утилиты (прогресс-бары)."""
 from __future__ import annotations
 
 import math
@@ -6,19 +5,10 @@ import math
 from app.config import get_settings
 
 def xp_needed_for_level(level: int) -> int:
-    """XP, необходимый для перехода с `level` на `level+1`.
-
-    Формула: xp_needed = base * level^1.5  (base из конфига, по умолчанию 50).
-    Пример (base=50): L1→2: 50, L2→3: 141, L3→4: 260, L5→6: 559, L10→11: 1581.
-    """
     base = get_settings().xp_level_base
     return max(int(base * (level ** 1.5)), 1)
 
 def apply_xp(level: int, xp: int, gained: int) -> tuple[int, int, list[int]]:
-    """Начисляет XP, возвращает (new_level, new_xp, [список новых уровней]).
-
-    XP «перетекает» между уровнями: избыток сохраняется.
-    """
     new_levels: list[int] = []
     xp += gained
     while xp >= xp_needed_for_level(level):
@@ -28,18 +18,15 @@ def apply_xp(level: int, xp: int, gained: int) -> tuple[int, int, list[int]]:
     return level, xp, new_levels
 
 def progress_bar(value: float, total: float, length: int = 10) -> str:
-    """▰▰▰▰▱▱▱▱▱▱ — прогресс-бар из эмодзи-блоков."""
     if total <= 0:
         total = 1
     filled = min(length, max(0, round(value / total * length)))
     return "▰" * filled + "▱" * (length - filled)
 
 def stat_bar(value: float, length: int = 10) -> str:
-    """Прогресс-бар стата питомца (0..100)."""
     return progress_bar(value, 100.0, length)
 
 def format_uptime(seconds: float) -> str:
-    """Человекочитаемо: '2 ч 5 мин'."""
     seconds = max(0, int(seconds))
     h, rem = divmod(seconds, 3600)
     m = rem // 60
@@ -75,7 +62,6 @@ HOLIDAYS: dict[tuple[int, int], tuple[str, str]] = {
 }
 
 def season_for(dt) -> str:
-    """Метеорологические сезоны северного полушария."""
     m = dt.month
     if m in (12, 1, 2):
         return "winter"
@@ -93,14 +79,12 @@ HOLIDAY_EFFECTS: dict[tuple[int, int], dict[str, float]] = {
 }
 
 def holiday_effect_mults(dt=None) -> dict[str, float]:
-    """Множители на сегодня (пустой dict — обычный день). День считается по камчатскому времени."""
     if dt is None:
         from app.utils.local_time import now as _local_now
         dt = _local_now()
     return HOLIDAY_EFFECTS.get((dt.month, dt.day), {})
 
 def weather_info(dt=None) -> dict:
-    """Текущая «погода» для карточки питомца и подсказок (сезон/праздник — по камчатскому времени)."""
     if dt is None:
         from app.utils.local_time import now as _local_now
         dt = _local_now()

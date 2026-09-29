@@ -1,4 +1,3 @@
-"""Асинхронный слой доступа к БД: engine, session factory, мидлвар для хендлеров."""
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
@@ -20,7 +19,6 @@ engine = create_async_engine(_settings.database_url, **_engine_kwargs)
 session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
-    """Зависимость для FastAPI/aiogram: коммит при успехе, откат при ошибке."""
     async with session_factory() as session:
         try:
             yield session
@@ -30,11 +28,6 @@ async def get_session() -> AsyncGenerator[AsyncSession, None]:
             raise
 
 class DbMiddleware:
-    """Aiogram-мидлвар: кладёт активную сессию БД в data['session'].
-
-    Использование в хендлере:
-        async def handler(message: Message, session: AsyncSession):...
-    """
 
     async def __call__(self, handler, event, data):
         async with session_factory() as session:

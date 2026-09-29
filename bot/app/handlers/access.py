@@ -1,16 +1,6 @@
-"""События членства и реестр подписчиков (Bot API + MTProto).
-
-Хендлеры живут в отдельном роутере и регистрируются ДО гейта доступа: они
-обязаны отрабатывать даже тогда, когда основной диспетчер уже отрезал апдейт.
-
-Ответы пользователю бот даёт только в личных сообщениях; события групп здесь
-нужны исключительно для того, чтобы вовремя занести человека в реестр — иначе
-подписчик канала или группы получит отказ в ЛС («бот не общается»).
-"""
 from __future__ import annotations
 
 import contextlib
-from datetime import timedelta
 
 from aiogram import BaseMiddleware, Bot, F, Router
 from aiogram.enums import ChatMemberStatus, ChatType
@@ -30,19 +20,6 @@ from app.services import access as access_service
 router = Router(name="access")
 
 class AccessEventsMiddleware(BaseMiddleware):
-    """Сбор знаний о членстве ДО фильтрации гейтом доступа.
-
-    Outer-мидлвары выполняются в порядке регистрации, поэтому этот мидлвар
-    ставится в диспетчер раньше AccessGateMiddleware: события групп
-    (chat_member / new_chat_members) и контакт в ЛС (/start) обязаны попадать
-    в реестр даже тогда, когда гейт уже отрезал апдейт. Без этого подписчик
-    канала/группи оставался «невидимкой» для проверки доступа в личных
-    сообщениях — ровно тот баг, из-за которого бот «не общается» с
-    подписанными пользователями.
-
-    Идемпотентно и без исключений наружу: любая ошибка логируется DEBUG'ом,
-    обработка апдейта продолжается штатно.
-    """
 
     async def __call__(
         self,
@@ -64,50 +41,36 @@ class AccessEventsMiddleware(BaseMiddleware):
         return await handler(event, data)
 
 def _is_private_start(message: Message) -> bool:
-    """/start в личных сообщениях — достоверный сигнал контакта с ботом."""
     if message.chat.type != ChatType.PRIVATE:
         return False
     text = (message.text or "").split("@", 1)[0].strip().lower()
     return text in {"/start", "/help"} and message.from_user is not None
 
 def watched_chat_ids() -> set[int]:
-    """Множество числовых id обязательных чатов (пусто = фильтра нет)."""
     return access_service.watched_chat_ids()
 
 async def register_member(user_id: int, chat_id: int | str | None = None, *,
                           first_name: str = "", username: str | None = None,
                           real_event: bool = True, contacted: bool = False) -> None:
-    """Пополняет реестр членства (идемпотентно, ошибок наружу не отдаёт)."""
     await access_service.record_membership(
         user_id, chat_id, first_name=first_name, username=username,
         real_event=real_event, contacted=contacted)
 
 async def remember_contact(user_id: int, *, first_name: str = "",
                            username: str | None = None) -> None:
-    """Фиксирует контакт человека с ботом (прав доступа не даёт)."""
     await access_service.remember_contact(user_id, first_name=first_name,
                                           username=username)
 
 async def ensure_registry_fresh(bot: Bot, user_id: int) -> bool:
-    """Живой скан участников перед отказом (True — скан запускался)."""
     return await access_service.refresh_registry(bot, user_id)
 
 def last_scan_stats() -> tuple[int | None, int | None]:
-    """(собрано участниками, всего в чате) последнего живого скана."""
     return (access_service.LAST_SCAN_SEEN, access_service.LAST_SCAN_TOTAL)
 
 async def scan_channel_participants(target: str) -> int:
-    """Полный MTProto-скан одного чата в реестр доступа."""
     return await access_service.scan_chat_participants(target)
 
 async def handle_chat_member(update: ChatMemberUpdated, bot: Bot) -> None:
-    """chat_member: кто-то вступил/вышел/изменил роль в отслеживаемом чате.
-
-    Прибытие — достоверный сигнал присутствия: заносим сразу. Уход — тоже
-    записываем (строка остаётся), но право доступа доказывает актуальная
-    проверка: утрата части членств не должна лишать доступа того, кто остался
-    хотя бы в одном обязательном чате.
-    """
     if not access_service.is_watched(update.chat.id):
         return
     member = update.new_chat_member
@@ -131,7 +94,6 @@ async def _chat_member_handler(update: ChatMemberUpdated, bot: Bot) -> None:
 
 @router.message(F.chat.type.in_({"group", "supergroup", "channel"}) & F.new_chat_members)
 async def handle_new_chat_members(message: Message) -> None:
-    """new_chat_members — надёжнее chat_member при приватности группы."""
     if not access_service.is_watched(message.chat.id):
         return
     for member in message.new_chat_members or []:
@@ -143,7 +105,6 @@ async def handle_new_chat_members(message: Message) -> None:
 
 @router.message(Command("subscribers"))
 async def cmd_subscribers(message: Message, session: AsyncSession) -> None:
-    """Сводка реестра доступа (только администраторам, только в ЛС)."""
     st = get_settings()
     if message.chat.type != ChatType.PRIVATE:
         return
@@ -179,11 +140,6 @@ async def cmd_subscribers(message: Message, session: AsyncSession) -> None:
 
 @router.callback_query(F.data == "gate:check")
 async def cb_gate_check(cb: CallbackQuery, bot: Bot) -> None:
-    """Кнопка «Я подписался — проверить» в заглушке отказа.
-
-    Сбрасывает кэш и прогоняет всю цепочку источников заново; при успехе
-    заменяет заглушку приглашением войти, при отказе — показывает диагностику.
-    """
     from app.middlewares.gate import is_channel_subscribed, reset_subscribe_cache
 
     reset_subscribe_cache(cb.from_user.id)
@@ -224,7 +180,6 @@ def _start_kb():
         InlineKeyboardButton(text="▶️ Начать", callback_data="onb:start")]])
 
 async def notify_admins(bot: Bot, text: str) -> None:
-    """Тихо сообщает администраторам о проблемах доступа (без спама юзерам)."""
     for admin_id in get_settings().admin_ids:
         try:
             await bot.send_message(admin_id, text)

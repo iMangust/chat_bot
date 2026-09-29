@@ -1,12 +1,7 @@
-"""Фоновые задачи (APScheduler): деградация питомцев, уведомления, стрики.
-
-Масштабируемость: каждая задача обёрнута в Redis-lock — можно запускать
-несколько копий бота (worкеров), задача выполнится только на одном.
-"""
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta, timezone
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
@@ -28,7 +23,6 @@ from app.utils.redis import acquire_lock, release_lock
 from app.utils.local_time import now as local_now
 
 async def decay_all_pets(bot: Bot) -> None:
-    """Каждые 30 минут: деградация статов, бонус друзей, «питомец скучает»."""
     if not await acquire_lock("decay", ttl_sec=60 * 25):
         return
     try:
@@ -86,7 +80,6 @@ def compute_mood_reason(mood: str) -> str:
     }.get(mood, "хочет внимания")
 
 async def flush_notifications(bot: Bot) -> None:
-    """Каждую минуту: отправляем накопленные уведомления в ЛС."""
     if not await acquire_lock("notify_flush", ttl_sec=50):
         return
     try:
@@ -115,7 +108,6 @@ async def flush_notifications(bot: Bot) -> None:
         await release_lock("notify_flush")
 
 async def check_streak_expiry(bot: Bot) -> None:
-    """Раз в сутки (00:15 UTC): сгоревшие стрики → предупреждение."""
     if not await acquire_lock("streak_check", ttl_sec=3600):
         return
     try:
@@ -147,14 +139,12 @@ async def check_streak_expiry(bot: Bot) -> None:
         await release_lock("streak_check")
 
 async def _flagged_users(session, flag: str) -> set[int]:
-    """tg_id юзеров, у которых настройка flag включена (или записи нет — по умолчанию вкл)."""
     off = set((await session.execute(
         select(NotificationSetting.user_id).where(getattr(NotificationSetting, flag).is_(False))
     )).scalars())
     return off
 
 async def daily_reports(bot: Bot) -> None:
-    """Ежедневный отчёт активности (daily_report_hour_utc)."""
     if not await acquire_lock("daily_report", ttl_sec=3000):
         return
     try:
@@ -187,7 +177,6 @@ async def daily_reports(bot: Bot) -> None:
         await release_lock("daily_report")
 
 async def evening_streak_warnings(bot: Bot) -> None:
-    """Вечером: у кого стрик >0 и сегодня ещё не писал — «серия сгорит»."""
     if not await acquire_lock("streak_warn", ttl_sec=3000):
         return
     try:
@@ -217,7 +206,6 @@ async def evening_streak_warnings(bot: Bot) -> None:
         await release_lock("streak_warn")
 
 async def weekly_leaderboard(bot: Bot) -> None:
-    """Понедельник 00:30 UTC: снапшот топа + призы."""
     if not await acquire_lock("weekly_lb", ttl_sec=3000):
         return
     try:
@@ -229,11 +217,6 @@ async def weekly_leaderboard(bot: Bot) -> None:
         await release_lock("weekly_lb")
 
 async def weekly_arena_finish(bot: Bot) -> None:
-    """Понедельник 00:40 UTC: призы топ-3 недельной арены питомцев.
-
-    Идемпотентно по маркеру в LeaderboardSnapshot — повторный запуск (рестарт
-    процесса, два воркера с Redis-lock) не выдаст призы дважды.
-    """
     if not await acquire_lock("weekly_arena", ttl_sec=3000):
         return
     try:
@@ -248,14 +231,6 @@ async def weekly_arena_finish(bot: Bot) -> None:
         await release_lock("weekly_arena")
 
 async def scan_channel_members(bot: Bot) -> None:
-    """Фоновая сверка реестра подписчиков (v2.0).
-
-    Механика приветствий удалена: задача только сверяет число людей в базе с
-    публичным счётчиком чата (get_chat_member_count) и подсказывает, как
-    закрыть дрейф (дельта/полный MTProto-скан заносят присутствующих в
-    реестр доступа). Расхождение = у кого-то может не быть доступа, пока
-    скан его не поймал.
-    """
     st = get_settings()
     from app.middlewares.gate import required_chats
     if not required_chats():
@@ -294,18 +269,6 @@ async def scan_channel_members(bot: Bot) -> None:
         await release_lock("channel_scan")
 
 async def mtproto_delta_sync(bot: Bot | None = None) -> None:
-    """ (фикс): периодическая MTProto-дельта (полный Telegram API).
-
-    Bot API не отдаёт список участников канала — Telethon закрывает этот
-    пробел: раз в MTPROTO_SYNC_MINUTES тянем участников обязательных чатов
-    и добавляем только «свежих» (id больше максимального известного).
-    Задача создаётся только если MTProto настроен; ошибки не валят бота.
-    ВАЖНО: aiogram 3.x НЕ имеет Bot.get_current — бот передаётся планировщиком
-    (как args=[bot]); fallback на dispatch-контекст оставлен для совместимости.
-
-    v2.0: приветствий больше нет — сканы только пополняют реестр доступа
-    (channel_subscribers), гейт пускает по нему подписчиков.
-    """
     if not await acquire_lock("mtproto_sync", ttl_sec=60 * 50):
         return
     try:
@@ -337,15 +300,6 @@ async def mtproto_delta_sync(bot: Bot | None = None) -> None:
         await release_lock("mtproto_sync")
 
 async def weather_updater(bot: Bot) -> None:
-    """: фоновое обновление кэша реальной погоды (OpenWeather).
-
-    Погода больше НЕ парсится при рендере карточек/кнопок: эта задача
-    сама ходит в API (при старте и далее каждые WEATHER_REFRESH_HOURS,
-    по умолчанию 3 ч), а UI читает только кэш → мгновенные ответы без
-    сетевых таймаутов и «query is too old». При сбое API следующая попытка
-    через RETRY_AFTER_SEC (20 мин); последний успешный снимок остаётся в
-    кэше для отображения до восстановления сети.
-    """
     if not get_settings().weather_real_enabled:
         return
     try:

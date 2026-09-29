@@ -1,20 +1,6 @@
-"""Сервис активности: антифрод-фильтры, XP, стрики.
-
-Правила зачёта сообщения (все проверяются до записи в лог):
-1. Не ЛС, не канал (только группы/супергруппы из tracked_chat_ids или любые группы).
-2. Не бот, не забанен, прошёл /start (onboarded).
-3. Не команда (/...), не сервисное сообщение (вступление, закреп и т.п.).
-4. Длина текста >= min_message_length ИЛИ медиа (стикер/фото/голосовое считаются).
-5. Кулдаун activity_cooldown_sec между засчитанными сообщениями одного юзера (Redis SETNX).
-6. Дедупликация по message_id (уникальность обеспечивается логикой редактирования —
-   edited-событие не вызывает этот метод повторно для зачёта).
-
-Все сообщения пишутся в chat_messages_log (включая незаачтённые, с skip_reason) —
-это даёт данные для анализа накрутки.
-"""
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,7 +15,6 @@ from app.utils.redis import set_cooldown
 from app.utils.local_time import now as local_now
 
 def _aware(dt: datetime) -> datetime:
-    """Приводит datetime из БД к aware-камчатскому (MySQL/DATETIME возвращает naive)."""
     from app.utils.local_time import localize
     return localize(dt)
 
@@ -59,11 +44,6 @@ class ActivityService:
         mentions_count: int,
         is_command: bool,
     ) -> ChatMessageLog | None:
-        """Главная точка входа для события Message из группы/канала.
-
-        Возвращает запись лога (counted или нет) либо None, если юзер ещё
-        не зарегистрирован (не жмём /start — не трогаем БД лишний раз).
-        """
         user = await self.users.get(user_id)
         if user is None or user.is_banned:
             return None
@@ -143,14 +123,6 @@ class ActivityService:
         return entry
 
     async def _credit_referral(self, user: User) -> None:
-        """Разовая награда пригласившему за первую засчитанную активность новичка.
-
-        Реферальная связка создаётся в /start по deep-link `invite_<tg_id>`
-        (см. handlers/start.py). Здесь она «монетизируется»: бонд происходит
-        только после реального действия приглашённого — это отсекает накрутку
-        пустыми регистрациями. Флаг `_ref_credited` живёт в JSON-колонке
-        settings_extra, поэтому не требует новой миграции.
-        """
         if not user.referrer_id:
             return
         extra = dict(user.settings_extra or {})
@@ -191,16 +163,6 @@ class ActivityService:
         is_reply: bool = False,
         mentions_count: int = 0,
     ) -> ChatMessageLog | None:
-        """Записать сообщение в чат-лог БЕЗ начисления XP .
-
-        Нужно для событий, которые Bot API не отдаёт боту, но видит
-        MTProto-аккаунт: посты канала (бот не получает published-сообщения
-        каналов) и реакции на них. Без записи в лог реакция на пост канала
-        не зачтётся — автор сообщения будет неизвестен.
-
-        Идемпотентно по (chat_id, message_id); незаархивированных/незарегистрированных
-        юзеров пропускаем (не плодим записи с внешними id).
-        """
         user = await self.users.get(user_id)
         if user is None:
             return None
@@ -219,13 +181,6 @@ class ActivityService:
         self, *, from_user: int, to_user: int, chat_id: int,
         message_id: int, emoji: str,
     ) -> bool:
-        """Зачёт реакции. True — если новая (не дубль от того же юзера).
-
-        XP за реакцию получают обе стороны: автор реакции (социальный вклад)
-        и получатель (признание). Антифрод: взаимный «накрутас» из двух
-        аккаунтов режется дневным лимитом зачёта реакций на одного
-        получателя (reactions_cap_per_day).
-        """
         from app.db.models import ReactionLog
         user = await self.users.get(from_user)
         if user is None or user.is_banned or not user.onboarded:
@@ -273,13 +228,6 @@ class ActivityService:
 
     @staticmethod
     def _update_streak(user: User, now: datetime) -> None:
-        """Стрик по календарным дням (UTC). Пропуск дня >1 обнуляет серию.
-
-        Edge case: планировщик сжигает стрик в 00:15 UTC, но «вчерашний» день
-        формально ещё вчера для last_active_date — если стрик был обнулён после
-        последней активности (streak==0), считаем это продолжением вчерашней
-        серии, а не новой единицей.
-        """
         today = _day(now)
         last = _day(user.last_active_date) if user.last_active_date else None
         if last == today:
@@ -325,9 +273,6 @@ class ActivityService:
         return counters
 
     async def personal_stats(self, tg_id: int) -> dict:
-        """Данные для /stats и карточки профиля.: добавлена разбивка по типам сообщений (breakdown) — статистика
-        теперь различает текст/фото/стикеры/голос/кружки/reply/упоминания.
-        """
         now = local_now()
         repo = ActivityRepository(self.session)
         return {

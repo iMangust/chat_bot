@@ -1,4 +1,3 @@
-"""Экраны «Друзья питомцев» и «🖼 Карточка профиля»."""
 from __future__ import annotations
 
 import html
@@ -102,7 +101,6 @@ async def cb_card(cb: CallbackQuery, session: AsyncSession) -> None:
 
 @router.callback_query(F.data == "noop")
 async def cb_noop(cb: CallbackQuery) -> None:
-    """Информационные кнопки (номер страницы и т.п.) — просто гасим часы."""
     await cb.answer()
 
 @router.message(Command("card", "profile"), F.chat.type == "private")

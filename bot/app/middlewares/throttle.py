@@ -1,8 +1,3 @@
-"""Мидлвар throttling для callback-кнопок: защита от двойных тапов и спама.
-
-Логика: на связку (user_id, callback_data) в Redis ставится кулдаун 1.5 сек.
-Повторные нажатия молча игнорируются (answer с «Подожди…»).
-"""
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable

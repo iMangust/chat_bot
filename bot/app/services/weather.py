@@ -1,57 +1,3 @@
-"""Реальная погода Петропавловска-Камчатского — ТОЛЬКО OpenWeather (openweathermap.org).
-
-Интеграция «погода → питомец»: текущие условия (WMO-код) маппятся в игровые
-статы — множители деградации и заметная строка в карточке. Кэш ответа в памяти;
-фоновый планировщик обновляет его каждые 3 часа (env WEATHER_REFRESH_HOURS),
-UI читает только кэш — сетевых задержек в ответах бота нет. При любом сетевом
-сбое/таймауте — тихий откат к сезонной модели
-(app.utils.formatting.weather_info), чтобы карточка никогда не ломалась из-за
-погоды. Время всегда камчатское (app.utils.local_time). (запрос владельца): все сторонние резервные метеоисточники (GisMeteo,
-MET Norway и исторические Open-Meteo/2GIS) УДАЛЕНЫ из проекта безвозвратно.
-Погода берётся ИСКЛЮЧИТЕЛЬНО с openweathermap.org. Документация:
-https://openweathermap.org/api/one-call-4 (One Call API),
-https://openweathermap.org/current, https://openweathermap.org/forecast5.
-Схема оплаты у OWM (проверено живыми запросами, сентябрь 2026):
- • One Call 3.0/4.0 (api.openweathermap.org/data/3.0/onecall) — ТРЕБУЕТ
-   платную подписку «One Call by Call»; с бесплатным ключом отвечает HTTP 401
-   («requires a separate subscription to the One Call by Call plan»). Код
-   оставлен: если владелец подключит платный тариф, бот сам начнёт брать
-   оттуда current + hourly одним запросом
-   (exclusions=minutely,daily,alerts);
- • бесплатные эндпоинты работают с этим же ключом:
-   /data/2.5/weather (текущие условия: temp/feels_like/humidity/clouds/
-   weather.id + sunrise/sunset -> is_day) и /data/2.5/forecast (5 дней с
-   шагом 3 ч -> почасовое окно прогулок);
- • код погоды OWM — номер группы WMO (2xx гроза, 5xx дождь, 6xx снег,
-   7xx туман, 80x облачность) -> _owm_to_wmo переводит его в WMO-код, и вся
-   игровая механика (классификатор, эффекты, прогулки) работает без изменений.
-API-ключ: env OPENWEATHER_API_KEY / OWM_API_KEY / OWM_APP_ID
-(или config.openweather_api_token; значение по умолчанию зашито в конфиге).
-Отказ источника (нет ключа / сеть / лимит 429) — тихий показ последнего кэша,
-а при пустом кэше — сезонной модели. Других источников погоды в проекте нет. (жалобы владельца на карточку «...в течение ближайших 3 ч (до 23:39)»
-при времени 23:30 и «😊 настроение -1» без объяснений):
- • убрано ложное «в течение ближайших 3 ч» — окно тика могло быть начато
-   минуты назад; теперь UI честно говорит границу («до HH:MM», «осталось
-   ~N мин») и нигде не обещает три часа, которых не осталось;
- • каждая дельта стата получила человеческую расшифровку (stat_deltas_explanation):
-   сколько баллов из 100 шкалы погода отнимает/прибавляет и что это значит;
- • исправлен знак сытости: снег больше НЕ «съедает» 3 балла сытости под вывеской
-   «аппетит +3» — hunger_delta теперь прибавляет сытость ровно как показано. (просьба владельца: «упрости объяснение» и «приведи все показатели к
-единому шаблону — какой стат падает, какой растёт; проанализируй весь код, а
-не только погоду»):
- • ЕДИНЫЙ словарь имён статов PET_STATS (weather.py): 🍎 Сытость, 😊 Счастье,
-   ⚡ Энергия, 🫧 Гигиена, ❤️ Здоровье — ровно как в карточке питомца. Все
-   подписи в UI (погода, /help, друзья, сезоны, праздники) берут имена оттуда;
-   «настроение» как стат больше не встречается — Настроение (💭) это общая
-   оценка состояния, а не показатель;
- • строка тика сокращена до одного шаблона везде:
-     ↳ тик погоды: 😊 Счастье -5, ⚡ Энергия -2
-     ⏳ Следующий тик погоды — 00:13 (через 17 мин).
-   убраны «лекции» про баллы/сутки, приписка «(уже учтено в статах)» и
-   простыня про истёкшее окно (вместо неё — честное «скоро»);
- • тот же формат времени — в событии тика (apply_weather_to_pet) и в
-   weather_window_line: минус = показатель падает, плюс = растёт.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -84,12 +30,6 @@ _HTTP_CONNECT_TIMEOUT = 6.0
 _HTTP_READ_TIMEOUT = 10.0
 
 def openweather_key() -> str:
-    """Ключ OpenWeather: env OPENWEATHER_API_KEY/OWM_API_KEY/OWM_APP_ID →.env.: порядок поиска — 1) реальные переменные окружения (тесты ставят
-    их через monkeypatch.setenv), 2) поле конфига openweather_api_token /
-    любое значение из.env (pydantic-settings не кладёт.env в os.environ,
-    поэтому читаем Settings напрямую). Пустая строка = ключ не задан ->
-    реальной погоды нет: UI показывает последний кэш либо сезонную модель.
-    """
     for var in (OPENWEATHER_KEY_ENV, "OWM_API_KEY", "OWM_APP_ID"):
         tok = os.getenv(var, "").strip()
         if tok:
@@ -112,7 +52,6 @@ def openweather_key() -> str:
     return ""
 
 def weather_source_line() -> str:
-    """Строка-подвал для /weather: где взять цифры и с чем их сверить."""
     if openweather_key():
         src = "OpenWeather (openweathermap.org)"
     else:
@@ -129,19 +68,11 @@ def _timeout():
                          write=8.0, pool=5.0)
 
 def _transport():
-    """Транспорт httpx: системный DNS (trust_env — прокси из окружения), но
-    коннект строго IPv4 (local_address=0.0.0.0 запрещает Happy Eyeballs
-    выбирать IPv6-адреса вроде отравленного 100::1)."""
     import httpx
     return httpx.AsyncHTTPTransport(retries=1, trust_env=True,
                                     local_address="0.0.0.0")
 
 async def fetch_real_weather() -> dict | None:
-    """Точка входа «реальная погода»: ТОЛЬКО OpenWeather (openweathermap.org).: все резервные источники (GisMeteo API v2, MET Norway) удалены из
-    проекта по запросу владельца — погода берётся исключительно с OWM.
-    Никогда не бросает исключений: None = источник недоступен (нет ключа /
-    сеть / лимит) — UI тогда показывает последний кэш или сезонную модель.
-    """
     import sys as _sys
     mod = _sys.modules[__name__]
     if not openweather_key() or getattr(mod, "FORCE_FALLBACK", False):
@@ -156,12 +87,6 @@ async def fetch_real_weather() -> dict | None:
     return owm
 
 def _owm_to_wmo(owm_id: int, temp_c: float | None = None) -> int:
-    """Код погоды OWM (группы WMO) → канонический WMO-код для классификатора.
-
-    Снежные коды OWM (6xx) при плюсовой температуре превращаем в мокрый снег
-    (71) — дальше classify_weather переведёт их в снежный режим с риском
-    простуды; это согласуется с обработкой смешанных осадков.
-    """
     try:
         i = int(owm_id)
     except (TypeError, ValueError):
@@ -208,7 +133,6 @@ def _owm_to_wmo(owm_id: int, temp_c: float | None = None) -> int:
 CLOUDY_BY_PCT = ((11.0, 0), (30.0, 1), (69.0, 2), (100.1, 3))
 
 def _cloud_code_by_pct(cloud_pct: float | None) -> int | None:
-    """WMO-код состояния неба (0..3) по проценту облачности OpenWeather."""
     if cloud_pct is None:
         return None
     try:
@@ -221,7 +145,6 @@ def _cloud_code_by_pct(cloud_pct: float | None) -> int | None:
     return 3
 
 def _parse_owm_current(js: dict) -> dict | None:
-    """Ответ /data/2.5/weather → внутренний снимок погоды (или None)."""
     main = js.get("main") or {}
     t = main.get("temp")
     if t is None:
@@ -273,13 +196,6 @@ def _parse_owm_current(js: dict) -> dict | None:
     }
 
 def _parse_owm_onecall(js: dict) -> dict | None:
-    """Ответ платного One Call 3.0/4.0 → внутренний снимок погоды (или None).
-
-    Формат: {lat, lon, timezone_offset, current:{dt,sunrise,sunset,temp,
-    feels_like,humidity,pressure,clouds,uv_index,visibility, wind_speed(м/с),
-    wind_gust?, weather:[{id,...}]}, hourly:[{dt,temp,wind_speed,
-    pop,rain?,snow?,weather:[{id}]}...]}.
-    """
     cur = js.get("current") or {}
     t = cur.get("temp")
     if t is None:
@@ -342,7 +258,6 @@ def _parse_owm_onecall(js: dict) -> dict | None:
     return snap
 
 def _owm_utc_hour(ts: int) -> str:
-    """Unix-время (уже смещённое на timezone_offset ответа) → 'YYYY-MM-DDTHH'."""
     from datetime import datetime as _dt, timezone as _tz
     try:
         return _dt.fromtimestamp(int(ts), tz=_tz.utc).strftime("%Y-%m-%dT%H")
@@ -350,12 +265,6 @@ def _owm_utc_hour(ts: int) -> str:
         return ""
 
 def _parse_owm_forecast_hours(js: dict) -> list[dict]:
-    """Ответ /data/2.5/forecast (шаг 3 ч) → почасовые слоты прогулочного окна.
-
-    time приводится к UTC-слоту '%Y-%m-%dT%H' (поле dt_txt уже локальное для
-    города и совпадает с local_now, когда город = Камчатка); совместимо с
-    _walk_window_hours. Пустой список при любом сюрпризе в формате.
-    """
     out: list[dict] = []
     try:
         for f in js.get("list") or []:
@@ -387,12 +296,6 @@ def _parse_owm_forecast_hours(js: dict) -> list[dict]:
     return out
 
 async def fetch_openweather() -> dict | None:
-    """Текущая погода + прогноз с OpenWeather; None при любой ошибке.
-
-    Сначала пробуем One Call 3.0/4.0 (один запрос current+hourly) — он платный,
-    и с бесплатным ключом отвечает 401: тогда молча переходим на бесплатную
-    пару /2.5/weather + /2.5/forecast. Ответ нормализуется во внутренний формат модуля.
-    """
     import httpx
     key = openweather_key()
     if not key:
@@ -448,11 +351,6 @@ async def fetch_openweather() -> dict | None:
         return None
 
 def _ttl() -> float:
-    """TTL кэша из конфига (тесты/офлайн-стенды могут его менять).: get_settings импортируется ЛЕНИВО и ВНУТРИ try — на CI-раннере,
-    где импорт app.config недоступен/медлен, падал именно этот путь: _ttl
-    возвращал -1.0 («погода отключена»), _ensure_fresh короткозамкал в None и
-    тест сериализации fetch'ей видел r1/r2 = None вместо мок-данных.
-    """
     if not WEATHER_REAL_ENABLED:
         return -1.0
     try:
@@ -468,12 +366,6 @@ def _ttl() -> float:
         return float(REFRESH_INTERVAL_SEC)
 
 async def background_refresh() -> dict | None:
-    """Фоновое обновление кэша реальной погоды (задача планировщика).
-
-    Единственная точка, где сеть допустима в обычном режиме: UI-хендлеры
-    читают только _cache. Возвращает свежий снимок или None при сбое
-    (следующая попытка — через RETRY_AFTER_SEC внутри _ensure_fresh).
-    """
     try:
         return await _ensure_fresh(force=True)
     except Exception as exc:
@@ -509,7 +401,6 @@ WMO_MAP: dict[int, tuple[str, str, dict[str, float]]] = {
 }
 
 def _fallback(dt: datetime | None = None) -> dict:
-    """Сезонная модель (офлайн-режим): то же, что показывала карточка раньше."""
     from app.utils.formatting import weather_info
     return weather_info(dt)
 
@@ -548,7 +439,6 @@ _cache: dict = {"ts": 0.0, "info": None, "next_try_mono": 0.0}
 _decay_cache: dict = {"ts": 0.0, "mods": {}}
 
 def _reset_state_for_tests() -> None:
-    """Полный сброс модульного состояния погоды (только для тестов)."""
     global _fetch_inflight, _inflight_force
     _cache.update({"ts": 0.0, "info": None, "next_try_mono": 0.0})
     _decay_cache.update({"ts": 0.0, "mods": {}})
@@ -557,14 +447,6 @@ def _reset_state_for_tests() -> None:
         _inflight_force = False
 
 async def _do_fetch() -> dict | None:
-    """Один сетевой запрос + запись результата в кэш. Окно НЕ проверяет. (корень всех падений CI test_ensure_fresh_serializes_concurrent):
-    вызов идёт через getattr модуля, а не прямой ссылкой — иначе тестовый
-    monkeypatch.setattr(w, "fetch_real_weather",...) не перехватывается и
-    мок молчит (на CI это выглядело как «окно не выставилось»: реальный
-    запрос из sandbox тоже падал, но окно ставил настоящий слой, а проверка
-    мока не совпадала с ожиданиями). Кроме того, ЛЮБОЙ «пустой» ответ
-    (None/пустой dict) считается сбоем и выставляет anti-storm окно.
-    """
     import sys as _sys
     try:
         real = await getattr(
@@ -587,23 +469,6 @@ async def _do_fetch() -> dict | None:
     return real
 
 async def _ensure_fresh(force: bool = False) -> dict | None:
-    """Кэш реальной погоды с анти-штормом после сетевых сбоев.: успешный ответ живёт TTL (= интервал фонового обновления, 3 ч);
-    в сеть по обычному пути ходит ТОЛЬКО планировщик (background_refresh),
-    UI читает кэш. Неудача — повтор не раньше, чем через RETRY_AFTER_SEC;
-    force=True (фоновый апдейтер) игнорирует обе задержки.
-
-    Параллельные вызовы сериализуются ОДНИМ общим awaited-промисом: два
-    одновременных запроса не запускают два сетевых шторма подряд (иначе
-    второй завершался после протухания callback-query Telegram → «Bad
-    Request: query is too old»).: вместо asyncio.Lock — shared future. Причина: asyncio.Lock
-    привязан к event loop, в котором был создан. Тесты гоняются через
-    несколько asyncio.run (у каждого свой loop), и на CI при определённом
-    порядке тестов лок переживает смену loop → `await lock.acquire` на
-    мёртвом loop бросает RuntimeError → gather возвращал (None, None) →
-    падал test_ensure_fresh_serializes_concurrent_fetches. Shared future
-    создаётся ВНУТРИ активного loop под простым threading.Lock (потокобез-
-    опасная короткая секция без await) и никогда не переживает свой loop.
-    """
     global _fetch_inflight
 
     def _fresh_enough(now_m: float) -> bool:
@@ -616,17 +481,11 @@ async def _ensure_fresh(force: bool = False) -> dict | None:
         return _cache.get("info") is not None or not _storm_window_active(now_m)
 
     def _storm_window_active(now_m: float | None = None) -> bool:
-        """Anti-storm окно активно (обычный UI-путь обязан короткозамкнуться).: окно выставляется ТОЛЬКО при реальном сетевом сбое и живёт
-        RETRY_AFTER_SEC независимо от того, есть ли старый снимок; force-путь
-        (планировщик) окно игнорирует — см. _start_or_join. Часы — монотонные
-        (см. комментарий у _cache): wall-clock на CI давал clock-jump'ы.
-        """
         if now_m is None:
             now_m = _mono.monotonic()
         return now_m < _cache.get("next_try_mono", 0.0)
 
     def _start_or_join(now_m: float):
-        """Атомарно: (future, owner, storm_hit). Без await внутри секции."""
         global _fetch_inflight, _inflight_force
         loop = asyncio.get_running_loop()
         with _FETCH_GUARD:
@@ -694,12 +553,6 @@ GUST_ESCALATION_FACTOR = 2.0
 
 def classify_weather(code: int, temp_c: float, wind_kmh: float, *,
                      gust: float | None = None, snow_cm: float = 0.0) -> str:
-    """Единая классификация реальной погоды → тип эффекта.
-
-    Приоритет: экстремум (мороз/штормовой ветер с учётом ПОРЫВОВ) > гроза >
-    снег (по коду ИЛИ фактическому снегопаду — мокрый снег по летним кодам) >
-    дождь > туман > облачность > ясно. Офлайн (нет данных) — '' (эффектов нет).
-    """
     if code < 0:
         return ""
     extreme_wind = (wind_kmh >= WIND_STORM_KMH
@@ -724,7 +577,6 @@ def classify_weather(code: int, temp_c: float, wind_kmh: float, *,
     return ""
 
 def sky_label(code: int) -> tuple[str, str]:
-    """(иконка, название) состояния неба по WMO-коду 0..3 ."""
     icon = {0: "☀️", 1: "🌤️", 2: "⛅", 3: "☁️"}.get(int(code), "⛅")
     return icon, CLOUDY_LABEL.get(int(code), "Переменная облачность")
 
@@ -757,7 +609,6 @@ WALK_MODS: dict[str, dict] = {
 }
 
 def _cur_mods(real: dict | None) -> tuple[str, dict]:
-    """(тип, модификаторы) из сырого снимка реальной погоды (или ''/{}/офлайн)."""
     if not real:
         return "", {}
     wtype = classify_weather(int(real.get("code", -1)), float(real.get("temperature", 0)),
@@ -766,16 +617,10 @@ def _cur_mods(real: dict | None) -> tuple[str, dict]:
     return wtype, WALK_MODS.get(wtype, {})
 
 def walk_mods() -> dict:
-    """Модификаторы ПРОГУЛКИ по текущему типу погоды ({} — офлайн/нет данных)."""
     t_ = weather_effect().get("type", "")
     return WALK_MODS.get(t_, {})
 
 def _walk_window_hours(real: dict | None, hours: int = 3) -> list[dict]:
-    """Почасовые слоты, покрывающие ближайшие `hours` прогулки (из hourly-массива).
-
-    Берутся часы, начиная с текущего (по локальному камчатскому времени); если
-    hourly нет или время не распознано — пустой список (окно не учитывается).
-    """
     if not real:
         return []
     h = real.get("hourly") or {}
@@ -804,12 +649,6 @@ def _walk_window_hours(real: dict | None, hours: int = 3) -> list[dict]:
     return out
 
 def forecast_walk_mods(hours: int = 3) -> dict:
-    """Сводные модификаторы прогулки по прогнозу на ближайшие N часов.
-
-    Возвращает merged-dict: mult/happy_add/energy_add/stat_add/sick_pct —
-    средневзвешенные по часам; плюс 'worst'/'best' типы и 'parts' (почасово).
-    Если прогноз почасово недоступен — текущие модификаторы (как раньше).
-    """
     real = _cache.get("info")
     cur_type, cur = _cur_mods(real)
     parts = _walk_window_hours(real, hours)
@@ -835,14 +674,9 @@ def forecast_walk_mods(hours: int = 3) -> dict:
             "parts": types}
 
 async def refresh_weather() -> dict | None:
-    """Принудительно обновить кэш реальной погоды (фоновые задачи / force-путь)."""
     return await _ensure_fresh(force=True)
 
 async def walk_forecast_line() -> str:
-    """Строка-подсказка при отправке на прогулку.: сеть НЕ дёргаем — гулять можно в любую погоду, а прогноз читаем
-    из кэша, который планировщик обновляет каждые 3 ч (окно прогулки как раз
-    3 ч — данные актуальны).
-    """
     real = _cache.get("info")
     if not real or (_mono.monotonic() - _cache["ts"]) >= REFRESH_INTERVAL_SEC:
         return ""
@@ -862,19 +696,6 @@ async def walk_forecast_line() -> str:
     return line
 
 def weather_effect() -> dict:
-    """Текущий КЭШИРОВАННЫЙ эффект реальной погоды (без сети).
-
-    Типы (единая классификация classify_weather): sunny (+счастье), cloudy,
-    foggy (вялость), rainy (-счастье, риск простуды), snowy (-энергия,
-    +аппетит, риск простуды), stormy (сильный дебаф), frosty (мороз/шторм —
-    максимальный риск болезни). Пустой dict — погода неизвестна (офлайн/нет
-    кэша): никаких эффектов.
-
-    ВАЖНО : функция НЕ должна читать _decay_cache — её вызывает
-    _describe ДО того, как kamchatka_weather запишет decay-кэш; иначе
-    эффект всегда «истёк» и карточка показывала сезонную «осень», хотя
-    реальная погода была получена.
-    """
     real = _cache.get("info")
     if not real:
         return {}
@@ -914,10 +735,6 @@ def weather_effect() -> dict:
     return eff
 
 def _signed(v: float) -> str:
-    """Число со знаком: «+5» / «-3». (регрессия CI): эксперимент с типографским «−» (U+2212) в
-    пришлось откатить — он ломает поиск подстрок во всех тестах/скриптах,
-    ищущих обычный ASCII-минус («Счастье -5»). Минус везде обычный «-»;
-    смысл тот же: минус = показатель ПАДАЕТ, плюс = РАСТЁТ."""
     return f"+{v:g}" if v > 0 else f"{v:g}"
 
 PET_STATS = {
@@ -929,7 +746,6 @@ PET_STATS = {
 }
 
 def stat_name(stat_key: str) -> str:
-    """«😊 Счастье» — единое имя стата (эмодзи + название из карточки)."""
     icon, name, _ = PET_STATS[stat_key]
     return f"{icon} {name}"
 
@@ -942,18 +758,6 @@ STAT_MEANING = {
 }
 
 def tick_line(eff: dict) -> str:
-    """Единая короткая строка тика: «↳ тик погоды: 😊 Счастье -5, ⚡ Энергия -2». (просьба владельца «упрости объяснение»): раньше под каждой
-    дельтой печаталась лекция — «отнимает 3 балл(ов) из 100 за один тик
-    (ощутимо)…», «~8 раз в сутки», «за сутки набегает -24». Теперь формат
-    фиксированный и короткий; тот же самый строковый шаблон использует и
-    /weather, и карточка питомца. Имена статов — строго из PET_STATS, знак
-    всегда при числе: минус = показатель ПАДАЕТ, плюс = РАСТЁТ. Пустая
-    строка — если менять нечего (все дельты нулевые). (расшифровка ТРЕБУЕТСЯ, а не удаляется): короткая строка удобна,
-    но владелец справедливо спросил «что вообще значит настроение?» и попросил
-    везде понимать, какой показатель падает или поднимается. Поэтому сразу за
-    короткой строкой тика печатается ОДНА компактная строка-расшифровка
-    («•») — см. stat_deltas_explanation.
-    """
     parts = []
     for key in ("happy_delta", "energy_delta", "hunger_delta", "hygiene_delta"):
         d = eff.get(key)
@@ -965,9 +769,6 @@ def tick_line(eff: dict) -> str:
     return "↳ тик погоды: " + ", ".join(parts)
 
 def _plural_ru(n: int, one: str, few: str, many: str) -> str:
-    """Русская плюрализация счётных слов: 1 балл / 2-4 балла / 5+ баллов;
-    работает и с отрицательными числами (по модулю), и с «стопицатками»
-    (21 балл, 22 балла …)."""
     a = abs(int(n))
     if a % 100 in range(11, 15):
         return many
@@ -998,28 +799,9 @@ STAT_LEGEND = (
 _STAT_LINE = STAT_LEGEND
 
 def stat_deltas_explanation(eff: dict) -> list[str]:
-    """Расшифровка дельт тика  — всегда пусто.
-
-    Исторически (/) сюда была встроена строка-легенда про все
-    пять статов. По просьбе владельца она переехала в /help (см. STAT_LEGEND),
-    поэтому функция возвращает []: имена статов в строке тика («😊 Счастье
-    -5») самодостаточны, а лишняя строка только раздувала карточку. Функция
-    сохранена как стабильный API — вызывающий код (hint_block) просто ничего
-    не дописывает.
-    """
     return []
 
 def weather_window_end(pet, dt: datetime | None = None) -> datetime | None:
-    """До какого момента действует текущий погодный тик (окно 3 ч).
-
-    apply_weather_to_pet накладывает эффект один раз за 3-часовое окно и
-    пишет время наложения в settings_extra['weather_applied_at'] — от него и
-    считаем конец окна. Нет метки (эффект ещё не применялся), питомец не
-    найден или метка битая — None.: раньше UI показывал «в течение ближайших 3 ч (до HH:MM)» — если
-    до конца окна оставались минуты, «ближайших 3 ч» выглядело враньём
-    (жалоба: «на часах и так 23:30»). Теперь end — только верхняя граница
-    окна; длительность в формулировках больше не заявляется.
-    """
     extra = getattr(pet, "settings_extra", None) or {}
     last_iso = extra.get("weather_applied_at")
     if not last_iso:
@@ -1034,22 +816,11 @@ def weather_window_end(pet, dt: datetime | None = None) -> datetime | None:
     return started + timedelta(hours=3)
 
 def _hhmm(dt: datetime | None) -> str:
-    """Локальное (камчатское) время в виде «15:40» для человекочитаемых окон."""
     if dt is None:
         return "?"
     return f"{dt:%H:%M}"
 
 def _minutes_text(left_min: float) -> str:
-    """Оставшееся время — целыми минутами .
-
-    Замечание владельца: «через ~2.8 ч так же не говорят и не пишут. Упрости
-    до минут! Через 127 минут или 240». Поэтому никаких дробных часов/тильд —
-    просто «N мин» («меньше минуты», если осталось < 60 секунд).: округление ДО БЛИЖАЙШИХ 5 МИНУТ (как в прогнозе погоды):
-    171 -> 170, 179 -> 180, 17 -> 15. Точное время при этом остаётся в
-    строке («Следующий тик погоды — 15:18»), а «осталось ~170 мин» больше
-    не гуляет на минуту между прогонами тестов и рендеров.: «меньше минуты» — только для реального остатка > 0; нулевой
-    остаток (истёкшее окно) формулирует сам вызывающий код («уже сейчас»).
-    """
     m = int(max(0.0, left_min))
     if m <= 0:
         return "меньше минуты"
@@ -1059,16 +830,6 @@ def _minutes_text(left_min: float) -> str:
     return f"{m} мин"
 
 def _next_tick_info(pet, dt=None):
-    """Честная пара (точное время следующего тика | None, минуты до него | None). (просьба владельца: «приведи все и везде к единому шаблону» +
-    регрессия CI по строке времени):
-      * активное окно            → (конец окна, минуты до него);
-      * метка есть, но окно ИСТЕКЛО → (now, 0) — тик возможен УЖЕ СЕЙЧАС,
-        это будущее («сейчас») время, вранья о прошлом нет;
-      * метки нет / она битая / нет питомца → (None, None) — точное время
-        следующего тика неизвестно (его назначает планировщик), UI пишет
-        короткое честное «скоро».
-    ``dt`` — «сейчас» (для apply_weather_to_pet сразу после наложения тика).
-    """
     end = weather_window_end(pet, dt) if pet is not None else None
     now_dt = dt or local_now()
     if end is None:
@@ -1078,18 +839,6 @@ def _next_tick_info(pet, dt=None):
     return end, (end - now_dt).total_seconds() / 60.0
 
 def _tick_time_parts(pet, dt=None):
-    """Единая подпись времени следующего тика для всех мест UI .
-
-    Возвращает готовый хвост строки «⏳ Следующий тик погоды — …»:
-      * активное окно   → «02:48 (через 180 мин)»;
-      * истёкшее окно   → «уже сейчас (через 0 мин)» — тик вот-вот случится,
-        время честное (это «сейчас», не прошлое);
-      * нет метки/питомца → короткое «скоро» (точное время следующего тика
-        назначает планировщик, выдумывать его нельзя).
-    Один и тот же шаблон используют карточка, /weather, событие тика
-    (apply_weather_to_pet) и weather_window_line — чтобы владелец везде
-    видел одинаковую формулировку.
-    """
     end, left_min = _next_tick_info(pet, dt)
     if end is not None and left_min is not None:
         if left_min <= 0:
@@ -1098,13 +847,6 @@ def _tick_time_parts(pet, dt=None):
     return "скоро"
 
 def _effects_window_stamp(pet=None, window_end=None) -> str:
-    """Единая подпись времени для weather_effects_lines .
-
-    Приоритет: готовая строка/tuple → питомец (его окно) → datetime конца окна
-    (card_data передаёт weather_window_end) → «скоро». Всегда возвращает одну
-    из формулировок общего шаблона «⏳ Следующий тик погоды — …», никогда не
-    показывает прошедшее время как будущее.
-    """
     if isinstance(window_end, str):
         return window_end or "скоро"
     if pet is not None:
@@ -1126,13 +868,6 @@ def _effects_window_stamp(pet=None, window_end=None) -> str:
     return "скоро"
 
 def next_weather_tick(pet, dt: datetime | None = None) -> datetime:
-    """Время следующего погодного тика для питомца .
-
-    Тик — это момент, когда к статам может быть применён новый эффект погоды:
-    либо граница текущего 3-часового окна (метка weather_applied_at + 3 ч),
-    либо «сейчас», если метки нет / она битая / окно уже истекло. Используется
-    в UI как гарантированно future-значение: показывать в прошлом нельзя.
-    """
     end = weather_window_end(pet) if pet is not None else None
     now_dt = dt or local_now()
     if end is None or end <= now_dt:
@@ -1143,21 +878,6 @@ def weather_effects_lines(eff: dict | None = None, *, walk: bool = False,
                           forecast: dict | None = None,
                           window_end: "datetime | tuple | str | None" = None,
                           pet=None, show_legend: bool = False) -> list[str]:
-    """Человеческое описание текущих погодных эффектов для питомца .
-
-    Пассивные эффекты (тик раз в 3 ч): смена настроения/энергии и т.п., риск
-    простуды, ночной дебаф, усиление влажности, эскалация шторма.
-    Прогулочные (walk=True): множитель находок/XP, прибавки счастья/энергии,
-    шанс подрасти в силе/ловкости, риск промокнуть; при наличии `forecast` —
-    окно ближайших часов (средние значения + почасовая последовательность).
-
-    Время следующего тика (, единый шаблон везде):
-      * если передан ``pet`` — подпись считаем по его окну через
-        _tick_time_parts («HH:MM (через N мин)» / «уже сейчас (через 0 мин)»);
-      * если передан ``window_end`` datetime (card_data) — из него считаем
-        минуты до конца окна; стро/tuple — используем как готовую подпись;
-      * ни pet, ни window_end — метки нет, честное короткое «скоро».
-    """
     eff = eff if eff is not None else weather_effect()
     if not eff:
         return []
@@ -1226,13 +946,6 @@ def weather_effects_lines(eff: dict | None = None, *, walk: bool = False,
 
 def weather_hint_block(*, walk: bool = False, pet=None,
                        show_legend: bool = False) -> str:
-    """Готовый блок подсказок о погоде и её влиянии (пустая строка — офлайн).
-
-    ``pet``  — питомец, для которого рендерится блок: по его метке
-    погодного тика показываем границу действия эффектов «(до HH:MM)»
-    (: без ложного «в течение ближайших 3 ч»). Без питомца/метки —
-    дельты показываем без окна времени.
-    """
     eff = weather_effect()
     if not eff:
         return ""
@@ -1244,14 +957,6 @@ def weather_hint_block(*, walk: bool = False, pet=None,
 
 async def weather_hint_block_fresh(*, walk: bool = False, pet=None,
                                    show_legend: bool = False) -> str:
-    """Как weather_hint_block, но при ПРОТУХШЕМ кэше делает одну фоновую
-    дозагрузку с жёстким бюджетом 4 с .
-
-    Обычно не блокирует ответ вообще: планировщик обновляет кэш каждые 3 ч,
-    и здесь он свежий. Сетевой путь — только редкий случай «бот сразу после
-    старта / API лежал», и он урезан так, чтобы callback гарантированно
-    подтверждался до протухания Telegram (~10 с).
-    """
     if _cache.get("info") is not None and (_mono.monotonic() - _cache["ts"]) < _ttl():
         return weather_hint_block(walk=walk, pet=pet,
                                   show_legend=show_legend)
@@ -1262,11 +967,6 @@ async def weather_hint_block_fresh(*, walk: bool = False, pet=None,
     return weather_hint_block(walk=walk, pet=pet, show_legend=show_legend)
 
 def apply_weather_to_pet(pet, dt=None) -> str | None:
-    """Наложить эффект погоды на питомца ОДИН раз за 3-часовое окно.
-
-    Возвращает строку-событие (для вывода в чат), либо None, если окно ещё
-    не прошло или эффекта нет. Простуда НЕ наступает, если питомец уже болен.
-    """
     import random as _random
     from app.utils.local_time import now as _local_now
     eff = weather_effect()
@@ -1326,15 +1026,6 @@ def apply_weather_to_pet(pet, dt=None) -> str | None:
     return line + sick_line + window_note
 
 def weather_window_line(pet, dt=None) -> str:
-    """Понятная строка «сколько ещё действует текущий погодный тик» .: показываем фактическую границу окна и остаток — без обещания
-    целых трёх часов.: формулировка приведена к ЕДИНОМУ шаблону всех погодных строк
-    («⏳ Следующий тик погоды — HH:MM (через N мин).») — та же строка, что в
-    карточке, /weather и событии тика. Метки нет — точное время неизвестно,
-    честно пишем короткое «скоро».: окно ИСТЕКЛО — строка говорит прямо: «оно истекло, следующий
-    тик возможен уже сейчас» (регрессия CI test_hint_block_no_false_... /
-    test_window_line_honest_minutes_when_expired). Это не прошлое время —
-    «сейчас» вычисляется в момент рендера, поэтому вранья нет.
-    """
     end, left_min = _next_tick_info(pet, dt)
     if end is not None and left_min is not None:
         if left_min <= 0:
@@ -1345,22 +1036,11 @@ def weather_window_line(pet, dt=None) -> str:
     return "⏳ Следующий тик погоды — скоро."
 
 def weather_decay_mods() -> dict[str, float]:
-    """Синхронные модификаторы деградации от последней КЭШИРОВАННОЙ реальной погоды.
-
-    apply_decay — горячий синхронный путь; сеть здесь недопустим. Если реальных
-    данных ещё нет (или они протухли > TTL) — пустой dict, т.е. только сезонная
-    модель. Актуализацию кэша делает kamchatka_weather при рендере карточки.
-    """
     if (_mono.monotonic() - _decay_cache["ts"]) >= _ttl():
         return {}
     return _decay_cache["mods"]
 
 async def kamchatka_weather() -> dict:
-    """Погода для карточки питомца: real (фоновый кэш, обновление раз в 3 ч) либо сезонный фолбэк.
-
-    Возвращает dict вида, совместимый с formatting.weather_info:
-    {icon, name, note, decay: {energy,hunger,happy,hygiene}, holiday_*?}
-    """
     dt = local_now()
     hol_line = None
     from app.utils.formatting import HOLIDAYS

@@ -1,4 +1,3 @@
-"""Точка входа: логирование, регистрация роутеров, поллинг/вебхук, graceful shutdown."""
 from __future__ import annotations
 
 import asyncio
@@ -37,20 +36,6 @@ def setup_logging(level: str) -> None:
                level="DEBUG", encoding="utf-8")
 
 def _make_fsm_storage(redis_url: str):
-    """FSM-хранилище с совместимостью со старыми Redis (< 6.0).
-
-    redis-py>=5 по умолчанию шлёт команду HELLO (RESP3/протокол 3),
-    которую Memurai для Windows и старый Redis не понимают — падение
-    с ошибкой \"unknown command 'HELLO'\". Фиксим двумя уровнями:
-      1) protocol=2 (RESP2) — стандартный протокол для любого Redis >= 2.6;
-      2) graceful fallback на MemoryStorage, если Redis недоступен
-         ИЛИ несовместим (проверка PING выполняется сразу, т.к.
-         redis-py соединяется лениво и ошибки всплыли бы только при
-         первом сообщении пользователя).
-
-    ВАЖНО: RedisStorage принимает именно экземпляр Redis, а не
-    ConnectionPool (pool передаётся конструктору Redis).
-    """
     from aiogram.fsm.storage.memory import MemoryStorage
     try:
         from redis.asyncio import ConnectionPool, Redis
@@ -70,12 +55,6 @@ def _make_fsm_storage(redis_url: str):
         return MemoryStorage()
 
 async def probe_fsm_storage(storage):
-    """Активная проверка хранилища FSM (PING).
-
-    Возвращает исходное хранилище, если оно рабочее; иначе —
-    MemoryStorage с понятным предупреждением в логе. Вызывается
-    ДО старта long polling, чтобы не ловить ошибки на апдейтах.
-    """
     from aiogram.fsm.storage.base import StorageKey
     from aiogram.fsm.storage.memory import MemoryStorage
 
@@ -92,7 +71,6 @@ async def probe_fsm_storage(storage):
         return MemoryStorage()
 
 async def _column_exists(conn, table: str, column: str) -> bool:
-    """Проверка наличия колонки через inspector (кросс-СУБД, без information_schema вручную)."""
     def _check(sync_conn) -> bool:
         try:
             cols = {c["name"] for c in sa_inspect(sync_conn).get_columns(table)}
@@ -124,7 +102,6 @@ _LIGHT_COLUMNS: dict[str, list[tuple[str, str]]] = {
 }
 
 def _cs_new_ddl(dialect: str) -> str:
-    """DDL реестра подписчиков v2.0 (одна строка на человека, PK=user_id)."""
     if dialect == "postgresql":
         return """
             CREATE TABLE channel_subscribers_new (
@@ -164,16 +141,7 @@ def _cs_new_ddl(dialect: str) -> str:
 def _migrate_sqlite_transfer_v20(
     old_pk_pairs: bool, has_contact: bool, cols: set[str] | None = None
 ) -> list[str]:
-    """SQLite-перенос данных channel_subscribers → v2.0 (список SQL-запросов).
-
-    Общая для start-ап миграции и alembic-ревизии 0004 — единственный источник
-    истины, чтобы два пути миграции никогда не разъезжались. ``cols`` — набор
-    колонок старой таблицы; необязательные колонки (first_name/last_seen_at/
-    last_contact_at/chats), которых в очень старых схемах нет, подставляются
-    как NULL, чтобы перенос не падал на «no such column».
-    """
     def col(name: str, agg: str = "") -> str:
-        """Имя колонки старой таблицы (или NULL-заглушка с нужной агрегацией)."""
         if cols is not None and name not in cols:
             return "NULL" if not agg else f"{agg}(NULL)"
         return f"{agg}(o.{name})" if agg else (f"o.{name}" if old_pk_pairs else name)
@@ -220,22 +188,6 @@ def _migrate_sqlite_transfer_v20(
     ]
 
 async def _migrate_channel_subscribers_v20(engine) -> None:
-    """channel_subscribers → схема v2.0: чистый реестр членства для гейта.
-
-    В v2.0 welcome-механика (очереди pending/sent/blocked, backoff для
-    закрытых ЛС, рассылка DM) удалена целиком — бот первым не пишет никогда.
-    От старых схем остаётся только суть: одна строка на человека (PK=user_id)
-    и список чатов ``chats``, в которых подтверждено его присутствие.
-
-    Миграция идемпотентна по форме таблицы:
-      * таблица уже без колонок welcome_* (v2.0) — ничего не делаем;
-      * схема v1.6 (welcome_status/one-row-per-user) — переносим строки как
-        есть, отбрасывая welcome-колонки;
-      * схема v1.5 (PK пары user_id+chat_id) — сливаем строки одного
-        пользователя: ``chats`` — объединение чатов, ``first_seen`` — самый
-        ранний, ``ever_contacted`` — ИСТИНА, если хоть одна пара имела
-        контакт с ботом.
-    """
     from sqlalchemy import text
 
     def _table_cols(sync_conn) -> set[str]:
@@ -357,26 +309,6 @@ async def _migrate_channel_subscribers_v20(engine) -> None:
                            type(exc).__name__, str(exc)[:200])
 
 async def _backfill_subscriber_chats_v202(engine) -> None:
-    """Реестр v2.0.2: у строк со пустым ``chats`` заполняем членства из
-    источников, которые гейт обязан видеть сразу после апгрейда.
-
-    Почему это нужно (боевой лог 23:41): доступ в v2.0 доказан тремя путями —
-    Bot API getChatMember, MTProto-проба и реестр channel_subscribers. У
-    людей со «скрытым списком участников» первый путь отдаёт 'left', второй
-    может быть недоступен (PARTICIPANTS_TOO_LARGE для приватных групп). Тогда
-    всё держится на реестре — а в него миграции перенесли пустые ``chats``
-    (старые welcome-строки с chat_id=0) и не перенесли вовсе строки, которых
-    не было в старой таблице. Такой человек оказывался «в базе, но без
-    доступа».
-
-    Источники заполнения (только достоверные сигналы присутствия):
-      * собственные сообщения пользователя в отслеживаемых чатах
-        (chat_messages_log);
-      * реакции пользователя в этих же чатах (reactions_log).
-    Идемпотентно: трогает только строки с пустым списком чатов; при любой
-    ошибке (нет таблицы chat_messages_log/reactions_log и т.п.) — пропуск,
-    старт не валит.
-    """
     from sqlalchemy import text
 
     st = get_settings()
@@ -413,9 +345,6 @@ async def _backfill_subscriber_chats_v202(engine) -> None:
         import re as _re
 
         def _normalize_chats(raw) -> str:
-            """Канонический JSON-список int из любого представления: list,
-            '[-1004335857237]' (Python-репрезентация ранних миграций), битый
-            текст. Пусто => '[]'."""
             if raw is None:
                 return "[]"
             if isinstance(raw, (list, tuple)):
@@ -474,19 +403,6 @@ async def _backfill_subscriber_chats_v202(engine) -> None:
                         "сообщений/реакций для {} подписчик(ов)", fixed)
 
 async def _light_migrations(conn) -> None:
-    """Лёгкие инкрементальные миграции для колонок, появившихся после.
-
-    create_all умеет только СОЗДАвать недостающие таблицы, но не добавляет
-    колонки в уже существующие — на живой БД pets без generation/is_archived
-    новый код падал с OperationalError (1054 Unknown column на MySQL).
-
-    Реализация кросс-СУБД (MySQL/MariaDB, PostgreSQL, SQLite): сначала через
-    inspector проверяем, чего реально не хватает, затем выполняем обычный
-    ``ALTER TABLE... ADD COLUMN`` БЕЗ ``IF NOT EXISTS`` — этого синтаксиса в
-    MySQL нет (он есть только в PG/SQLite 3.35+, но и там предварительная
-    проверка делает его избыточным). Ошибки конкретной инструкции логируются
-    и не валят старт бота (best-effort; в проде — Alembic).
-    """
     from sqlalchemy import text
 
     dialect = conn.dialect.name
@@ -559,7 +475,6 @@ async def on_startup(bot: Bot) -> None:
                     type(exc).__name__)
 
 async def autosync_guard() -> None:
-    """Фоновый запасной автосинк (если on_startup пропустил запуск)."""
     with contextlib.suppress(Exception):
         from app.services.mtproto_sync import autosync_if_configured
         await autosync_if_configured()

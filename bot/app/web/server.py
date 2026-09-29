@@ -1,16 +1,3 @@
-"""Веб-оболочка TamaBot: красивый интерфейс поверх управляемого рантайма.
-
-Запуск:  python -m app.web   (из каталога bot/ или через run_gui.bat)
-
-Что даёт:
-* панель статуса (состояние, uptime, бот, планировщик, БД/Redis) с автообновлением;
-* живые логи в реальном времени (WebSocket) с фильтрами по уровню и поиском;
-* онлайн-редактор настроек.env с валидацией (сохранение → «требуется рестарт»);
-* управление: старт / стоп / рестарт бота прямо из браузера.
-
-Всё работает в одном asyncio-цикле с ботом (app.console.runtime), поэтому
-логи приходят без задержек, а запуск/остановка — graceful.
-"""
 from __future__ import annotations
 
 import asyncio
@@ -32,12 +19,6 @@ LOCALHOST_IPS = {"127.0.0.1", "::1"}
 DEFAULT_ALLOWED_IPS = "195.88.178.178,195.88.178.179,195.88.178.222"
 
 def _parse_allowed(raw: str | None) -> tuple[set[str], list]:
-    """Разбирает DASHBOARD_ALLOWED_IPS (через запятую/пробел/точку с запятой).
-
-    localhost (127.0.0.1 /::1) разрешён ВСЕГДА; если список не задан —
-    используется DEFAULT_ALLOWED_IPS. Поддержаны CIDR-сети (напр. 10.0.0.0/24).
-    Возвращает (множество одиночных IP, список сетей).
-    """
     ips: set[str] = set(LOCALHOST_IPS)
     networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
     tokens = [t for t in re.split(r"[,\s;]+", (raw or "").strip()) if t]
@@ -64,13 +45,6 @@ def _ip_allowed(ip: str, allow: tuple[set[str], list]) -> bool:
     return any(addr in net for net in networks)
 
 def _client_ip(request: Request) -> str:
-    """Реальный IP клиента.
-
-    По умолчанию берём адрес TCP-соединения (uvicorn request.client.host).
-    X-Forwarded-For / X-Real-IP принимаются во внимание ТОЛЬКО при
-    DASHBOARD_TRUST_PROXY=true (панель за собственным reverse-proxy), иначе
-    заголовок подделывается и обходит белый список.
-    """
     peer = request.client.host if request.client else ""
     peer = (peer or "").strip()
     if peer.lower().startswith("ws:") or peer.lower().startswith("tcp:"):
@@ -87,14 +61,10 @@ def _client_ip(request: Request) -> str:
     return peer
 
 def get_settings_cached():
-    """get_settings с кэшем процесса (ленивый импорт — сервер можно
-    поднимать и без полного окружения бота в тестах)."""
     from app.config import get_settings
     return get_settings()
 
 def _allowlist() -> tuple[set[str], list]:
-    """Текущий белый список (читается из настроек при каждом запросе —
-    правку DASHBOARD_ALLOWED_IPS в.env можно применить рестартом панели)."""
     try:
         raw = get_settings_cached().dashboard_allowed_ips
     except Exception:
@@ -109,14 +79,12 @@ async def ip_allowlist_middleware(request: Request, call_next):
     return await call_next(request)
 
 class LogHub:
-    """Собирает строки из UiLogHandler и рассылает подписчикам-WS."""
 
     def __init__(self) -> None:
         self.clients: set[WebSocket] = set()
         self._loop: asyncio.AbstractEventLoop | None = None
 
     def attach(self) -> None:
-        """Подключить sink loguru к hub'у (один раз при старте веб-процесса)."""
         from app.console.runtime import ui_log_handler
         self._loop = asyncio.get_running_loop()
         ui_log_handler.set_callback(self._on_line)
@@ -156,7 +124,6 @@ def _runtime():
     return runtime
 
 def _mask_db(url: str) -> str:
-    """mysql+aiomysql://user:PASS@host → user:•••@host (пароль не показываем)."""
     return re.sub(r"://([^:/@]+):[^@]+@", r"://\1:•••@", url)
 
 def _status_payload() -> dict:
@@ -297,7 +264,6 @@ def _apply_log_level(level: str) -> None:
 
 @app.post("/api/loglevel")
 async def set_log_level(body: dict) -> dict:
-    """Мгновенная смена уровня live-логов оболочки без рестарта (для отладки)."""
     lvl = str(body.get("level", "INFO")).upper()
     if lvl not in ("TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR"):
         raise HTTPException(422, f"неизвестный уровень {lvl!r}")
@@ -334,7 +300,7 @@ async def amain(host: str, port: int, autostart: bool, open_browser: bool) -> in
     import uvicorn
     from loguru import logger
 
-    from app.config import __version__, get_settings
+    from app.config import get_settings
     from app.console.runtime import runtime, setup_file_logging
 
     settings = get_settings()

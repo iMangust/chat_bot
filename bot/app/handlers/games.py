@@ -1,17 +1,6 @@
-"""Мини-игры с питомцем: угадайка, РКШ, «21» (блэкджек против питомца-дилера).
-
-UX: каждая игра — редактирование одного сообщения. Состояние игры хранится
-в FSM, а не в callback_data, чтобы нельзя было «подсмотреть» секрет через
-пересылку кнопок.
-
-Баланс: победа = svc.play(pet, won=True) → XP/счастье; характеристики влияют
-на честные условия игры (интеллект — диапазон подсказки и «выдержка» дилера
-в «21»). Победы идут в счётчик games_won для ачивки «Игумен».
-"""
 from __future__ import annotations
 
 import random
-from app.utils.local_time import now as local_now
 
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
@@ -174,11 +163,6 @@ BJ_DECK = [(r, s) for r in range(2, 11) for s in ("♠", "♥", "♦", "♣")]
 BJ_LABELS = {2: "2", 3: "3", 4: "4", 5: "5", 6: "6", 7: "7", 8: "8", 9: "9", 10: "10", 11: "Т"}
 
 def _bj_norm(cards) -> list[tuple[int, str]]:
-    """Карты из FSM (Redis/JSON round-trip) приходят как list[list].
-
-    Приводим к каноничному list[tuple(int, str)] — иначе арифметика и
-    словари меток падают на мусорных типах.
-    """
     out: list[tuple[int, str]] = []
     for c in cards or []:
         try:
@@ -188,7 +172,6 @@ def _bj_norm(cards) -> list[tuple[int, str]]:
     return out
 
 def _bj_value(cards: list[tuple[int, str]]) -> int:
-    """Очки руки: туз = 11, пока не перебор; иначе 1."""
     total = 0
     aces = 0
     for rank, _suit in _bj_norm(cards):
@@ -300,7 +283,6 @@ async def bj_stand(cb: CallbackQuery, state: FSMContext, session: AsyncSession) 
     await _bj_finish(cb, state, session, player, dealer)
 
 async def bump_games_won(session: AsyncSession, tg_id: int) -> None:
-    """Счётчик побед для ачивки games_won_10 («Игумен»)."""
     users = UserRepository(session)
     new_val = await users.bump_stat(tg_id, "games_won", 1)
     await AchievementService(session).check(tg_id, {"games_won": new_val})
