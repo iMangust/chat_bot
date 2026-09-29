@@ -15,7 +15,7 @@ from loguru import logger
 from sqlalchemy import select
 
 from app.config import get_settings
-from app.services.access import is_watched, numeric_chat_id, schedule_celebration
+from app.services.access import numeric_chat_id, schedule_celebration
 
 SUBSCRIBE_CACHE_SEC = 300
 _NEG_TTL_SEC = 15
@@ -115,11 +115,17 @@ async def verify_membership(bot, user_id: int) -> bool | None:
     negative = False
     for cid, uname in chats:
         targets: list[str] = []
-        n = numeric_chat_id(cid) if cid else None
-        if n is not None:
-            targets.append(str(n))
-        if uname and ("@" + uname.lstrip("@")) not in targets:
+        if uname:
             targets.append("@" + uname.lstrip("@"))
+        if cid:
+            raw = str(cid).lstrip("@")
+            if raw not in targets:
+                targets.append(raw)
+            n = numeric_chat_id(cid)
+            if n is not None:
+                full = f"-100{n}"
+                if full not in targets:
+                    targets.append(full)
         for target in targets:
             try:
                 member = await bot.get_chat_member(target, user_id)
@@ -143,14 +149,17 @@ async def _api_membership_verdict(bot, user_id: int):
     has_negative = False
     for cid, uname in required_chats():
         targets: list[str] = []
-        n = numeric_chat_id(cid) if cid else None
-        if n is not None:
-            full = f"-100{n}"
-            targets.append(full)
-            if is_watched(int(cid)) and full != str(cid):
-                targets.append(str(cid))
-        if uname and ("@" + uname.lstrip("@")) not in targets:
+        if uname:
             targets.append("@" + uname.lstrip("@"))
+        if cid:
+            raw = str(cid).lstrip("@")
+            if raw not in targets:
+                targets.append(raw)
+            n = numeric_chat_id(cid)
+            if n is not None:
+                full = f"-100{n}"
+                if full not in targets:
+                    targets.append(full)
         for target in targets:
             try:
                 member = await bot.get_chat_member(target, user_id)
@@ -310,25 +319,26 @@ async def is_channel_subscribed(bot, user_id: int) -> bool:
         return False
     logger.info("gate: checking subscription for {} in chats {}",
                 user_id, [c[0] or c[1] for c in chats])
-    api_error = False
     api_status: dict[str, str] = {}
     negative_api = False
     for cid, uname in chats:
         targets: list[str] = []
-        n = numeric_chat_id(cid) if cid else None
-        if n is not None:
-            full = f"-100{n}"
-            targets.append(full)
-            if is_watched(int(cid)) and full != str(cid):
-                targets.append(str(cid))
-        if uname and ("@" + uname.lstrip("@")) not in targets:
+        if uname:
             targets.append("@" + uname.lstrip("@"))
+        if cid:
+            raw = str(cid).lstrip("@")
+            if raw not in targets:
+                targets.append(raw)
+            n = numeric_chat_id(cid)
+            if n is not None:
+                full = f"-100{n}"
+                if full not in targets:
+                    targets.append(full)
         for target in targets:
             uid_key = uname or target
             try:
                 member = await bot.get_chat_member(target, user_id)
             except TelegramForbiddenError as exc:
-                api_error = True
                 api_status[target] = f"FORBIDDEN ({str(exc)[:60]})"
                 if uid_key not in _warned_no_admin:
                     logger.warning("cannot check subscription for {}: {} — fail-open",
@@ -345,7 +355,6 @@ async def is_channel_subscribed(bot, user_id: int) -> bool:
                                  "the correct -100... id into TRACKED_CHAT_IDS/CHANNEL_CHAT_ID",
                                  target)
                     continue
-                api_error = True
                 api_status[target] = f"API ERROR {type(exc).__name__}: {msg[:60]}"
                 logger.warning("subscription check failed for {} ({}): skip chat",
                                target, exc)
@@ -360,32 +369,17 @@ async def is_channel_subscribed(bot, user_id: int) -> bool:
                             user_id, member.status, target)
                 return True
             negative_api = True
-    real_api_error = any(not str(v).startswith(("CHAT NOT FOUND",))
-                         for v in api_status.values())
-    if api_error and not negative_api and real_api_error:
+    hard_errors = [t for t, v in api_status.items()
+                   if str(v).startswith(("FORBIDDEN", "API ERROR"))]
+    if hard_errors and not negative_api:
         logger.info("gate: allow {} (fail-open: API unavailable — {})",
                     user_id, api_status)
         return True
-    if not negative_api:
-        if await known_subscriber_in_db(user_id, bot):
-            logger.info("gate: allow {} — present in channel_subscribers registry "
-                        "(Bot API returned non-membership status: {})",
-                        user_id, api_status)
-            _pos_cache[user_id] = time.monotonic() + SUBSCRIBE_CACHE_SEC
-            return True
-        if api_error:
-            logger.info("gate: {} — API mixed ({}); running fallback chain",
-                        user_id, api_status)
-        else:
-            if await _mtproto_and_scan_fallback(bot, user_id, chats, api_status):
-                return True
-            _neg_cache[user_id] = time.monotonic() + _NEG_TTL_SEC
-            logger.warning(
-                "gate: DENY {} — all sources silent | Bot API: {} | registry: {} "
-                "| MTProto/live-scan: см. строки выше",
-                user_id, api_status, await _registry_row_state(user_id))
-            return False
-
+    if not chats:
+        logger.info("gate: DENY {} — no usable required chats configured ({})",
+                    user_id, api_status or "empty")
+        _neg_cache[user_id] = time.monotonic() + _NEG_TTL_SEC
+        return False
     if await _mtproto_and_scan_fallback(bot, user_id, chats, api_status):
         return True
     _neg_cache[user_id] = time.monotonic() + _NEG_TTL_SEC
