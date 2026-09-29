@@ -42,14 +42,16 @@ if errorlevel 1 (
 )
 
 if not exist .env.example (
+    copy /y "%~dp0bot\.env.example" ".env.example" >nul 2>&1
+)
+if not exist .env.example (
     > .env.example (
-        echo Set values below, then copy this file to .env
         echo BOT_TOKEN=
         echo TRACKED_CHAT_IDS=[]
         echo ADMIN_IDS=[]
         echo DATABASE_URL=mysql+aiomysql://tamabot:tamabot@127.0.0.1:3306/tamabot?charset=utf8mb4
         echo REDIS_URL=redis://127.0.0.1:6379/0
-        echo MTProto for channel subscriber sync ^(optional^):
+        echo CHANNEL_USERNAME=
         echo API_ID=
         echo API_HASH=
         echo PHONE=
