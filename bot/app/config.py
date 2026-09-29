@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from functools import lru_cache
 from pathlib import Path
 
@@ -9,6 +10,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 __version__ = "1.0.1"
 
 _ENV_ENCODINGS = ("utf-8-sig", "cp1251", "latin-1")
+
+_INLINE_COMMENT_RE = re.compile(r"\s+#.*$")
+
+def _strip_inline_comment(v: str) -> str:
+    if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
+        return v[1:-1]
+    v = _INLINE_COMMENT_RE.sub("", v).strip()
+    if v.startswith("#"):
+        return ""
+    return v
 
 def _read_env_values(path: str) -> dict[str, str]:
     raw = Path(path).read_bytes()
@@ -31,9 +42,7 @@ def _read_env_values(path: str) -> dict[str, str]:
         k = k.strip()
         if k.startswith("export "):
             k = k[len("export "):].strip()
-        v = v.strip()
-        if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
-            v = v[1:-1]
+        v = _strip_inline_comment(v.strip())
         if k:
             vals[k] = v
     return vals
@@ -80,6 +89,22 @@ _alias_short_mtproto_keys()
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=_env_files(), env_file_encoding="utf-8-sig", extra="ignore")
+
+    @classmethod
+    def settings_customise_sources(cls, settings_cls, init_settings,
+                                   env_settings, dotenv_settings,
+                                   file_secret_settings):
+        def sanitized_dotenv() -> dict[str, object]:
+            out: dict[str, object] = {}
+            for k, v in dotenv_settings().items():
+                if isinstance(v, str):
+                    v = _strip_inline_comment(v)
+                    if v == "":
+                        continue
+                out[k] = v
+            return out
+        return (init_settings, env_settings, sanitized_dotenv,
+                file_secret_settings)
 
     bot_token: str = ""
     tracked_chat_ids: list[int] = []

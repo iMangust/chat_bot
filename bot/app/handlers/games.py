@@ -199,7 +199,6 @@ async def start_blackjack(cb: CallbackQuery, state: FSMContext, session: AsyncSe
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
         return await cb.answer()
-    svc = TamagotchiService(session)
     rng = random.Random()
     deck = BJ_DECK[:]
     rng.shuffle(deck)
