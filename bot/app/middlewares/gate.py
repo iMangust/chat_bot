@@ -17,8 +17,8 @@ from sqlalchemy import select
 from app.config import get_settings
 from app.services.access import numeric_chat_id, schedule_celebration
 
-SUBSCRIBE_CACHE_SEC = 300
-_NEG_TTL_SEC = 15
+SUBSCRIBE_CACHE_SEC = 900
+_NEG_TTL_SEC = 45
 _GRANTED_KEY = "sub_granted"
 
 _pos_cache: dict[Any, float] = {}
@@ -120,12 +120,17 @@ async def verify_membership(bot, user_id: int) -> bool | None:
     st = get_settings()
     if not (st.channel_username or st.channel_chat_id or st.tracked_chat_ids):
         return True
-    chats = required_chats()
-    if not chats:
+    if not required_chats():
         return True
+    fast = await _fast_membership_check(bot, user_id)
+    if fast is True:
+        reset_subscribe_cache(user_id)
+        return True
+    if fast is False:
+        return False
     errored = False
     negative = False
-    for cid, uname in chats:
+    for cid, uname in required_chats():
         targets: list[str] = []
         if uname:
             targets.append("@" + uname.lstrip("@"))
@@ -149,6 +154,7 @@ async def verify_membership(bot, user_id: int) -> bool | None:
                 continue
             status = getattr(member, "status", "")
             if status in ("member", "administrator", "creator"):
+                reset_subscribe_cache(user_id)
                 return True
             negative = True
     if negative:
@@ -216,6 +222,31 @@ async def known_subscriber_in_db(user_id: int, bot=None) -> bool:
                         user_id)
             return False
     return await known_subscriber_in_required_chats(user_id)
+
+
+async def _fast_membership_check(bot, user_id: int) -> bool | None:
+    for cid, uname in required_chats():
+        target = ("@" + uname.lstrip("@")) if uname else (str(cid).lstrip("@") if cid else "")
+        if not target:
+            continue
+        try:
+            member = await bot.get_chat_member(target, user_id)
+        except TelegramAPIError as exc:
+            msg = str(exc)
+            if "chat not found" in msg.lower():
+                logger.warning("gate: fast check skipped {} — chat not visible to "
+                               "Bot API (fix CHANNEL_USERNAME/TRACKED_CHAT_IDS)", target)
+                continue
+            return None
+        status = getattr(member, "status", "")
+        if status in ("member", "administrator", "creator"):
+            _remember_membership(bot, user_id, cid, "bot-api")
+            logger.info("gate: allow {} (Bot API '{}' in {})", user_id, status, target)
+            return True
+        logger.info("gate: fast verdict for {}: Bot API '{}' in {} — not a member",
+                    user_id, status, target)
+        return False
+    return None
 
 async def known_subscriber_ids(user_ids: list[int] | set[int]) -> set[int]:
     wanted = {int(u) for u in user_ids if u}
@@ -331,6 +362,15 @@ async def is_channel_subscribed(bot, user_id: int) -> bool:
         return False
     logger.info("gate: checking subscription for {} in chats {}",
                 user_id, [c[0] or c[1] for c in chats])
+    fast = await _fast_membership_check(bot, user_id)
+    if fast is True:
+        if any(u for _, u in chats):
+            _pos_cache[user_id] = time.monotonic() + SUBSCRIBE_CACHE_SEC
+        _neg_cache.pop(user_id, None)
+        return True
+    if fast is False:
+        _neg_cache[user_id] = time.monotonic() + _NEG_TTL_SEC
+        return False
     api_status: dict[str, str] = {}
     negative_api = False
     for cid, uname in chats:
