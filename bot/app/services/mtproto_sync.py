@@ -113,28 +113,53 @@ async def collect_participants_by_chat() -> dict[int, set[int]]:
 async def _bot_api_confirmed_members(chat_id: int, uids: set[int]) -> set[int]:
     if not uids:
         return set()
-    try:
-        from aiogram import Bot
-
-        bot = Bot(get_settings().bot_token) if get_settings().bot_token else None
-        if bot is None:
-            return uids
-    except Exception:
+    token = get_settings().bot_token
+    if not token:
         return uids
+    from aiogram import Bot
+    from aiogram.client.session.aiohttp import AiohttpSession
     from aiogram.exceptions import TelegramAPIError
+    bot = Bot(token, session=AiohttpSession())
     out: set[int] = set()
-    for uid in uids:
+    try:
+        targets = [chat_id]
         try:
-            member = await bot.get_chat_member(chat_id, uid)
-            if str(getattr(member, "status", "") or "") in (
-                    "member", "administrator", "creator"):
+            uname = (get_settings().channel_username or "").strip().lstrip("@")
+            if uname and f"@{uname}" not in targets:
+                targets.append(f"@{uname}")
+        except Exception:
+            pass
+        for uid in uids:
+            confirmed = False
+            chat_not_found = False
+            for target in targets:
+                try:
+                    member = await bot.get_chat_member(target, uid)
+                    if str(getattr(member, "status", "") or "") in (
+                            "member", "administrator", "creator"):
+                        confirmed = True
+                        break
+                except TelegramAPIError as exc:
+                    if "chat not found" in str(exc).lower():
+                        chat_not_found = True
+                    continue
+                except Exception as exc:
+                    logger.debug("MTProto sync: Bot API verify {} in {} failed: {}",
+                                 uid, target, type(exc).__name__)
+                    continue
+            if chat_not_found and not confirmed:
+                logger.warning(
+                    "MTProto sync: chat {} not visible to the bot — "
+                    "treating all candidates as NOT members (config error)",
+                    chat_id)
+                break
+            if confirmed:
                 out.add(uid)
-        except TelegramAPIError:
-            out.add(uid)
-        except Exception as exc:
-            logger.debug("MTProto sync: Bot API verify {} in {} failed: {}",
-                         uid, chat_id, type(exc).__name__)
-            out.add(uid)
+    finally:
+        try:
+            await bot.session.close()
+        except Exception:
+            pass
     return out
 
 async def sync_subscribers(first_run: bool = False) -> dict:
