@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import contextlib
-import json
 from datetime import datetime, timedelta
 
 from sqlalchemy import Integer, func, insert, select, update
@@ -13,6 +12,7 @@ from app.db.models import (
     ChatMessageLog, NotificationSetting, Pet, PetActionLog, PetFriend,
     ReactionLog, User, UserAchievement, UserStat, utcnow,
 )
+from app.services.access import numeric_chat_id
 from app.utils.local_time import now as local_now
 
 class UserRepository:
@@ -411,7 +411,7 @@ class SubscriberRepository:
         changed = False
         cid_norm = numeric_chat_id(chat_id) if chat_id is not None else None
         if row is None:
-            if not arrived and cid_norm is not None:
+            if not contacted and (cid_norm is None or not arrived):
                 return False
             row = ChannelSubscriber(
                 user_id=uid, chats=[], first_name=first_name or "",

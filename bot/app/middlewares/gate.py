@@ -12,6 +12,8 @@ from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError
 from aiogram.types import CallbackQuery, Message, TelegramObject, User
 from loguru import logger
 
+from sqlalchemy import select
+
 from app.config import get_settings
 from app.services.access import numeric_chat_id
 
@@ -83,7 +85,8 @@ async def known_subscriber_in_required_chats(user_id: int) -> bool:
             from sqlalchemy import select
             stmt = select(ChannelSubscriber.user_id,
                           ChannelSubscriber.chats).where(
-                ChannelSubscriber.user_id == int(user_id))
+                ChannelSubscriber.user_id == int(user_id)).execution_options(
+                populate_existing=True)
             rows = (await session.execute(stmt)).all()
         for _uid, chats in rows:
             norm = {numeric_chat_id(c) for c in (chats or [])}
@@ -95,7 +98,70 @@ async def known_subscriber_in_required_chats(user_id: int) -> bool:
         logger.debug("gate db-fallback failed for {}: {}", user_id, exc)
         return False
 
-async def known_subscriber_in_db(user_id: int) -> bool:
+async def verify_membership(bot, user_id: int) -> bool | None:
+    st = get_settings()
+    if not (st.channel_username or st.channel_chat_id or st.tracked_chat_ids):
+        return True
+    chats = required_chats()
+    if not chats:
+        return True
+    errored = False
+    negative = False
+    for cid, uname in chats:
+        targets: list[str] = []
+        n = numeric_chat_id(cid) if cid else None
+        if n is not None:
+            targets.append(str(n))
+        if uname and ("@" + uname.lstrip("@")) not in targets:
+            targets.append("@" + uname.lstrip("@"))
+        for target in targets:
+            try:
+                member = await bot.get_chat_member(target, user_id)
+            except TelegramForbiddenError:
+                errored = True
+                continue
+            except TelegramAPIError:
+                errored = True
+                continue
+            status = getattr(member, "status", "")
+            if status in ("member", "administrator", "creator"):
+                return True
+            negative = True
+    if negative:
+        return False
+    if errored:
+        return None
+    return False
+
+async def _api_membership_verdict(bot, user_id: int):
+    has_negative = False
+    for cid, uname in required_chats():
+        targets: list[str] = []
+        n = numeric_chat_id(cid) if cid else None
+        if n is not None:
+            targets.append(str(n))
+        if uname and ("@" + uname.lstrip("@")) not in targets:
+            targets.append("@" + uname.lstrip("@"))
+        for target in targets:
+            try:
+                member = await bot.get_chat_member(target, user_id)
+            except TelegramForbiddenError:
+                continue
+            except TelegramAPIError:
+                continue
+            status = getattr(member, "status", "")
+            if status in ("member", "administrator", "creator"):
+                return True
+            has_negative = True
+    return False if has_negative else None
+
+async def known_subscriber_in_db(user_id: int, bot=None) -> bool:
+    if bot is not None:
+        verdict = await _api_membership_verdict(bot, user_id)
+        if verdict is False:
+            logger.info("gate: registry row for {} ignored — Bot API confirms "
+                        "not a member (stale/phantom record)", user_id)
+            return False
     return await known_subscriber_in_required_chats(user_id)
 
 async def known_subscriber_ids(user_ids: list[int] | set[int]) -> set[int]:
@@ -107,16 +173,14 @@ async def known_subscriber_ids(user_ids: list[int] | set[int]) -> set[int]:
 def _remember_membership(bot, user_id: int, cid: str, source: str) -> None:
     async def _run() -> None:
         try:
-            if source == "bot-api" and cid:
-                from app.db.repositories import SubscriberRepository
-                from app.db.session import session_factory
-                async with session_factory() as session:
-                    await SubscriberRepository(session).add_membership_sql(
-                        user_id, int(cid))
-            else:
-                from app.handlers.access import register_member
-                await register_member(user_id, int(cid) if cid else None,
-                                      real_event=True)
+            n = numeric_chat_id(cid) if cid else None
+            if n is None:
+                return
+            from app.db.repositories import SubscriberRepository
+            from app.db.session import session_factory
+            async with session_factory() as session:
+                await SubscriberRepository(session).add_membership_sql(
+                    user_id, n)
         except Exception as exc:
             logger.warning("gate: record membership {} ({}) failed: {}",
                            user_id, source, exc)
@@ -128,13 +192,29 @@ def _remember_membership(bot, user_id: int, cid: str, source: str) -> None:
         _bg_tasks.add(t := loop.create_task(_run()))
         t.add_done_callback(_bg_tasks.discard)
 
+async def clear_registry_membership(user_id: int) -> None:
+    try:
+        from app.db.models import ChannelSubscriber
+        from app.db.session import session_factory
+        async with session_factory() as session:
+            row = (await session.execute(
+                select(ChannelSubscriber).where(
+                    ChannelSubscriber.user_id == int(user_id))
+            )).scalar_one_or_none()
+            if row is not None and (row.chats or []):
+                row.chats = []
+                await session.commit()
+        reset_subscribe_cache(int(user_id))
+    except Exception as exc:
+        logger.debug("gate: clear registry for {} failed: {}", user_id, exc)
+
 async def _live_scan(bot, user_id: int) -> bool:
     try:
         from app.handlers.access import ensure_registry_fresh
         await ensure_registry_fresh(bot, user_id)
     except Exception as exc:
         logger.warning("gate: live scan fallback failed for {}: {}", user_id, exc)
-    return await known_subscriber_in_db(user_id)
+    return await known_subscriber_in_db(user_id, bot)
 
 def _fmt_target(cid: str, uname: str) -> str:
     if uname:
@@ -241,7 +321,7 @@ async def is_channel_subscribed(bot, user_id: int) -> bool:
                     user_id, api_status)
         return True
     if not negative_api:
-        if await known_subscriber_in_db(user_id):
+        if await known_subscriber_in_db(user_id, bot):
             logger.info("gate: allow {} — present in channel_subscribers registry "
                         "(Bot API returned non-membership status: {})",
                         user_id, api_status)
@@ -273,7 +353,7 @@ async def _mtproto_and_scan_fallback(bot, user_id: int,
                                      chats: list[tuple[str, str]],
                                      api_status: dict[str, str] | None = None,
                                      ) -> bool:
-    if await known_subscriber_in_db(user_id):
+    if await known_subscriber_in_db(user_id, bot):
         logger.info("gate: allow {} — not visible via Bot API (privacy?) "
                     "but present in channel_subscribers registry", user_id)
         _pos_cache[user_id] = time.monotonic() + SUBSCRIBE_CACHE_SEC
@@ -474,8 +554,18 @@ class AccessGateMiddleware(BaseMiddleware):
         if user.is_bot:
             return None
 
+        recheck = isinstance(event, CallbackQuery) and \
+            getattr(event, "data", "") == "gate:check"
         try:
             subscribed = await is_channel_subscribed(data["bot"], user.id)
+            if not subscribed and recheck:
+                verdict = await verify_membership(data["bot"], user.id)
+                if verdict is True:
+                    subscribed = True
+                elif verdict is False:
+                    await clear_registry_membership(user.id)
+                    logger.info("gate: recheck DENY {} — Bot API says not a "
+                                "member; registry membership cleared", user.id)
         except Exception as exc:
             logger.warning("subscription gate crashed for {}: {} — allow", user.id, exc)
             subscribed = True

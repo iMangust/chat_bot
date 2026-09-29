@@ -167,7 +167,6 @@ def _parse_owm_current(js: dict) -> dict | None:
     dt = js.get("dt")
     sysd = js.get("sunrise"), js.get("sunset")
     is_day = True
-    off = js.get("timezone") or 0
     try:
         if isinstance(dt, (int, float)):
             sr, ss = sysd
@@ -422,7 +421,7 @@ def _describe(temp_c: float, wind_kmh: float, code: int, feels: float | None = N
     if wtype in ("sunny", "cloudy", "overcast"):
         icon, name = sky_label(code)
         if night and code <= 1:
-            icon, name = "🌙", f"Ясная ночь" if code == 0 else "Ясно с луной"
+            icon, name = "🌙", "Ясная ночь" if code == 0 else "Ясно с луной"
     else:
         icon, name = _EFF_LABELS.get(wtype, (icon, name))
     note = f"{temp_c:+.0f}°C"
