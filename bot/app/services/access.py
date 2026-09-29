@@ -25,9 +25,12 @@ def required_chats() -> list[tuple[str, str]]:
 
 def watched_chat_ids() -> set[int]:
     ids: set[int] = set()
-    for cid, _uname in required_chats():
-        with contextlib.suppress(ValueError, TypeError):
-            ids.add(int(str(cid)))
+    for cid, uname in required_chats():
+        n = numeric_chat_id(cid) if cid else None
+        if n is not None:
+            ids.add(n)
+        elif uname:
+            ids.add(-int("100" + str(abs(hash(uname)) % 10**9)))
     return ids
 
 def is_watched(chat_id: int | None) -> bool:
@@ -48,7 +51,8 @@ def numeric_chat_id(target: str | int) -> int | None:
 async def record_membership(user_id: int, chat_id: int | str | None = None, *,
                             first_name: str = "", username: str | None = None,
                             real_event: bool = True,
-                            contacted: bool = False) -> None:
+                            contacted: bool = False,
+                            arrived: bool = True) -> None:
     cid = numeric_chat_id(chat_id) if chat_id is not None else None
     try:
         from app.db.repositories import SubscriberRepository
@@ -56,7 +60,7 @@ async def record_membership(user_id: int, chat_id: int | str | None = None, *,
         async with session_factory() as session:
             await SubscriberRepository(session).record_membership(
                 int(user_id), cid, first_name=first_name, username=username,
-                real_event=real_event, contacted=contacted)
+                real_event=real_event, contacted=contacted, arrived=arrived)
         if real_event and cid is not None:
             logger.info("access: registry {} <- chat {} ({})", user_id, cid,
                         "event" if contacted is False else "event+contact")
@@ -124,6 +128,8 @@ async def api_status_for(bot, user_id: int) -> tuple[dict[str, str], bool]:
     return statuses, errored
 
 async def mtproto_status(target: str | int, user_id: int) -> tuple[str, str]:
+    if isinstance(target, str) and target.startswith("@"):
+        target = target[1:]
     try:
         from app.services.mtproto_client import get_chat_member_status
         status = await get_chat_member_status(target, user_id)

@@ -398,7 +398,8 @@ class SubscriberRepository:
     async def record_membership(self, user_id: int, chat_id: int | None = None,
                                 first_name: str = "", username: str | None = None,
                                 real_event: bool = False,
-                                contacted: bool = False) -> bool:
+                                contacted: bool = False,
+                                arrived: bool = True) -> bool:
         from app.db.models import ChannelSubscriber
         uid = int(user_id)
         row = (await self.session.execute(
@@ -423,13 +424,18 @@ class SubscriberRepository:
         if chat_id is not None:
             chats = list(row.chats or [])
             cid = int(chat_id)
-            if cid not in chats:
+            if real_event and not arrived:
+                if cid in chats:
+                    chats.remove(cid)
+                    row.chats = chats
+                    changed = True
+            elif cid not in chats:
                 chats.append(cid)
                 row.chats = chats
                 changed = True
-                with contextlib.suppress(Exception):
-                    from app.middlewares.gate import reset_subscribe_cache
-                    reset_subscribe_cache(uid)
+            with contextlib.suppress(Exception):
+                from app.middlewares.gate import reset_subscribe_cache
+                reset_subscribe_cache(uid)
         row.last_seen_at = utcnow()
         if contacted:
             if not row.ever_contacted:

@@ -51,10 +51,11 @@ def watched_chat_ids() -> set[int]:
 
 async def register_member(user_id: int, chat_id: int | str | None = None, *,
                           first_name: str = "", username: str | None = None,
-                          real_event: bool = True, contacted: bool = False) -> None:
+                          real_event: bool = True, contacted: bool = False,
+                          arrived: bool = True) -> None:
     await access_service.record_membership(
         user_id, chat_id, first_name=first_name, username=username,
-        real_event=real_event, contacted=contacted)
+        real_event=real_event, contacted=contacted, arrived=arrived)
 
 async def remember_contact(user_id: int, *, first_name: str = "",
                            username: str | None = None) -> None:
@@ -83,7 +84,7 @@ async def handle_chat_member(update: ChatMemberUpdated, bot: Bot) -> None:
                          ChatMemberStatus.CREATOR.value)
     await register_member(user.id, update.chat.id,
                           first_name=user.first_name or "", username=user.username,
-                          real_event=True)
+                          real_event=True, arrived=arrived)
     old_status = str(getattr(getattr(update, "old_chat_member", None), "status", "") or "")
     logger.info("access: chat_member {} in {} : {} -> {}", user.id, update.chat.id,
                 old_status or "?", status + ("" if arrived else " (не член)"))

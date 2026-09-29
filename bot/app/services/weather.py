@@ -38,8 +38,8 @@ def openweather_key() -> str:
     try:
         from app.config import get_settings
         s = get_settings()
-        for attr in ("openweather_api_token", "openweather_app_id",
-                     OPENWEATHER_KEY_ENV.lower()):
+        for attr in (OPENWEATHER_KEY_ENV.lower(), "openweather_api_token",
+                     "openweather_app_id"):
             tok = str(getattr(s, attr, "") or "").strip()
             if tok:
                 return tok

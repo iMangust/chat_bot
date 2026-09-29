@@ -40,10 +40,12 @@ def required_chats() -> list[tuple[str, str]]:
             seen.add(key)
             chats.append((key, uname))
 
-    _add(str(st.channel_chat_id) if st.channel_chat_id else "",
-         st.channel_username or "")
     for cid in st.tracked_chat_ids:
         _add(str(cid))
+    _add(str(st.channel_chat_id) if st.channel_chat_id else "",
+         st.channel_username or "")
+    if st.channel_username:
+        _add("", st.channel_username)
     if not chats and (st.channel_chat_id or st.channel_username):
         chats.append((str(st.channel_chat_id or ""), st.channel_username or ""))
     return chats
@@ -139,6 +141,12 @@ async def _live_scan(bot, user_id: int) -> bool:
         logger.warning("gate: live scan fallback failed for {}: {}", user_id, exc)
     return await known_subscriber_in_db(user_id)
 
+def _fmt_target(cid: str, uname: str) -> str:
+    if uname:
+        return "@" + uname.lstrip("@")
+    return cid
+
+
 def is_subscribed_cached(user_id: int) -> bool | None:
     now = time.monotonic()
     pos = _pos_cache.get(user_id)
@@ -199,7 +207,7 @@ async def is_channel_subscribed(bot, user_id: int) -> bool:
     api_status: dict[str, str] = {}
     negative_api = False
     for cid, uname in chats:
-        target = f"@{uname}" if uname else cid
+        target = _fmt_target(cid, uname)
         uid_key = uname or cid
         try:
             member = await bot.get_chat_member(target, user_id)
@@ -219,7 +227,8 @@ async def is_channel_subscribed(bot, user_id: int) -> bool:
             continue
         api_status[target] = getattr(member, "status", "?")
         if member.status in ("member", "administrator", "creator"):
-            _pos_cache[user_id] = time.monotonic() + SUBSCRIBE_CACHE_SEC
+            if uname:
+                _pos_cache[user_id] = time.monotonic() + SUBSCRIBE_CACHE_SEC
             _neg_cache.pop(user_id, None)
             _remember_membership(bot, user_id, cid, "bot-api")
             logger.info("gate: allow {} (Bot API '{}' in {})",

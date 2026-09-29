@@ -145,6 +145,7 @@ class Settings(BaseSettings):
     weather_refresh_hours: float = 3.0
     weather_cache_minutes: int = 180
     openweather_api_token: str | None = None
+    openweather_api_key: str | None = None
     redis_socket_timeout: int = 5
 
     channel_username: str | None = None
