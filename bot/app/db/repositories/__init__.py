@@ -742,3 +742,70 @@ async def seed_merch_catalog(session: AsyncSession) -> int:
                     await repo.add_variant(p.id, s, c, price, 5)
                     count += 1
     return count
+
+class EventRepository:
+
+    def __init__(self, session: AsyncSession) -> None:
+        self.session = session
+
+    async def all(self) -> list:
+        from app.db.models import Event
+        return list((await self.session.execute(
+            select(Event).order_by(Event.date, Event.id)
+        )).scalars().all())
+
+    async def upcoming(self) -> list:
+        today = local_now().date().isoformat()
+        return [e for e in await self.all() if (e.date or "") >= today]
+
+    async def get(self, event_id: int):
+        from app.db.models import Event
+        return (await self.session.execute(
+            select(Event).where(Event.id == event_id)
+        )).scalar_one_or_none()
+
+    async def create(self, *, title: str, date: str = "", time: str = "",
+                     place: str = "", meet: str = "", description: str = "",
+                     image_url: str | None = None, url: str | None = None,
+                     icon: str = "🎪"):
+        from app.db.models import Event
+        ev = Event(title=title, date=date, time=time, place=place, meet=meet,
+                   description=description, image_url=image_url, url=url,
+                   icon=icon, going=[])
+        self.session.add(ev)
+        await self.session.flush()
+        return ev
+
+    async def update(self, event_id: int, **fields) -> bool:
+        from app.db.models import Event
+        ev = await self.get(event_id)
+        if ev is None:
+            return False
+        for k, v in fields.items():
+            if hasattr(ev, k) and v is not None:
+                setattr(ev, k, v)
+        await self.session.flush()
+        return True
+
+    async def delete(self, event_id: int) -> bool:
+        from app.db.models import Event
+        ev = await self.get(event_id)
+        if ev is None:
+            return False
+        await self.session.delete(ev)
+        return True
+
+    async def toggle_going(self, event_id: int, user_id: int) -> tuple[bool, int]:
+        ev = await self.get(event_id)
+        if ev is None:
+            return False, 0
+        going = list(ev.going or [])
+        if user_id in going:
+            going.remove(user_id)
+            joined = False
+        else:
+            going.append(user_id)
+            joined = True
+        ev.going = going
+        await self.session.flush()
+        return joined, len(going)

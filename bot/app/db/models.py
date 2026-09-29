@@ -401,3 +401,19 @@ class MerchVariant(Base):
     reserved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     sold_count: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+class Event(Base):
+    __tablename__ = "events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    title: Mapped[str] = mapped_column(String(128))
+    date: Mapped[str] = mapped_column(String(10), default="")
+    time: Mapped[str] = mapped_column(String(16), default="")
+    place: Mapped[str] = mapped_column(String(256), default="")
+    meet: Mapped[str] = mapped_column(String(256), default="")
+    description: Mapped[str] = mapped_column(Text, default="")
+    image_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    icon: Mapped[str] = mapped_column(String(16), default="🎪")
+    going: Mapped[list | None] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
