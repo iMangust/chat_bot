@@ -397,6 +397,7 @@ class MerchVariant(Base):
     color: Mapped[str] = mapped_column(String(32), default="")
     price_rub: Mapped[int] = mapped_column(Integer, default=0)
     stock: Mapped[int] = mapped_column(Integer, default=0)
+    photo_file_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
     reserved_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     reserved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     sold_count: Mapped[int] = mapped_column(Integer, default=0)

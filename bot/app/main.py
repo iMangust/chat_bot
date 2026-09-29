@@ -100,6 +100,9 @@ _LIGHT_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("sleep_started_at", "DATETIME"),
         ("walk_start_at", "DATETIME"),
     ],
+    "merch_variants": [
+        ("photo_file_id", "VARCHAR(256)"),
+    ],
 }
 
 def _cs_new_ddl(dialect: str) -> str:
@@ -431,10 +434,33 @@ async def _light_migrations(conn) -> None:
         except Exception as exc:
             logger.debug("частичный индекс {} пропущен: {}", idx_name, type(exc).__name__)
 
+async def _renumber_merch_category_codes(engine) -> None:
+    """Старые символьные коды категорий (hoodie/tshirt/bag) -> порядковые id1, id2, ..."""
+    from sqlalchemy import text as _text
+    try:
+        async with engine.begin() as conn:
+            rows = list(await conn.execute(_text(
+                "SELECT id, code FROM merch_categories ORDER BY position, id")))
+            for i, (cid, code) in enumerate(rows):
+                want = f"id{i + 1}"
+                if code == want:
+                    continue
+                taken = await conn.execute(
+                    _text("SELECT 1 FROM merch_categories WHERE code = :c AND id <> :i"),
+                    {"c": want, "i": cid})
+                if taken.first():
+                    continue
+                await conn.execute(
+                    _text("UPDATE merch_categories SET code = :c WHERE id = :i"),
+                    {"c": want, "i": cid})
+    except Exception as exc:
+        logger.debug("renumber merch category codes skipped: {}", type(exc).__name__)
+
 async def on_startup(bot: Bot) -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await _light_migrations(conn)
+    await _renumber_merch_category_codes(engine)
     await _migrate_channel_subscribers_v20(engine)
     await _backfill_subscriber_chats_v202(engine)
     async with session_factory() as session:

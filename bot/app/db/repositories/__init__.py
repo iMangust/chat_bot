@@ -732,7 +732,8 @@ async def seed_merch_catalog(session: AsyncSession) -> int:
     colors = ["Розовый", "Чёрный", "Белый", "Серый"]
     repo = MerchRepository(session)
     count = 0
-    for pos, (code, (icon, title, products)) in enumerate(catalog.items()):
+    for pos, (_seed_code, (icon, title, products)) in enumerate(catalog.items()):
+        code = f"id{pos + 1}"
         cat = await repo.add_category(code, title, icon, pos)
         for pname, price in products:
             p = await repo.add_product(cat.id, pname, f"{title} с фирменным принтом канала.",
