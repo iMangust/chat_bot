@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import Pet
 from app.db.repositories import PetRepository, UserRepository
 from app.i18n import t
-from app.keyboards.inline import (PET_PAGES, adopt_cta_kb, back_to_main,
+from app.keyboards.inline import (PET_PAGES, adopt_cta_kb,
                                    pet_history_kb, pet_hub,
                                    pet_page_count, train_menu)
 from app.utils.safe_edit import safe_edit_or_answer, answer_safe
@@ -354,7 +354,6 @@ async def pet_adopt_confirm(cb: CallbackQuery, session: AsyncSession,
     from app.handlers.start import Onboarding
     from app.keyboards.inline import species_picker
     await state.set_state(Onboarding.choosing_pet_species)
-    await state.update_data(species="cat")
     await safe_edit_or_answer(
         cb.message,
         "🐣 Прежний питомец пристроен в историю. Выбери нового:\n\n"
@@ -387,7 +386,6 @@ async def pet_adopt_screen(cb: CallbackQuery, session: AsyncSession,
         await session.commit()
         await state.clear()
         await state.set_state(Onboarding.choosing_pet_species)
-        await state.update_data(species="cat")
         from app.keyboards.inline import species_picker
         return await safe_edit_or_answer(
             cb.message,

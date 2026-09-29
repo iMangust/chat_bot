@@ -15,7 +15,7 @@ from app.db.models import Pet, PetSpecies
 from app.db.repositories import PetRepository, UserRepository
 from app.keyboards.inline import (
     MENU_PAGES, main_menu, onboard_done, species_picker,
-    start_pet_name_suggestions, welcome_start_button,
+    start_pet_name_suggestions,
 )
 from app.services.achievements import AchievementService
 from app.services.tamagotchi import SPECIES_DATA
@@ -150,9 +150,7 @@ async def cmd_start(message: Message, state: FSMContext, session: AsyncSession,
                               channel_name=_html.escape(_channel_title()),
                               channel_line=_channel_line()),
             parse_mode="HTML",
-            reply_markup=welcome_start_button(),
         )
-        return
     link = invite_link_for(user.tg_id)
     reward = get_settings().invite_reward_coins
     text = _main_menu_text(user)
@@ -212,15 +210,14 @@ async def cb_onboard_start(cb: CallbackQuery, state: FSMContext,
     user = await users.get_or_create(cb.from_user.id, cb.from_user.first_name or "",
                                      cb.from_user.username)
     if user.onboarded:
-        await safe_edit_or_answer(cb.message, "Ты уже с нами! 🎉", reply_markup=main_menu())
+        await safe_edit_or_answer(cb.message, _main_menu_text(user),
+                                  reply_markup=main_menu(link=invite_link_for(user.tg_id),
+                                                         reward=get_settings().invite_reward_coins))
         await cb.answer()
         return
-    await state.set_state(Onboarding.choosing_pet_species)
-    await safe_edit_or_answer(cb.message, 
-        "🐣 Шаг 1 из 3. Выбери питомца — у каждого свой характер и бонусы:\n\n"
-        + species_picker_text(),
-        reply_markup=species_picker(),
-    )
+    await state.clear()
+    await safe_edit_or_answer(cb.message, "Отлично! Всё уже открыто в меню ниже 👇",
+                              reply_markup=main_menu())
     await cb.answer()
 
 @router.callback_query(F.data == "onb:skip")
@@ -265,7 +262,7 @@ async def cb_species_back(cb: CallbackQuery, state: FSMContext) -> None:
     await _picker_screen(state, cb=cb)
     await cb.answer()
 
-@router.callback_query(Onboarding.choosing_pet_species, F.data.startswith("onb:species:"))
+@router.callback_query(F.data.startswith("onb:species:"))
 async def cb_pick_species(cb: CallbackQuery, state: FSMContext) -> None:
     code = cb.data.split(":")[2]
     if code not in SPECIES_DATA:

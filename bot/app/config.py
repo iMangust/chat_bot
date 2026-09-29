@@ -140,6 +140,7 @@ class Settings(BaseSettings):
     pet_warning_min_hours: int = 6
     streak_warn_threshold_sec: int = 6 * 3600
     invite_reward_coins: int = 50
+    show_invite_button: bool = True
     weather_enabled: bool = True
     weather_real_enabled: bool = True
     weather_refresh_hours: float = 3.0

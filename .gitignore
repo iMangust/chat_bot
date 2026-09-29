@@ -1,9 +1,6 @@
+# Python compiled files
 __pycache__/
 *.pyc
-*.pyo
+
+# Environment variables
 .env
-*.session
-logs/
-venv/
-.venv/
-*.log

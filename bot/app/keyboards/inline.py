@@ -48,7 +48,7 @@ def main_menu(link: str | None = None, reward: int = 0,
     kb_rows: list[list[InlineKeyboardButton]] = _two_per_row(buttons)
     kb_rows.append(_page_nav("menu", page, len(MENU_PAGES), title))
     invite_label = f"🤝 Пригласить друга (+{reward})" if reward else "🤝 Пригласить друга"
-    if link:
+    if link and settings.show_invite_button:
         kb_rows.append([InlineKeyboardButton(text=invite_label, url=link)])
     kb_rows.append([InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main")])
     return InlineKeyboardMarkup(inline_keyboard=kb_rows)

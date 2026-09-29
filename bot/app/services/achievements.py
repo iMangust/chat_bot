@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -72,8 +71,8 @@ ACHIEVEMENTS: list[AchievementDef] = [
     AchievementDef("night_owl", "Сова", "Написать сообщение в 3–5 ночи", "🦉",
                    AchievementCategory.secret, ConditionType.messages_total, 1, 100, 30,
                    is_hidden=True, rarity=AchievementRarity.epic),
-    AchievementDef("first_steps", "Первый шаг", "Пройти онбординг", "🐣",
-                   AchievementCategory.secret, ConditionType.messages_total, 1, 25, 10,
+    AchievementDef("first_steps", "Первый шаг", "Завести питомца", "🐣",
+                   AchievementCategory.secret, ConditionType.pet_created, 1, 25, 10,
                    is_hidden=True),
     AchievementDef("walk_friend", "Новые знакомства", "Завести друга-питомца на прогулке", "💞",
                    AchievementCategory.secret, ConditionType.pet_walks, 1, 80, 25,
@@ -100,6 +99,26 @@ async def seed_achievements(session: AsyncSession) -> int:
             reward_coins=a.reward_coins, is_hidden=a.is_hidden, rarity=a.rarity,
         ))
         created += 1
+    updated = 0
+    for a in ACHIEVEMENTS:
+        row = (await session.execute(
+            select(Achievement).where(Achievement.code == a.code)
+        )).scalar_one_or_none()
+        changed = False
+        if row is not None and row.description != a.description:
+            row.description = a.description
+            changed = True
+        if row is not None and str(row.condition_type) != str(a.condition_type):
+            row.condition_type = a.condition_type
+            changed = True
+        if row is not None and row.title != a.title:
+            row.title = a.title
+            changed = True
+        if changed:
+            updated += 1
+    if updated:
+        await session.flush()
+        logger.info("synced {} achievement descriptions", updated)
     if created:
         await session.flush()
         logger.info("seeded {} achievements", created)

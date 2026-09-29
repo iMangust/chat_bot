@@ -143,6 +143,7 @@ class AchievementRarity(str, enum.Enum):
     legendary = "legendary"
 
 class ConditionType(str, enum.Enum):
+    pet_created = "pet_created"
     messages_total = "messages_total"
     messages_day = "messages_day"
     streak_days = "streak_days"
