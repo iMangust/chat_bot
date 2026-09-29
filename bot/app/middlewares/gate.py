@@ -15,7 +15,7 @@ from loguru import logger
 from sqlalchemy import select
 
 from app.config import get_settings
-from app.services.access import numeric_chat_id
+from app.services.access import numeric_chat_id, schedule_celebration
 
 SUBSCRIBE_CACHE_SEC = 300
 _NEG_TTL_SEC = 15
@@ -556,6 +556,7 @@ class AccessGateMiddleware(BaseMiddleware):
 
         recheck = isinstance(event, CallbackQuery) and \
             getattr(event, "data", "") == "gate:check"
+        was_locked = is_subscribed_cached(user.id) is False
         try:
             subscribed = await is_channel_subscribed(data["bot"], user.id)
             if not subscribed and recheck:
@@ -569,6 +570,9 @@ class AccessGateMiddleware(BaseMiddleware):
         except Exception as exc:
             logger.warning("subscription gate crashed for {}: {} — allow", user.id, exc)
             subscribed = True
+
+        if subscribed and (was_locked or recheck):
+            schedule_celebration(data["bot"], user.id, user.first_name or "")
 
         text = getattr(event, "text", None) or ""
         bot_name = await _resolve_bot_username(data["bot"]) \

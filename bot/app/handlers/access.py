@@ -32,7 +32,7 @@ class AccessEventsMiddleware(BaseMiddleware):
                 await handle_chat_member(event, data["bot"])
             elif isinstance(event, Message):
                 if event.new_chat_members:
-                    await handle_new_chat_members(event)
+                    await handle_new_chat_members(event, data["bot"])
                 elif _is_private_start(event):
                     u = event.from_user
                     await access_service.remember_contact(
@@ -55,10 +55,12 @@ def is_watched(chat_id: int | None) -> bool:
 async def register_member(user_id: int, chat_id: int | str | None = None, *,
                           first_name: str = "", username: str | None = None,
                           real_event: bool = True, contacted: bool = False,
-                          arrived: bool = True) -> None:
+                          arrived: bool = True, bot=None) -> None:
     await access_service.record_membership(
         user_id, chat_id, first_name=first_name, username=username,
         real_event=real_event, contacted=contacted, arrived=arrived)
+    if bot is not None and arrived:
+        access_service.schedule_celebration(bot, user_id, first_name)
 
 async def remember_contact(user_id: int, *, first_name: str = "",
                            username: str | None = None) -> None:
@@ -85,10 +87,11 @@ async def handle_chat_member(update: ChatMemberUpdated, bot: Bot) -> None:
     arrived = status in (ChatMemberStatus.MEMBER.value,
                          ChatMemberStatus.ADMINISTRATOR.value,
                          ChatMemberStatus.CREATOR.value)
+    was = str(getattr(getattr(update, "old_chat_member", None), "status", "") or "")
+    old_status = was
     await register_member(user.id, update.chat.id,
                           first_name=user.first_name or "", username=user.username,
-                          real_event=True, arrived=arrived)
-    old_status = str(getattr(getattr(update, "old_chat_member", None), "status", "") or "")
+                          real_event=True, arrived=arrived, bot=bot)
     logger.info("access: chat_member {} in {} : {} -> {}", user.id, update.chat.id,
                 old_status or "?", status + ("" if arrived else " (не член)"))
 
@@ -97,7 +100,7 @@ async def _chat_member_handler(update: ChatMemberUpdated, bot: Bot) -> None:
     await handle_chat_member(update, bot)
 
 @router.message(F.chat.type.in_({"group", "supergroup", "channel"}) & F.new_chat_members)
-async def handle_new_chat_members(message: Message) -> None:
+async def handle_new_chat_members(message: Message, bot: Bot | None = None) -> None:
     if not access_service.is_watched(message.chat.id):
         return
     for member in message.new_chat_members or []:
@@ -105,7 +108,8 @@ async def handle_new_chat_members(message: Message) -> None:
             continue
         await register_member(member.id, message.chat.id,
                               first_name=member.first_name or "",
-                              username=member.username, real_event=True)
+                              username=member.username, real_event=True,
+                              bot=bot)
 
 @router.message(Command("subscribers"))
 async def cmd_subscribers(message: Message, session: AsyncSession) -> None:

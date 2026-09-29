@@ -1,11 +1,65 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
+import time
 from typing import Iterable
 
 from loguru import logger
 
 from app.config import get_settings
+
+_celebrated: dict[int, float] = {}
+_CELEBRATE_COOLDOWN_SEC = 3 * 3600
+_celebrate_tasks: set[asyncio.Task] = set()
+
+def _celebrate_throttled(user_id: int) -> bool:
+    now = time.monotonic()
+    last = _celebrated.get(int(user_id))
+    if last is not None and now - last < _CELEBRATE_COOLDOWN_SEC:
+        return True
+    _celebrated[int(user_id)] = now
+    return False
+
+async def celebrate_subscription(bot, user_id: int, first_name: str = "") -> None:
+    if _celebrate_throttled(user_id):
+        return
+    st = get_settings()
+    uname = (st.channel_username or "").lstrip("@").strip()
+    link = f"https://t.me/{uname}" if uname else None
+    reward_xp, reward_coins = 50, 20
+    try:
+        from app.db.repositories import UserRepository
+        from app.db.session import session_factory
+        async with session_factory() as session:
+            await UserRepository(session).add_xp_coins(user_id, reward_xp, reward_coins)
+            await session.commit()
+    except Exception as exc:
+        logger.warning("celebrate: reward grant failed for {}: {}", user_id,
+                       type(exc).__name__)
+    text = (f"🎉 Добро пожаловать{', ' + first_name if first_name else ''}!\n\n"
+            f"Подписка на канал подтверждена ✅\n"
+            f"Начисляем бонус за вступление: <b>+{reward_xp} XP</b> и "
+            f"<b>+{reward_coins} монет</b> 🪙\n\n")
+    if link:
+        text += f"Там свежие новости и анонсы: {link}\n\n"
+    text += "Нажми «Начать», чтобы завести питомца 👇"
+    kb = None
+    with contextlib.suppress(Exception):
+        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+        kb = InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="▶️ Начать", callback_data="onb:start")]])
+    try:
+        await bot.send_message(user_id, text, parse_mode="HTML", reply_markup=kb)
+        logger.info("celebrate: welcome DM sent to {}", user_id)
+    except Exception as exc:
+        logger.debug("celebrate: send to {} failed: {}", user_id, type(exc).__name__)
+
+def schedule_celebration(bot, user_id: int, first_name: str = "") -> None:
+    task = asyncio.get_running_loop().create_task(
+        celebrate_subscription(bot, user_id, first_name))
+    _celebrate_tasks.add(task)
+    task.add_done_callback(_celebrate_tasks.discard)
 
 def required_chats() -> list[tuple[str, str]]:
     st = get_settings()
