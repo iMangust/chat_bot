@@ -77,6 +77,7 @@ class User(Base):
     last_active_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     onboarded: Mapped[bool] = mapped_column(Boolean, default=False)
+    welcome_shown: Mapped[bool] = mapped_column(Boolean, default=False)
     pet_name: Mapped[str | None] = mapped_column(String(64))
     is_banned: Mapped[bool] = mapped_column(Boolean, default=False)
     referrer_id: Mapped[int | None] = mapped_column(BigInteger, default=None)

@@ -103,6 +103,9 @@ _LIGHT_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "merch_variants": [
         ("photo_file_id", "VARCHAR(256)"),
     ],
+    "users": [
+        ("welcome_shown", "BOOLEAN NOT NULL DEFAULT 0"),
+    ],
 }
 
 def _cs_new_ddl(dialect: str) -> str:

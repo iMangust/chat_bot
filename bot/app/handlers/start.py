@@ -165,13 +165,15 @@ async def cmd_start(message: Message, state: FSMContext, session: AsyncSession,
                 f"+{get_settings().invite_reward_coins} 🪙, как только ты напишешь первое сообщение в чате.",
                 parse_mode="HTML",
             )
-    if not user.onboarded:
+    if not user.welcome_shown:
         await message.answer(
             WELCOME_DM.format(name=_html.escape(user.first_name or "друг"),
                               channel_name=_html.escape(_channel_title()),
                               channel_line=_channel_line()),
             parse_mode="HTML",
         )
+        user.welcome_shown = True
+        await session.commit()
     link = invite_link_for(user.tg_id)
     reward = get_settings().invite_reward_coins
     text = _main_menu_text(user)
