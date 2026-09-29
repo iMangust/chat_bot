@@ -83,7 +83,7 @@ async def pick_opponent(session: AsyncSession, pet: Pet) -> Pet | None:
     """Соперник: живой (не спит), уровень +-3, не сам питомец.
 
     Случайность — на стороне Python (random.choice по пулу из 10): кросс-СУБД
-    «ORDER BY RAND()/random()» в SQLAlchemy без компиляторов даёт разные имена
+    «ORDER BY RAND/random» в SQLAlchemy без компиляторов даёт разные имена
     функций в sqlite/Postgres, а выборка равных по уровню всё равно маленькая.
     """
     lo, hi = max(1, pet.level - 3), pet.level + 3

@@ -216,7 +216,7 @@ class ActivityRepository:
                            since: datetime | None = None) -> "dict[str, int]":
         """Сообщения по дням (для графика в карточке профиля).
 
-        Возвращает {'2026-09-19': 12, ...}; пустые дни отсутствуют — рисовальщик
+        Возвращает {'2026-09-19': 12,...}; пустые дни отсутствуют — рисовальщик
         сам достраивает нули. Даты нормализуются к UTC-полудню, чтобы bucket
         был стабильным на SQLite (TEXT) и Postgres (timestamptz).
         """
@@ -243,7 +243,7 @@ class ActivityRepository:
 
     async def media_breakdown(self, tg_id: int,
                               since: datetime | None = None) -> dict[str, int]:
-        """Разбивка засчитанных сообщений по типам (v1.4.7).
+        """Разбивка засчитанных сообщений по типам .
 
         Ключи: text / photo / video / audio(голос+музыка) / voice / video_note
         (кружок) / sticker / animation / document / poll / other; отдельно —
@@ -444,7 +444,7 @@ class SubscriberRepository:
     Правила:
       * одна строка на пользователя; членство в чатах — список chats (JSON);
       * все сигналы (события chat_member/new_chat_members, MTProto-сканы,
-        сообщение автора в чате, /start) идут через record_membership();
+        сообщение автора в чате, /start) идут через record_membership;
       * real_event=True — достоверный сигнал присутствия; косвенные контакты
         (/start, текст в чате) тоже полезны: they обновляют last_seen_at и
         флаги взаимодействия, но право доступа всё равно доказывает либо
@@ -574,9 +574,7 @@ class SubscriberRepository:
         return {"total": total, "contacted": contacted}
 
     async def get(self, user_id: int, chat_id: int | None = None):
-        """Строка подписчика (chat_id принимается для совместимости вызовов).
-
-        v1.6.1: перечитываем через SELECT, а не session.get(): при
+        """Строка подписчика (chat_id принимается для совместимости вызовов).: перечитываем через SELECT, а не session.get: при
         expire_on_commit=False identity-map иначе отдаёт stale-кэш — строку
         могли изменить UPDATE'ом из другого места репозитория (chats),
         и «обработчик перезаписал чат» выглядел бы так, будто событие lost.

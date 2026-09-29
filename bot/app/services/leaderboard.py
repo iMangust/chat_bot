@@ -56,7 +56,7 @@ async def top_reactions(session: AsyncSession, since: datetime | None,
 
 async def top_reactions_given(session: AsyncSession, since: datetime | None,
                               limit: int = 10) -> list[tuple[User, int]]:
-    """Топ по ПОСТАВЛЕННЫМ реакциям (v1.4.7, номинация «Самый эмоциональный»)."""
+    """Топ по ПОСТАВЛЕННЫМ реакциям (, номинация «Самый эмоциональный»)."""
     if since is None:
         rows = list((await session.execute(
             select(User).order_by(User.reactions_given.desc()).limit(limit)
@@ -71,7 +71,7 @@ async def top_reactions_given(session: AsyncSession, since: datetime | None,
 
 async def top_karma(session: AsyncSession, since: datetime | None,
                     limit: int = 10) -> list[tuple[User, int]]:
-    """«Добрый» топ (v1.4.7): забота об общении — ответы + упоминания."""
+    """«Добрый» топ : забота об общении — ответы + упоминания."""
     cond = [ChatMessageLog.is_counted.is_(True)]
     if since is not None:
         cond.append(ChatMessageLog.created_at >= since)
@@ -85,7 +85,7 @@ async def top_karma(session: AsyncSession, since: datetime | None,
 
 async def top_emotional(session: AsyncSession, since: datetime | None,
                         limit: int = 10) -> list[tuple[User, int]]:
-    """«Самый эмоциональный» (v1.4.7): сумма поставленных + полученных реакций."""
+    """«Самый эмоциональный» : сумма поставленных + полученных реакций."""
     given = await top_reactions_given(session, since, 50)
     received = dict(await top_reactions(session, since, 50))
     total: dict[int, tuple[User, int]] = {}
@@ -99,7 +99,7 @@ async def top_emotional(session: AsyncSession, since: datetime | None,
 
 async def overall_top(session: AsyncSession, since: datetime | None,
                       limit: int = 10) -> list[tuple[User, float, dict[str, int]]]:
-    """Усреднённый топ (v1.4.7): сумма мест по всем номинациям, меньше — лучше.
+    """Усреднённый топ : сумма мест по всем номинациям, меньше — лучше.
 
     Возвращает [(user, avg_place, {section: place})]; в расчёт берутся только
     участники хотя бы одного локального топа (остальные не ранжированы).

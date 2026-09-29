@@ -8,7 +8,7 @@
      а эмодзи заменяем ASCII-маркерами ([!], [i]) — никаких □;
   3) если вообще ничего не найдено — встроенный Unicode-шрифт Pillow.
 
-Рендер чистый (данные -> bytes): все источники собираются в card_data.collect().
+Рендер чистый (данные -> bytes): все источники собираются в card_data.collect.
 Кэширование версии — Redis/mem (get_or_render_card).
 """
 from __future__ import annotations
@@ -93,7 +93,7 @@ def clean(text: str) -> str:
     return _ALLOWED_RE.sub("", text).strip()
 
 class ProfileCardRenderer:
-    """Чистая функция рисования: пакет данных из card_data.collect() -> PNG bytes."""
+    """Чистая функция рисования: пакет данных из card_data.collect -> PNG bytes."""
 
     def render(self, data: dict) -> bytes:
         probe = Image.new("RGB", (W, 5000), BG_TOP)

@@ -5,7 +5,7 @@
 
 ВАЖНО про TTL: redis-py>=5 принимает только int или datetime.timedelta
 (строки вызывают DataError "ex must be datetime.timedelta or int").
-Все вызывающие места нормализуют ttl через _norm_ttl().
+Все вызывающие места нормализуют ttl через _norm_ttl.
 """
 from __future__ import annotations
 

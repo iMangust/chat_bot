@@ -1,4 +1,4 @@
-"""Универсальная постраничная inline-клавиатура (UX v1.4.9).
+"""Универсальная постраничная inline-клавиатура (UX).
 
 Единый стандарт для всех экранов с большим числом кнопок:
 * до ``PAGE_SIZE`` (6) содержательных кнопок на страницу;
@@ -23,7 +23,7 @@ def _button_width(btn: InlineKeyboardButton) -> int:
     return visual
 
 def _two_per_row(buttons: list[InlineKeyboardButton]) -> list[list[InlineKeyboardButton]]:
-    """Раскладывает кнопки рядами ровно по две (стандарт навигации v1.5.3+)."""
+    """Раскладывает кнопки рядами ровно по две (стандарт навигации+)."""
     return [list(buttons[i:i + 2]) for i in range(0, len(buttons), 2)]
 
 def _chunk(rows: list[list[InlineKeyboardButton]], size: int) -> list[list[list[InlineKeyboardButton]]]:
@@ -48,7 +48,7 @@ def paged_pages(buttons: list[InlineKeyboardButton],
     Экраны (shop/inv), которые сами режут список товаров на страницы, обязаны
     использовать ЭТУ же функцию: иначе текст показывает N страниц, а кнопки
     paged_keyboard режет по-своему, ◀️/▶️ уходят в clamp — и листание ломается
-    (баг v1.5.24: «стр. 1/4, перейти нельзя»).
+    (баг: «стр. 1/4, перейти нельзя»).
     """
     def _is_service(btn: InlineKeyboardButton | None) -> bool:
         if btn is None:

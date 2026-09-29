@@ -327,7 +327,7 @@ class ChannelSubscriber(Base):
         отдаёт как left/restricted из-за приватности);
       * живой скан участников из гейта при первом обращении человека.
 
-    Все источники ведут в SubscriberRepository.record_membership().
+    Все источники ведут в SubscriberRepository.record_membership.
     chats (JSON) — список чатов, где подтверждено членство: достоверный
     сигнал присутствия для гейта доступа (см. middlewares/gate.py).
     """

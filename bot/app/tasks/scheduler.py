@@ -294,13 +294,13 @@ async def scan_channel_members(bot: Bot) -> None:
         await release_lock("channel_scan")
 
 async def mtproto_delta_sync(bot: Bot | None = None) -> None:
-    """v1.5.12 (фикс v1.5.15): периодическая MTProto-дельта (полный Telegram API).
+    """ (фикс): периодическая MTProto-дельта (полный Telegram API).
 
     Bot API не отдаёт список участников канала — Telethon закрывает этот
     пробел: раз в MTPROTO_SYNC_MINUTES тянем участников обязательных чатов
     и добавляем только «свежих» (id больше максимального известного).
     Задача создаётся только если MTProto настроен; ошибки не валят бота.
-    ВАЖНО: aiogram 3.x НЕ имеет Bot.get_current() — бот передаётся планировщиком
+    ВАЖНО: aiogram 3.x НЕ имеет Bot.get_current — бот передаётся планировщиком
     (как args=[bot]); fallback на dispatch-контекст оставлен для совместимости.
 
     v2.0: приветствий больше нет — сканы только пополняют реестр доступа
@@ -337,7 +337,7 @@ async def mtproto_delta_sync(bot: Bot | None = None) -> None:
         await release_lock("mtproto_sync")
 
 async def weather_updater(bot: Bot) -> None:
-    """v1.5.37: фоновое обновление кэша реальной погоды (OpenWeather).
+    """: фоновое обновление кэша реальной погоды (OpenWeather).
 
     Погода больше НЕ парсится при рендере карточек/кнопок: эта задача
     сама ходит в API (при старте и далее каждые WEATHER_REFRESH_HOURS,

@@ -191,7 +191,7 @@ class ActivityService:
         is_reply: bool = False,
         mentions_count: int = 0,
     ) -> ChatMessageLog | None:
-        """Записать сообщение в чат-лог БЕЗ начисления XP (v1.5.19).
+        """Записать сообщение в чат-лог БЕЗ начисления XP .
 
         Нужно для событий, которые Bot API не отдаёт боту, но видит
         MTProto-аккаунт: посты канала (бот не получает published-сообщения
@@ -325,9 +325,7 @@ class ActivityService:
         return counters
 
     async def personal_stats(self, tg_id: int) -> dict:
-        """Данные для /stats и карточки профиля.
-
-        v1.4.7: добавлена разбивка по типам сообщений (breakdown) — статистика
+        """Данные для /stats и карточки профиля.: добавлена разбивка по типам сообщений (breakdown) — статистика
         теперь различает текст/фото/стикеры/голос/кружки/reply/упоминания.
         """
         now = local_now()

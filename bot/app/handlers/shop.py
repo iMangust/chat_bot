@@ -139,12 +139,12 @@ def shop_keyboard(items: list[Item], user_coins: int) -> "InlineKeyboardBuilder 
 async def shop_screen(cb: CallbackQuery, session: AsyncSession,
                       page: int | None = None) -> None:
     """Экран магазина. page — явный номер страницы (используется после
-    покупки: cb.data менять нельзя — объект frozen, v1.5.18).
+    покупки: cb.data менять нельзя — объект frozen,).
 
     Листание: ◀️/▶️ генерируются как ``shop:page:<n>`` (абсолютный индекс),
     но старые инстансы сообщений могли содержать ``shop:back`` / ``shop:next``
     (относительные) — они обрабатываются здесь же, иначе клик по ним не имеет
-    обработчика и кнопка «не работает» (жалоба пользователя v1.5.48)."""
+    обработчика и кнопка «не работает» (жалоба пользователя)."""
     set_pet_page(cb.message.chat.id, 1)
     users = UserRepository(session)
     user = await users.get(cb.from_user.id)

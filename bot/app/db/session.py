@@ -33,7 +33,7 @@ class DbMiddleware:
     """Aiogram-мидлвар: кладёт активную сессию БД в data['session'].
 
     Использование в хендлере:
-        async def handler(message: Message, session: AsyncSession): ...
+        async def handler(message: Message, session: AsyncSession):...
     """
 
     async def __call__(self, handler, event, data):

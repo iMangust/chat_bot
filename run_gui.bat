@@ -1,43 +1,39 @@
 @echo off
-rem ============================================================
-rem  TamaBot - веб-панель управления (современный интерфейс).
-rem  Бот стартует автоматически, браузер открывается сам.
-rem  Логи, настройки (.env) и управление запуском/остановкой -
-rem  прямо в браузере. Закройте это окно или нажмите Ctrl+C,
-rem  чтобы остановить бота и панель.
-rem ============================================================
-chcp 1251 >nul
-title TamaBot - веб-панель
+chcp 65001 >nul
+title TamaBot - РџР°РЅРµР»СЊ СѓРїСЂР°РІР»РµРЅРёСЏ
+setlocal EnableExtensions
 cd /d "%~dp0bot"
 
 if not exist .env (
     echo.
-    echo  [!] Не найден файл .env
-    echo  Скопируйте .env.example в .env и заполните BOT_TOKEN и DATABASE_URL,
-    echo  либо запустите сначала install.bat.
+    echo  [!] РќРµ РЅР°Р№РґРµРЅ С„Р°Р№Р» bot\.env
+    echo      РЎРЅР°С‡Р°Р»Р° Р·Р°РїСѓСЃС‚РёС‚Рµ install.bat ^(РѕРЅ СЃРѕР·РґР°СЃС‚ .env^),
+    echo      Р·Р°РїРѕР»РЅРёС‚Рµ BOT_TOKEN Рё DATABASE_URL, Р·Р°С‚РµРј РїРѕРІС‚РѕСЂРёС‚Рµ Р·Р°РїСѓСЃРє.
     echo.
     pause
     exit /b 1
 )
 
-set PYTHONUTF8=1
-set PYTHONIOENCODING=utf-8
+set "PYTHONUTF8=1"
+set "PYTHONIOENCODING=utf-8"
+
 if exist venv\Scripts\python.exe (
-    set PY=venv\Scripts\python.exe
+    set "PY=venv\Scripts\python.exe"
 ) else (
-    set PY=python
+    set "PY=python"
 )
 
-%PY% -m app.web
-set EXITCODE=%ERRORLEVEL%
+"%PY%" -m app.web
+set "EXITCODE=%ERRORLEVEL%"
 
 if not "%EXITCODE%"=="0" (
-    title TamaBot - ошибка %EXITCODE%
+    title TamaBot - РћС€РёР±РєР° %EXITCODE%
     echo.
-    echo  [!] Панель завершилась с кодом %EXITCODE%. Подробности: bot\logs\
-    echo      (частая причина: не установлены зависимости веб-оболочки -
-    echo       выполните install.bat повторно или "pip install fastapi uvicorn websockets")
+    echo  [!] Р‘РѕС‚ Р·Р°РІРµСЂС€РёР»СЃСЏ СЃ РєРѕРґРѕРј %EXITCODE%. РџРѕРґСЂРѕР±РЅРѕСЃС‚Рё: bot\logs\
+    echo      Р•СЃР»Рё РЅРµ РЅР°Р№РґРµРЅС‹ РјРѕРґСѓР»Рё fastapi/uvicorn/websockets -
+    echo      РїРµСЂРµСѓСЃС‚Р°РЅРѕРІРёС‚Рµ Р·Р°РІРёСЃРёРјРѕСЃС‚Рё С‡РµСЂРµР· install.bat
     echo.
     pause
 )
+endlocal
 exit /b %EXITCODE%

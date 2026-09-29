@@ -35,7 +35,7 @@ router = Router(name="tamagotchi")
 _aware_dt = _aware
 
 class AdoptConfirm(StatesGroup):
-    """Двухшаговое подтверждение «усыновить нового» (v1.5.22).
+    """Двухшаговое подтверждение «усыновить нового» .
 
     Раньше контекст жил в модульном dict (_ADOPT_CTX): текли память без TTL,
     терялся при рестарте и ломался при нескольких воркерах. FSM-стейт хранится
@@ -325,7 +325,7 @@ async def pet_page_screen(cb: CallbackQuery, session: AsyncSession) -> None:
 
 @router.callback_query(F.data == "pet:revive")
 async def act_revive(cb: CallbackQuery, session: AsyncSession) -> None:
-    """💖 Реанимация (v1.4.7): платная, цена растёт 200→400→600, максимум 3 раза.
+    """💖 Реанимация : платная, цена растёт 200→400→600, максимум 3 раза.
     Новичку без монет первая реанимация — бесплатно (one-shot), чтобы смерть
     на первой неделе не убивала мотивацию."""
     svc = TamagotchiService(session)
@@ -436,7 +436,7 @@ def _species_picker_text() -> str:
 
 @router.callback_query(F.data == "pet:history")
 async def pet_history_screen(cb: CallbackQuery, session: AsyncSession) -> None:
-    """📜 Экран истории питомцев (v1.4.7): все архивные поколения владельца."""
+    """📜 Экран истории питомцев : все архивные поколения владельца."""
     svc = TamagotchiService(session)
     pets = await svc.history(session, cb.from_user.id)
     current = await _get_pet(session, cb.from_user.id)
@@ -633,7 +633,7 @@ async def act_walk(cb: CallbackQuery, session: AsyncSession) -> None:
 
 @router.callback_query(F.data == "pet:end_walk")
 async def act_end_walk(cb: CallbackQuery, session: AsyncSession) -> None:
-    """v1.5.71: досрочно вернуть питомца с прогулки (как «⏰ Разбудить» для сна).
+    """: досрочно вернуть питомца с прогулки (как «⏰ Разбудить» для сна).
 
     Начисляется только то, что реально успело накопиться за прошедшее время;
     полный расчёт награды — если срок уже истёк, но результат не собран.

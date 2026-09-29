@@ -1,45 +1,73 @@
 @echo off
-rem ============================================================
-rem  TamaBot - первичная установка: Python-venv + зависимости.
-rem  Запустить один раз после копирования проекта на сервер.
-rem  Требуется установленный Python 3.11+ (в PATH как "py").
-rem ============================================================
-chcp 1251 >nul
-title TamaBot - установка
+chcp 65001 >nul
+title TamaBot - РЈСЃС‚Р°РЅРѕРІРєР°
+setlocal EnableExtensions
 cd /d "%~dp0bot"
 
-echo  [*] Проверка Python...
-py -3 --version >nul 2>&1
-if errorlevel 1 (
-    echo  [ОШИБКА] Python не найден. Установите Python 3.11+ с python.org
-    echo           (обязательно включите "Add to PATH" при установке).
+echo.
+echo  [*] РџСЂРѕРІРµСЂРєР° Python...
+set "PY="
+py -3 --version >nul 2>&1 && set "PY=py -3"
+if not defined PY python --version >nul 2>&1 && set "PY=python"
+if not defined PY (
+    echo  [!] Python РЅРµ РЅР°Р№РґРµРЅ. РЈСЃС‚Р°РЅРѕРІРёС‚Рµ Python 3.11+ СЃ python.org
+    echo      Рё РѕР±СЏР·Р°С‚РµР»СЊРЅРѕ РѕС‚РјРµС‚СЊС‚Рµ "Add Python to PATH".
     pause
     exit /b 1
 )
+%PY% --version
 
 if not exist venv (
-    echo  [*] Создание виртуального окружения venv...
-    py -3 -m venv venv || (echo  [ОШИБКА] venv не создан & pause & exit /b 1)
+    echo  [*] РЎРѕР·РґР°РЅРёРµ РІРёСЂС‚СѓР°Р»СЊРЅРѕРіРѕ РѕРєСЂСѓР¶РµРЅРёСЏ venv...
+    %PY% -m venv venv
+    if errorlevel 1 (
+        echo  [!] РќРµ СѓРґР°Р»РѕСЃСЊ СЃРѕР·РґР°С‚СЊ venv.
+        pause
+        exit /b 1
+    )
 )
 
-echo  [*] Установка зависимостей (первый запуск - 2-5 минут)...
-venv\Scripts\python.exe -m pip install --upgrade pip >nul
-venv\Scripts\python.exe -m pip install -r requirements.txt
+set "VENV_PY=venv\Scripts\python.exe"
+
+echo  [*] РћР±РЅРѕРІР»РµРЅРёРµ pip...
+"%VENV_PY%" -m pip install --upgrade pip
+
+echo  [*] РЈСЃС‚Р°РЅРѕРІРєР° Р·Р°РІРёСЃРёРјРѕСЃС‚РµР№ РёР· requirements.txt (РјРѕР¶РµС‚ Р·Р°РЅСЏС‚СЊ 2-5 РјРёРЅСѓС‚)...
+"%VENV_PY%" -m pip install -r requirements.txt
 if errorlevel 1 (
-    echo  [ОШИБКА] pip install завершился с ошибкой - проверьте интернет/антивирус.
+    echo  [!] РћС€РёР±РєР° СѓСЃС‚Р°РЅРѕРІРєРё Р·Р°РІРёСЃРёРјРѕСЃС‚РµР№. РџСЂРѕРІРµСЂСЊС‚Рµ РїРѕРґРєР»СЋС‡РµРЅРёРµ Рє РёРЅС‚РµСЂРЅРµС‚Сѓ
+    echo      Рё РїРѕРІС‚РѕСЂРёС‚Рµ Р·Р°РїСѓСЃРє install.bat
     pause
     exit /b 1
+)
+
+if not exist .env.example (
+    > .env.example (
+        echo # РЎРєРѕРїРёСЂСѓР№С‚Рµ СЌС‚РѕС‚ С„Р°Р№Р» РІ .env Рё Р·Р°РїРѕР»РЅРёС‚Рµ Р·РЅР°С‡РµРЅРёСЏ
+        echo BOT_TOKEN=
+        echo TRACKED_CHAT_IDS=[]
+        echo ADMIN_IDS=[]
+        echo DATABASE_URL=mysql+aiomysql://tamabot:tamabot@127.0.0.1:3306/tamabot?charset=utf8mb4
+        echo REDIS_URL=redis://127.0.0.1:6379/0
+        echo # MTProto РґР»СЏ СЃРёРЅС…СЂРѕРЅРёР·Р°С†РёРё РїРѕРґРїРёСЃС‡РёРєРѕРІ РєР°РЅР°Р»Р° ^(РЅРµРѕР±СЏР·Р°С‚РµР»СЊРЅРѕ^):
+        echo API_ID=
+        echo API_HASH=
+        echo PHONE=
+    )
 )
 
 if not exist .env (
     copy .env.example .env >nul
-    echo  [*] Создан .env из примера - ЗАПОЛНИТЕ его перед запуском:
-    echo      BOT_TOKEN, DATABASE_URL, TRACKED_CHAT_IDS, ADMIN_IDS
-    notepad .env
+    echo  [*] РЎРѕР·РґР°РЅ bot\.env - Р·Р°РїРѕР»РЅРёС‚Рµ BOT_TOKEN, DATABASE_URL,
+    echo      TRACKED_CHAT_IDS, ADMIN_IDS ^(РѕС‚РєСЂРѕРµС‚СЃСЏ РІ Р‘Р»РѕРєРЅРѕС‚Рµ^).
+    start "" notepad .env
 )
 
 echo.
-echo  [OK] Установка завершена.
-echo     Дальше: отредактируйте bot\.env и запустите run.bat
+echo  [OK] РЈСЃС‚Р°РЅРѕРІРєР° Р·Р°РІРµСЂС€РµРЅР° СѓСЃРїРµС€РЅРѕ.
+echo      Р—Р°РїСѓСЃРє РїР°РЅРµР»Рё СѓРїСЂР°РІР»РµРЅРёСЏ: РґРІРѕР№РЅРѕР№ РєР»РёРє РЅР° run_gui.bat
+echo      Р¤Р°Р№Р» РЅР°СЃС‚СЂРѕРµРє: bot\.env
 echo.
 pause
+endlocal
+exit /b 0

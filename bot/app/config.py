@@ -1,16 +1,10 @@
 """Конфигурация приложения.
 
-Все секреты только из окружения (.env). Никаких хардкод-токенов.
-
-v1.5.12: .env ищется по абсолютным путям (бот можно запускать из любой
+Все секреты только из окружения (.env). Никаких хардкод-токенов.:.env ищется по абсолютным путям (бот можно запускать из любой
 директории), плюс поддерживаются «короткие» имена ключей MTProto из
 .env.example (API_ID / API_HASH / PHONE) — раньше они молча игнорировались,
-и синхронизация «не происходила» при полностью раскомментированном блоке.
-
-v1.5.13: фикс падения на Windows (TypeError в dotenv: файл передавался
-объектом вместо пути) + устойчивое чтение .env.
-
-v1.5.14: фикс UnicodeDecodeError на Windows-1251/BOM: .env читается с
+и синхронизация «не происходила» при полностью раскомментированном блоке.: фикс падения на Windows (TypeError в dotenv: файл передавался
+объектом вместо пути) + устойчивое чтение.env.: фикс UnicodeDecodeError на Windows-1251/BOM:.env читается с
 автоподбором кодировки (utf-8-sig → cp1251 → latin-1); ошибки парсинга
 больше не роняют импорт конфига.
 """
@@ -27,9 +21,9 @@ __version__ = "1.0.0"
 _ENV_ENCODINGS = ("utf-8-sig", "cp1251", "latin-1")
 
 def _read_env_values(path: str) -> dict[str, str]:
-    """Прочитать пары KEY=VALUE из .env без жёсткой привязки к кодировке.
+    """Прочитать пары KEY=VALUE из.env без жёсткой привязки к кодировке.
 
-    Исторические падения на Windows (v1.5.13/1.5.14):
+    Исторические падения на Windows (/1.5.14):
       - dotenv_values(TextIOWrapper) — TypeError (новые версии принимают
         только путь/строку);
       - UTF-8-файл с кириллицей в системной cp1251 — UnicodeDecodeError.
@@ -76,12 +70,12 @@ def _env_files() -> tuple[str, ...]:
     return tuple(p for p in _ENV_CANDIDATES if Path(p).is_file()) or (".env",)
 
 def _alias_short_mtproto_keys() -> None:
-    """API_ID/API_HASH/PHONE (как в .env.example) == TELEGRAM_API_ID/.../PHONE.
+    """API_ID/API_HASH/PHONE (как в.env.example) == TELEGRAM_API_ID/.../PHONE.
 
     Pydantic читает только точные имена полей; чтобы блок вида
         API_ID=12345678
     работал без префикса, прокидываем значения в os.environ ДО создания
-    Settings (реальные переменные окружения имеют приоритет над .env, но
+    Settings (реальные переменные окружения имеют приоритет над.env, но
     если их нет — алиасы подхватятся). Ничего не логируем: ключи секретны.
     """
     vals: dict[str, str] = {}
@@ -152,7 +146,7 @@ class Settings(BaseSettings):
     weather_real_enabled: bool = True
     weather_refresh_hours: float = 3.0
     weather_cache_minutes: int = 180
-    openweather_api_token: str | None = "b5be39a6d58798eabc0280b3e9636913"
+    openweather_api_token: str | None = None
     redis_socket_timeout: int = 5
 
     channel_username: str | None = None

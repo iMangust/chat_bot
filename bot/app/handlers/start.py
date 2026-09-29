@@ -235,7 +235,7 @@ async def cb_onboard_start(cb: CallbackQuery, state: FSMContext,
 @router.callback_query(F.data == "onb:skip")
 async def cb_onboard_skip(cb: CallbackQuery, state: FSMContext,
                           session: AsyncSession) -> None:
-    """Онбординг без питомца (v1.4.7): статистика/топы работают и так.
+    """Онбординг без питомца : статистика/топы работают и так.
 
     Питомец — опция: пользователь может завести его позже кнопкой
     «🥚 Усыновить» (pet:adopt) или из пикера вида. Ачивку first_steps не
@@ -376,7 +376,7 @@ async def cb_main_menu(cb: CallbackQuery, session: AsyncSession,
 @router.callback_query(F.data.startswith("menu:page:"))
 async def cb_main_menu_page(cb: CallbackQuery, session: AsyncSession,
                             state: FSMContext) -> None:
-    """◀️/▶️ главного меню (v1.5.2): страницы «Игра» и «Профиль»."""
+    """◀️/▶️ главного меню : страницы «Игра» и «Профиль»."""
     if await state.get_state() is not None:
         await state.clear()
     try:

@@ -1,11 +1,11 @@
-"""Управляемая версия жизненного цикла бота (используется livelog / run.bat).
+"""Управляемая версия жизненного цикла бота (используется GUI-оболочкой).
 
-Бот запускается внутри asyncio-цикла событий живого лога (app/console/livelog),
+Бот запускается внутри asyncio-цикла событий GUI-оболочки (run_gui.bat),
 поэтому сигнальные обработчики не нужны, а статус/логи должны быть доступны
 вызывающему коду. Модуль предоставляет:
 
-* :class:`BotRuntime` — запуск/остановка aiogram-бота + планировщика;
-* :class:`UiLogHandler` — sink loguru, который буферизует лог-записи и
+*:class:`BotRuntime` — запуск/остановка aiogram-бота + планировщика;
+*:class:`UiLogHandler` — sink loguru, который буферизует лог-записи и
   опционально транслирует их через колбэк;
 * глобальный singleton-экземпляр runtime (для статуса и аптайма).
 """
@@ -72,7 +72,7 @@ def _detach_router(router: Dispatcher) -> None:
 
     aiogram 3.x в ``Router.parent_router`` (setter) запрещает повторное
     прикрепление: «Router is already attached to …». Без отвязки второй
-    runtime.start() (кнопка «Запустить/Перезапустить» в панели) падал именно
+    runtime.start (кнопка «Запустить/Перезапустить» в панели) падал именно
     на этом. Хендлеры при этом не дублируются: они остаются зарегистрированными
     в самих роутерах — меняем только ссылку на родителя.
     """
@@ -105,7 +105,7 @@ def _reset_router_state(dp: Dispatcher) -> None:
                             f._dispatcher = None
 
 class BotRuntime:
-    """Запуск и остановка бота по требованию (singleton — :data:`runtime`)."""
+    """Запуск и остановка бота по требованию (singleton —:data:`runtime`)."""
 
     def __init__(self) -> None:
         self.state: str = "stopped"
@@ -124,7 +124,7 @@ class BotRuntime:
         settings = get_settings()
         token = os.environ.get("TAMABOT_TOKEN_OVERRIDE") or settings.bot_token
         if not token or token == "test":
-            raise RuntimeError("BOT_TOKEN не задан — проверьте .env или запустите через run.bat")
+            raise RuntimeError("BOT_TOKEN не задан — проверьте .env или настройки GUI-оболочки")
 
         self.state = "starting"
         self.last_error = None

@@ -136,7 +136,7 @@ def _cs_new_ddl(dialect: str) -> str:
                 chats JSONB NOT NULL DEFAULT '[]',
                 ever_contacted BOOLEAN NOT NULL DEFAULT FALSE,
                 last_contact_at TIMESTAMP
-            )"""
+)"""
     if dialect in ("mysql", "mariadb"):
         return """
             CREATE TABLE channel_subscribers_new (
@@ -148,7 +148,7 @@ def _cs_new_ddl(dialect: str) -> str:
                 chats JSON NOT NULL,
                 ever_contacted TINYINT(1) NOT NULL DEFAULT 0,
                 last_contact_at DATETIME(6)
-            )"""
+)"""
     return """
         CREATE TABLE channel_subscribers_new (
             user_id BIGINT NOT NULL PRIMARY KEY,
@@ -159,7 +159,7 @@ def _cs_new_ddl(dialect: str) -> str:
             chats TEXT NOT NULL DEFAULT '[]',
             ever_contacted BOOLEAN NOT NULL DEFAULT 0,
             last_contact_at DATETIME
-        )"""
+)"""
 
 def _migrate_sqlite_transfer_v20(
     old_pk_pairs: bool, has_contact: bool, cols: set[str] | None = None
@@ -331,7 +331,7 @@ async def _migrate_channel_subscribers_v20(engine) -> None:
                 await conn.execute(text(new_ddl))
                 if old_pk_pairs:
                     chats_expr = """(
-                               SELECT COALESCE(JSON_ARRAYAGG(cc.chat_id), JSON_ARRAY())
+                               SELECT COALESCE(JSON_ARRAYAGG(cc.chat_id), JSON_ARRAY)
                                FROM (SELECT DISTINCT user_id, chat_id
                                      FROM channel_subscribers
                                      WHERE chat_id IS NOT NULL AND chat_id <> 0) cc
@@ -455,17 +455,17 @@ async def _backfill_subscriber_chats_v202(engine) -> None:
                 """INSERT OR IGNORE INTO channel_subscribers
                        (user_id, username, first_name, first_seen, last_seen_at,
                         chats, ever_contacted, last_contact_at)
-                   SELECT :uid, NULL, '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
-                          :chats, 0, NULL
+                   SELECT:uid, NULL, '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+:chats, 0, NULL
                    WHERE NOT EXISTS (SELECT 1 FROM channel_subscribers
-                                     WHERE user_id = :uid)"""),
+                                     WHERE user_id =:uid)"""),
                 {"uid": uid, "chats": _json.dumps(sorted(set(chats)))})
             fixed += res.rowcount or 0
         for uid, chats in ((u, c) for u, c in by_user.items() if u in have_by_user):
             res = await conn.execute(text(
                 """UPDATE channel_subscribers
-                   SET chats = :chats
-                   WHERE user_id = :uid
+                   SET chats =:chats
+                   WHERE user_id =:uid
                      AND (chats IS NULL OR chats = '' OR chats = '[]')"""),
                 {"uid": uid, "chats": _json.dumps(sorted(set(chats)))})
             fixed += res.rowcount or 0
@@ -474,7 +474,7 @@ async def _backfill_subscriber_chats_v202(engine) -> None:
                         "сообщений/реакций для {} подписчик(ов)", fixed)
 
 async def _light_migrations(conn) -> None:
-    """Лёгкие инкрементальные миграции для колонок, появившихся после v1.4.6.
+    """Лёгкие инкрементальные миграции для колонок, появившихся после.
 
     create_all умеет только СОЗДАвать недостающие таблицы, но не добавляет
     колонки в уже существующие — на живой БД pets без generation/is_archived
@@ -482,7 +482,7 @@ async def _light_migrations(conn) -> None:
 
     Реализация кросс-СУБД (MySQL/MariaDB, PostgreSQL, SQLite): сначала через
     inspector проверяем, чего реально не хватает, затем выполняем обычный
-    ``ALTER TABLE ... ADD COLUMN`` БЕЗ ``IF NOT EXISTS`` — этого синтаксиса в
+    ``ALTER TABLE... ADD COLUMN`` БЕЗ ``IF NOT EXISTS`` — этого синтаксиса в
     MySQL нет (он есть только в PG/SQLite 3.35+, но и там предварительная
     проверка делает его избыточным). Ошибки конкретной инструкции логируются
     и не валят старт бота (best-effort; в проде — Alembic).
