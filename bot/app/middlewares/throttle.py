@@ -20,6 +20,8 @@ class ThrottleMiddleware(BaseMiddleware):
         key = f"cb:{event.from_user.id}:{event.data}"
         ok = await set_cooldown(key, THROTTLE_SEC)
         if not ok:
+            if event.data.startswith("onb:species:"):
+                return await handler(event, data)
             await event.answer("⏳ Подожди секунду…", show_alert=False)
             return None
         return await handler(event, data)

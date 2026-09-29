@@ -18,7 +18,7 @@ from app.config import get_settings
 from app.db.models import Base
 from app.db.session import DbMiddleware, engine, session_factory
 from app.handlers import (access as access_handlers, admin, arena, errors,
-                          games, merch, shop, social,
+                          events, games, merch, shop, social,
                           start, stats, tamagotchi, tracker)
 from app.middlewares.gate import AccessGateMiddleware
 from app.middlewares.throttle import ThrottleMiddleware
@@ -511,6 +511,7 @@ async def main() -> None:
         games.router,
         shop.router,
         merch.router,
+        events.router,
         social.router,
         arena.router,
         stats.router,

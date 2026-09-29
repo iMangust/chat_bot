@@ -160,8 +160,10 @@ async def cmd_start(message: Message, state: FSMContext, session: AsyncSession,
                        parse_mode="HTML")
 
 @router.callback_query(F.data == "gate:check")
-async def cb_gate_check(cb: CallbackQuery, bot: Bot, session: AsyncSession) -> None:
+async def cb_gate_check(cb: CallbackQuery, bot: Bot, session: AsyncSession,
+                        state: FSMContext) -> None:
     reset_subscribe_cache(cb.from_user.id)
+    await state.clear()
     if not await is_channel_subscribed(bot, cb.from_user.id):
         uid = cb.from_user.id
         diag = []
@@ -249,6 +251,20 @@ def _no_pet_menu_kb():
     from app.keyboards.inline import adopt_cta_kb
     return adopt_cta_kb()
 
+async def _picker_screen(state: FSMContext, message=None, cb=None) -> None:
+    await state.set_state(Onboarding.choosing_pet_species)
+    text = ("🐣 Шаг 1 из 3. Выбери питомца — у каждого свой характер и бонусы:\n\n"
+            + species_picker_text())
+    if cb is not None:
+        await safe_edit_or_answer(cb.message, text, reply_markup=species_picker())
+    elif message is not None:
+        await message.answer(text, reply_markup=species_picker())
+
+@router.callback_query(F.data == "onb:species_back")
+async def cb_species_back(cb: CallbackQuery, state: FSMContext) -> None:
+    await _picker_screen(state, cb=cb)
+    await cb.answer()
+
 @router.callback_query(Onboarding.choosing_pet_species, F.data.startswith("onb:species:"))
 async def cb_pick_species(cb: CallbackQuery, state: FSMContext) -> None:
     code = cb.data.split(":")[2]
@@ -263,6 +279,10 @@ async def cb_pick_species(cb: CallbackQuery, state: FSMContext) -> None:
         reply_markup=start_pet_name_suggestions(PET_NAME_SUGGESTIONS),
     )
     await cb.answer()
+
+@router.message(Onboarding.choosing_pet_species, F.text & ~F.text.startswith("/"))
+async def msg_stuck_in_species(message: Message, state: FSMContext) -> None:
+    await _picker_screen(state, message=message)
 
 @router.callback_query(Onboarding.choosing_pet_name, F.data.startswith("onb:name:"))
 async def cb_pick_name(cb: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:

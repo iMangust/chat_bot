@@ -659,6 +659,9 @@ class AccessGateMiddleware(BaseMiddleware):
         try:
             subscribed = await is_channel_subscribed(data["bot"], user.id)
             if not subscribed and recheck:
+                reset_subscribe_cache(user.id)
+                subscribed = await is_channel_subscribed(data["bot"], user.id)
+            if not subscribed and recheck:
                 verdict = await verify_membership(data["bot"], user.id)
                 if verdict is True:
                     subscribed = True

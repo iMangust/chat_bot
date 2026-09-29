@@ -351,7 +351,10 @@ async def pet_adopt_confirm(cb: CallbackQuery, session: AsyncSession,
     if current and current.id == data.get("pet_id"):
         await svc.archive_pet(session, current, reason="rehomed")
         await session.commit()
+    from app.handlers.start import Onboarding
     from app.keyboards.inline import species_picker
+    await state.set_state(Onboarding.choosing_pet_species)
+    await state.update_data(species="cat")
     await safe_edit_or_answer(
         cb.message,
         "🐣 Прежний питомец пристроен в историю. Выбери нового:\n\n"
@@ -376,6 +379,15 @@ async def pet_adopt_screen(cb: CallbackQuery, session: AsyncSession,
                            state: FSMContext) -> None:
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
+        from app.handlers.start import Onboarding
+        users = UserRepository(session)
+        user = await users.get_or_create(cb.from_user.id, cb.from_user.first_name or "",
+                                         cb.from_user.username)
+        user.onboarded = True
+        await session.commit()
+        await state.clear()
+        await state.set_state(Onboarding.choosing_pet_species)
+        await state.update_data(species="cat")
         from app.keyboards.inline import species_picker
         return await safe_edit_or_answer(
             cb.message,
