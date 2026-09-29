@@ -23,7 +23,8 @@ from app.utils.formatting import progress_bar, xp_needed_for_level
 from app.utils.safe_edit import safe_edit_or_answer
 from app.config import get_settings
 from loguru import logger
-from app.middlewares.gate import channel_link, is_channel_subscribed, reset_subscribe_cache
+from app.middlewares.gate import (channel_link, gate_granted,
+                                  is_channel_subscribed, reset_subscribe_cache)
 
 router = Router(name="start")
 
@@ -109,7 +110,21 @@ private_only = F.chat.type == "private"
 
 @router.message(CommandStart(), private_only)
 async def cmd_start(message: Message, state: FSMContext, session: AsyncSession,
-                    command: CommandObject | None = None) -> None:
+                    command: CommandObject | None = None,
+                    sub_granted: bool = False) -> None:
+    if not sub_granted and not await is_channel_subscribed(
+            message.bot, message.from_user.id):
+        ch, visual = channel_link()
+        lines = ["🔒 Взаимодействие с ботом недоступно:",
+                 "ты не подписан на наш канал."]
+        if ch:
+            lines.append(f"\n📢 Подпишись ({visual}) — и возвращайся, я жду!")
+        else:
+            lines.append("\n📢 Подпишись на канал — и возвращайся, я жду!")
+        lines.append("После подписки нажми «Проверить» или отправь /start.")
+        from app.middlewares.gate import subscribe_kb
+        await message.answer("\n".join(lines), reply_markup=subscribe_kb())
+        return
     users = UserRepository(session)
     user = await users.get_or_create(
         tg_id=message.from_user.id,

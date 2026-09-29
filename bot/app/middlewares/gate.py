@@ -586,6 +586,9 @@ def _is_entry_command(message: Message, bot_username: str = "") -> bool:
         return named.lower().lstrip("@") == bot_username.lower().lstrip("@")
     return True
 
+def gate_granted(data: dict) -> bool:
+    return bool(data.get(_GRANTED_KEY))
+
 async def _resolve_bot_username(bot) -> str:
     name = getattr(bot, "username", None) or getattr(
         getattr(bot, "me", None), "username", None)
