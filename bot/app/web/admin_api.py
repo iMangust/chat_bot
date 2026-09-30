@@ -926,16 +926,24 @@ async def notification_delete(notif_id: int) -> dict:
 
 # ========================= выдача наград / призов =========================
 
+class GrantItem(BaseModel):
+    item_id: int
+    quantity: int = 1
+
+
 class GrantRewards(BaseModel):
     xp: int = 0
     coins: int = 0
-    message: str | None = None   # текст уведомления-вручения
+    items: list[GrantItem] = []   # предметы → в инвентарь активного питомца
+    message: str | None = None    # доп. текст сверху уведомления
 
 
 @router.post("/users/{tg_id}/grant", dependencies=[Depends(_tok)])
 async def grant_rewards(tg_id: int, body: GrantRewards) -> dict:
-    """Выдать пользователю XP/монеты (+ текстовое уведомление в очередь)."""
-    from app.db.models import User
+    """Выдать пользователю XP/монеты/предметы. Пользователь получает в ЛС
+    сообщение с ПЕРЕЧИСЛЕНИЕМ всего вручённого (раньше приходил только
+    общий текст без состава награды)."""
+    from app.db.models import Item, Pet, PetInventory, User
     from app.utils.formatting import apply_xp
     async with _session() as s:
         u = (await s.execute(select(User).where(User.tg_id == tg_id))
@@ -943,18 +951,52 @@ async def grant_rewards(tg_id: int, body: GrantRewards) -> dict:
         if u is None:
             raise HTTPException(404, f"пользователь {tg_id} не найден")
         new_levels: list[int] = []
+        parts: list[str] = []
         if body.xp or body.coins:
             u.level, u.xp, new_levels = apply_xp(u.level, u.xp, max(0, body.xp))
             u.coins = max(0, u.coins + body.coins)
-        text = body.message or (
-            f"🎁 Администратор выдал вам награду: +{body.xp} XP, +{body.coins} 🪙")
-        try:
-            from app.services.notifications import queue_notification
-            await queue_notification(s, tg_id, "info", text)
-        except Exception:  # уведомление — приятный бонус, не блокируем выдачу
-            pass
+        if body.xp:
+            parts.append(f"⭐ {body.xp} опыта")
+        if body.coins:
+            parts.append(f"🪙 {body.coins} монет")
+
+        granted_items: list[dict] = []
+        for gi in body.items:
+            it = (await s.execute(select(Item).where(Item.id == gi.item_id))
+                  ).scalar_one_or_none()
+            if it is None:
+                raise HTTPException(404, f"предмет {gi.item_id} не найден")
+            qty = max(1, int(gi.quantity))
+            pet = (await s.execute(
+                select(Pet).where(Pet.user_id == tg_id)
+                .order_by(Pet.is_archived, Pet.born_at.desc())
+            )).scalars().first()
+            if pet is None:
+                raise HTTPException(400,
+                    f"у пользователя нет питомца — предмет «{it.name}» выдать некуда")
+            row = (await s.execute(select(PetInventory).where(
+                PetInventory.pet_id == pet.id,
+                PetInventory.item_id == it.id))).scalar_one_or_none()
+            if row is None:
+                s.add(PetInventory(pet_id=pet.id, item_id=it.id, quantity=qty))
+            else:
+                row.quantity += qty
+            granted_items.append({"name": it.name, "icon": it.icon, "quantity": qty})
+            parts.append(f"{it.icon or '📦'} {it.name} ×{qty}")
+
+        if not parts and not (body.message or "").strip():
+            raise HTTPException(400, "нечего выдавать: укажите опыт, монеты, предметы или текст")
+
+        head = (body.message.strip() + "\n\n") if (body.message or "").strip() else ""
+        if parts:
+            text = head + "🎁 Вам начислено:\n" + "\n".join("• " + p for p in parts)
+        else:
+            text = body.message.strip()
+        from app.services.notifications import queue_notification
+        queued = await queue_notification(s, tg_id, "reward", text)
         await s.commit()
-    return {"ok": True, "level": u.level, "newLevels": new_levels}
+    return {"ok": True, "level": u.level, "newLevels": new_levels,
+            "delivered": parts, "queued": queued, "items": granted_items}
 
 
 class AchievementGrant(BaseModel):
@@ -1035,31 +1077,60 @@ class PetEdit(BaseModel):
 
 @router.post("/pets/{pet_id}/edit", dependencies=[Depends(_tok)])
 async def pet_edit(pet_id: int, body: PetEdit) -> dict:
-    from app.db.models import Pet, PetStage
+    """Изменение питомца из админ-панели.
+
+    Раньше значения молча отбрасывались (NaN из пустых полей формы и
+    неверные имена атрибутов), поэтому «изменения не сохранялись».
+    Теперь: пропуск незаполненных полей, валидные границы, корректные
+    атрибуты модели и подтверждение сохранённых значений в ответе.
+    """
+    from app.db.models import Pet, PetStage, utcnow
     async with _session() as s:
         p = (await s.execute(select(Pet).where(Pet.id == pet_id))
              ).scalar_one_or_none()
         if p is None:
             raise HTTPException(404, "питомец не найден")
-        changed = []
+        changed: dict[str, object] = {}
         data = body.model_dump(exclude_none=True)
         for key, val in data.items():
             attr = {"sleeping": "is_sleeping", "archived": "is_archived"}.get(key, key)
-            cur = getattr(p, attr)
+            if not hasattr(p, attr):
+                continue  # неизвестное поле — игнорируем явно
             if attr == "stage":
                 try:
-                    p.stage = PetStage(str(val))
+                    v = PetStage(str(val))
                 except ValueError:
                     raise HTTPException(422, f"неизвестная стадия {val!r}")
-            elif isinstance(cur, bool):
+                p.stage = v
+            elif attr == "name":
+                name = str(val).strip()[:64]
+                if not name:
+                    continue
+                p.name = name
+            elif attr in ("hunger", "happiness", "energy", "hygiene", "health"):
+                try:
+                    v = float(val)
+                except (TypeError, ValueError):
+                    raise HTTPException(422, f"поле «{key}» должно быть числом")
+                setattr(p, attr, max(0.0, min(100.0, v)))
+            elif attr in ("level", "strength", "agility", "intellect"):
+                try:
+                    v = int(float(val))
+                except (TypeError, ValueError):
+                    raise HTTPException(422, f"поле «{key}» должно быть числом")
+                setattr(p, attr, max(1, v))
+            elif attr == "xp":
+                try:
+                    v = int(float(val))
+                except (TypeError, ValueError):
+                    raise HTTPException(422, "поле «опыт» должно быть числом")
+                p.xp = max(0, v)
+            elif isinstance(getattr(p, attr), bool):
                 setattr(p, attr, bool(val))
-            elif isinstance(cur, float):
-                setattr(p, attr, float(max(0.0, min(100.0, float(val)))))
-            elif isinstance(cur, int):
-                setattr(p, attr, max(1 if attr == "level" else 0, int(val)))
             else:
-                setattr(p, attr, str(val))
-            changed.append(key)
+                setattr(p, attr, val)
+            changed[key] = getattr(p, attr).value if attr == "stage" else getattr(p, attr)
+        p.last_update = utcnow()
         await s.commit()
     return {"ok": True, "changed": changed}
 
@@ -1105,8 +1176,19 @@ async def pet_give_item(pet_id: int, body: GiveItemBody) -> dict:
             s.add(PetInventory(pet_id=pet_id, item_id=body.item_id, quantity=qty))
         else:
             row.quantity += qty
+        # уведомляем владельца с перечислением полученного приза
+        owner = (await s.execute(select(Pet.user_id).where(Pet.id == pet_id))
+                 ).scalar_one_or_none()
         await s.commit()
-    return {"ok": True, "item": it.name, "added": qty}
+    text = f"🎁 Вам выдан приз:\n• {it.icon or '📦'} {it.name} ×{qty}"
+    queued = False
+    if owner is not None:
+        from app.services.notifications import queue_notification
+        async with _session() as s2:
+            queued = await queue_notification(s2, owner, "reward", text)
+            await s2.commit()
+    return {"ok": True, "item": it.name, "added": qty,
+            "notified": queued, "text": text}
 
 
 class ItemQtyPatch(BaseModel):

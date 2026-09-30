@@ -1,27 +1,8 @@
-# Compiled/Binary files
-*.pyc
 __pycache__/
-
-# Dependency directories
+*.pyc
+*.db
+.env
 venv/
 .venv/
-
-# Editor/IDE files
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# System/Environment files
-.DS_Store
-Thumbs.db
-.env
-.env.local
-*.env.*
-
-# Logs and temp files
 *.log
-*.tmp
-# Databases
-*.db
-*.sqlite3
+__pycache__

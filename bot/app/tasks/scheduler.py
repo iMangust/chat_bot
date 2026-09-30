@@ -93,6 +93,21 @@ async def flush_notifications(bot: Bot) -> None:
             )).scalars())
             sent = 0
             for n in rows:
+                # награды из админки дублируем в последний чат пользователя —
+                # если бот заблокирован в ЛС, приз всё равно будет виден
+                chat_fallback = None
+                if n.kind == "reward":
+                    from app.db.models import ChatMessageLog, User as _U
+                    chat_fallback = (await session.execute(
+                        select(ChatMessageLog.chat_id)
+                        .where(ChatMessageLog.user_id == n.user_id)
+                        .order_by(ChatMessageLog.created_at.desc()).limit(1)
+                    )).scalar_one_or_none()
+                    uname = ""
+                    if chat_fallback:
+                        uname = (await session.execute(
+                            select(_U.first_name).where(_U.tg_id == n.user_id)
+                        )).scalar_one_or_none() or str(n.user_id)
                 try:
                     await bot.send_message(n.user_id, n.text, parse_mode="HTML")
                     n.sent = True
@@ -100,6 +115,14 @@ async def flush_notifications(bot: Bot) -> None:
                 except TelegramAPIError as exc:
                     logger.debug("notification {} to {} dropped: {}",
                                  n.id, n.user_id, str(exc)[:120])
+                    if chat_fallback:
+                        try:
+                            await bot.send_message(
+                                chat_fallback,
+                                f"🎁 <b>{esc(uname)}</b>, вам начислено:\n{n.text}",
+                                parse_mode="HTML")
+                        except TelegramAPIError:
+                            pass
                     n.sent = True
             await session.commit()
             if rows:

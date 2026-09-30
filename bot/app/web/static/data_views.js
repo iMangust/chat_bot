@@ -75,7 +75,9 @@ async function showUser(id){
     html+=`<h4>🎁 Выдать награду</h4><div class="editrow">
       <label>XP (добавить) <input type="number" id="grXp" value="100"></label>
       <label>Монеты (добавить) <input type="number" id="grCoins" value="50"></label>
-      <label style="flex:1">Сообщение <input type="text" id="grMsg" placeholder="текст уведомления (необязательно)" style="width:100%"></label>
+      <label style="flex:1">Сообщение <input type="text" id="grMsg" placeholder="текст уведомления (необязательно)" style="width:100%"></label></div>
+      <div class="editrow"><label style="flex:1">Предмет (в инвентарь питомца) <select id="grItemSel" style="width:100%"><option value="">— без предмета —</option></select></label>
+      <label>Кол-во <input type="number" id="grItemQty" value="1" min="1" style="width:70px"></label>
       <button class="btn primary" id="btnGrant" data-id="${u.tgId}">🎁 Выдать</button></div>`;
     html+=`<h4>🏅 Достижения — выдача / снятие</h4><div class="editrow">
       <label style="flex:1">Достижение <select id="achSel" style="width:100%"><option value="">загрузка…</option></select></label>
@@ -83,7 +85,7 @@ async function showUser(id){
       <button class="btn danger" id="btnAchRevoke" data-id="${u.tgId}">✖ Снять</button></div>`;
     if(d.pet){html+=`<div class="editrow"><button class="btn" id="btnOpenPet" data-pet="${d.pet.id}">🐾 Инвентарь и редактор питомца «${escapeHtml(d.pet.name)}»</button></div>`;}
     modal("Карточка пользователя",html);
-    loadAchSelect();
+    loadAchSelect();fillItemsSelect("grItemSel");
   }catch(e){toast("Ошибка: "+e.message,"err");}
 }
 async function loadPets(){
@@ -140,13 +142,17 @@ function renderPetInv(rows){
     <button class="mini" data-act="del-inv" data-pet="${window.__petCache.id}" data-id="${r.invId}">🗑</button></td></tr>`).join("")+"</table>"
     :'<div class="empty">инвентарь пуст</div>';
 }
-async function loadItemsSelect(){
+async function fillItemsSelect(selId){
   try{
-    const d=await api("/api/items");window.__itemsCache=d.items;
-    const sel=$("#giveItemSel");if(!sel)return;
-    sel.innerHTML=d.items.length?d.items.map(i=>`<option value="${i.id}">${i.icon} ${escapeHtml(i.name)} (${i.type}, 🪙${i.price})</option>`).join(""):'<option value="">нет предметов — досейте справочник (Обзор → Восстановить данные)</option>';
-  }catch(e){const sel=$("#giveItemSel");if(sel)sel.innerHTML='<option value="">ошибка загрузки предметов</option>';}
+    if(!window.__itemsCache){const d=await api("/api/items");window.__itemsCache=d.items;}
+    const sel=document.getElementById(selId);if(!sel)return;
+    const items=window.__itemsCache||[];
+    const opts=items.map(i=>`<option value="${i.id}">${i.icon} ${escapeHtml(i.name)} (${i.type}, 🪙${i.price})</option>`).join("");
+    if(selId==="grItemSel"){sel.innerHTML='<option value="">— без предмета —</option>'+(opts||'<option value="" disabled>нет предметов — досейте справочник (Обзор → Проверить справочники)</option>');}
+    else sel.innerHTML=opts||'<option value="">нет предметов — досейте справочник (Обзор → Проверить справочники)</option>';
+  }catch(e){const sel=document.getElementById(selId);if(sel)sel.innerHTML='<option value="">ошибка загрузки предметов</option>';}
 }
+async function loadItemsSelect(){await fillItemsSelect("giveItemSel");}
 async function loadAchSelect(){
   try{
     if(!window.__achDefs){const d=await api("/api/achievements?user_id="+(window.__curUserId||0));window.__achDefs=d.items;}
@@ -296,9 +302,11 @@ document.body.addEventListener("click",async e=>{
 document.body.addEventListener("click",async e=>{
   const b=e.target.closest("#btnGrant,#btnAchGrant,#btnAchRevoke,#btnSavePet,#btnGiveItem,#btnBroadcast,#notifClearSent,#notifClearAll,#btnSeed");if(!b)return;
   try{
-    if(b.id==="btnGrant"){await api(`/api/users/${b.dataset.id}/grant`,{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({xp:+$("#grXp").value||0,coins:+$("#grCoins").value||0,message:$("#grMsg").value.trim()||null})});
-      toast("Награда выдана 🎁");closeModal();loadUsers();}
+    if(b.id==="btnGrant"){const iid=+$("#grItemSel").value||0;
+      const body={xp:+$("#grXp").value||0,coins:+$("#grCoins").value||0,message:$("#grMsg").value.trim()||null};
+      if(iid)body.items=[{item_id:iid,quantity:Math.max(1,+$("#grItemQty").value||1)}];
+      const r=await api(`/api/users/${b.dataset.id}/grant`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+      toast("Выдано: "+((r.delivered&&r.delivered.length)?r.delivered.join(", "):"✔"));closeModal();loadUsers();}
     else if(b.id==="btnAchGrant"){const code=$("#achSel").value;if(!code){toast("Выберите достижение","warn");return;}
       await api(`/api/users/${b.dataset.id}/achievements`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({code})});
       toast("Достижение вручено 🏅");window.__achDefs=null;closeModal();loadUsers();}
@@ -306,14 +314,20 @@ document.body.addEventListener("click",async e=>{
       await api(`/api/users/${b.dataset.id}/achievements/revoke`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({code})});
       toast("Достижение снято");window.__achDefs=null;closeModal();loadUsers();}
     else if(b.id==="btnSavePet"){const v=id=>$(id).value;
-      const body={name:v("#peName"),level:+v("#peLevel"),xp:+v("#peXp"),stage:v("#peStage"),
-        hunger:+v("#peHunger"),happiness:+v("#peHappiness"),energy:+v("#peEnergy"),hygiene:+v("#peHygiene"),health:+v("#peHealth"),
-        strength:+v("#peStr"),agility:+v("#peAgi"),intellect:+v("#peInt"),sleeping:$("#peSleep").checked,archived:$("#peArch").checked};
-      await api("/api/pets/"+b.dataset.id+"/edit",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
-      toast("Питомец обновлён ✔");showPet(b.dataset.id);}
+      // отправляем только непустые числовые поля (пустое поле давало NaN и молча всё отбрасывалось)
+      const numv=id=>{const raw=v(id);if(raw===""||raw===null)return null;const n=+raw;return Number.isFinite(n)?n:null;};
+      const body={stage:v("#peStage"),sleeping:$("#peSleep").checked,archived:$("#peArch").checked};
+      const nm=v("#peName").trim();if(nm)body.name=nm;
+      [["level","#peLevel"],["xp","#peXp"],["hunger","#peHunger"],["happiness","#peHappiness"],
+       ["energy","#peEnergy"],["hygiene","#peHygiene"],["health","#peHealth"],
+       ["strength","#peStr"],["agility","#peAgi"],["intellect","#peInt"]].forEach(([k,id])=>{
+        const n=numv(id);if(n!==null)body[k]=n;});
+      const r=await api("/api/pets/"+b.dataset.id+"/edit",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+      const cnt=Object.keys(r.changed||{}).length;
+      toast(cnt?("Питомец обновлён ✔ (полей: "+cnt+")"):"Изменений не найдено");showPet(b.dataset.id);}
     else if(b.id==="btnGiveItem"){const iid=+$("#giveItemSel").value;if(!iid){toast("Выберите предмет","warn");return;}
-      await api("/api/pets/"+b.dataset.id+"/give_item",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({item_id:iid,quantity:Math.max(1,+$("#giveQty").value||1)})});
-      toast("Предмет выдан 🎁");showPet(b.dataset.id);}
+      const r=await api("/api/pets/"+b.dataset.id+"/give_item",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({item_id:iid,quantity:Math.max(1,+$("#giveQty").value||1)})});
+      toast(r.notified?("Предмет выдан 🎁 "+(r.text||"").replace(/\n/g," ")):"Выдан, но пользователь не уведомлён (нет доступа к ЛС)");showPet(b.dataset.id);}
     else if(b.id==="btnBroadcast"){broadcastModal();}
     else if(b.id==="notifClearSent"||b.id==="notifClearAll"){
       const sentOnly=b.id==="notifClearSent";

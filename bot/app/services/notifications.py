@@ -13,7 +13,10 @@ from app.utils.local_time import now as local_now
 async def queue_notification(session: AsyncSession, user_id: int, kind: str,
                              text: str, send_at: datetime | None = None) -> bool:
     ns = await session.get(NotificationSetting, user_id)
-    if ns is not None:
+    if ns is not None and kind not in ("reward", "info", "event", "warning"):
+        # настройки пользователя глушат только рутинные напоминания;
+        # явные админские выдачи (reward) и рассылки (info/event/warning)
+        # доставляются всегда — иначе пользователь не узнает о призе
         flag = {
             "pet": ns.pet_reminders,
             "streak": ns.streak_reminders,
@@ -23,6 +26,7 @@ async def queue_notification(session: AsyncSession, user_id: int, kind: str,
         }.get(kind)
         if flag is False:
             return False
+    # явные админские выдачи/рассылки доставляем всегда, независимо от настроек
     session.add(NotificationQueue(user_id=user_id, kind=kind, text=text,
                                   send_at=send_at or local_now()))
     await session.flush()

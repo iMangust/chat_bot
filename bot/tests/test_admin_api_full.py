@@ -154,12 +154,35 @@ async def main():
         r = await cl.post(f"/api/pets/{pet_id}/give_item", headers=H,
                           json={"item_id": items[0]["id"], "quantity": 2})
         assert r.status_code == 200, r.text
+        gr = r.json()
+        assert gr.get("notified") is True and "×2" in gr.get("text", ""), gr
         inv = (await cl.get(f"/api/pets/{pet_id}/inventory", headers=H)).json()["items"]
         assert len(inv) == 1 and inv[0]["quantity"] == 2, inv
+        # грант с предметами идёт активному питомцу (у пользователя 1 питомец — uid)
+        p2_id = pet_id
+        r = await cl.post(f"/api/users/{uid}/grant", headers=H,
+                          json={"coins": 5, "items": [{"item_id": items[0]["id"],
+                                                       "quantity": 3}]})
+        assert r.status_code == 200, r.text
+        g2 = r.json()
+        assert any("монет" in d for d in g2["delivered"]) and \
+            any(g2["items"][0]["name"] in d for d in g2["delivered"]), g2
+        inv2 = (await cl.get(f"/api/pets/{p2_id}/inventory", headers=H)).json()["items"]
+        assert inv2 and inv2[0]["quantity"] == 5, inv2  # 2 (give_item) + 3 (grant)
+        notifs = (await cl.get("/api/notifications", headers=H)).json()["items"]
+        assert any("Вам начислено" in n["text"] and items[0]["name"] in n["text"]
+                   for n in notifs), [n["text"][:60] for n in notifs[:4]]
         r = await cl.post(f"/api/pets/{pet_id}/edit", headers=H,
                           json={"name": "Тестик-II", "level": 5, "hunger": 55.0})
         assert r.status_code == 200, r.text
+        ed = r.json()
+        assert ed["changed"]["level"] == 5 and ed["changed"]["name"] == "Тестик-II", ed
+        # пустые/некорректные значения не должны молча ломать сохранение
+        r = await cl.post(f"/api/pets/{pet_id}/edit", headers=H,
+                          json={"xp": 42, "stage": "baby", "sleeping": True})
+        assert r.status_code == 200, r.text
         pd = (await cl.get(f"/api/pets/{pet_id}", headers=H)).json()
+        assert pd["pet"]["xp"] == 42 and pd["pet"]["stage"] == "baby", pd["pet"]
         assert pd["pet"]["name"] == "Тестик-II" and pd["pet"]["level"] == 5, pd["pet"]
         r = await cl.post(f"/api/pets/{pet_id}/inventory/{inv[0]['invId']}", headers=H,
                           json={"quantity": 0})
