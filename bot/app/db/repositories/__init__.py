@@ -210,8 +210,9 @@ class ActivityRepository:
 
     async def daily_counts(self, tg_id: int, days: int = 7,
                            since: datetime | None = None) -> "dict[str, int]":
-        from datetime import timezone as _tz
-        now = since or datetime.now(_tz.utc)
+        # created_at хранится в локальном (камчатском) времени, поэтому день
+        # режем func.date() напрямую — без сдвига на UTC.
+        now = since or local_now()
         start = now - timedelta(days=days - 1)
         day_expr = func.date(ChatMessageLog.created_at)
         stmt = (

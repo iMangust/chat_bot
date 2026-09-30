@@ -10,14 +10,21 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 def utcnow() -> datetime:
-    """Момент в UTC — колонки created_at/last_seen хранятся в UTC.
+    """Текущий момент для колонок created_at/last_seen.
 
-    (Раньше функция называлась utcnow, но возвращала камчатское время —
-    из-за этого «вчерашний день» в стрик-проверке сдвигался на 12 часов.)
+    Хранилище: локальное серверное время (Камчатка, см. TZ_OFFSET_HOURS).
+    Раньше писалось в UTC — из-за этого «в базе сейчас 09:52, хотя на
+    часах 21:52». Теперь время записи и отображения совпадают; границы
+    SQL-сравнений (db_bound) подаются без сдвига. Для возврата к UTC-
+    хранению достаточно поменять эту функцию и db_bound (см. utils/local_time).
     """
-    from app.utils.local_time import now as _unused  # noqa: F401 (совместимость)
-    from app.utils.local_time import utc_now
-    return utc_now()
+    from app.utils.local_time import now
+    return now()
+
+
+def utcnow_naive() -> datetime:
+    """Naive-момент в том же виде, в каком он лежит в колонках DateTime."""
+    return utcnow().replace(tzinfo=None)
 
 def localnow() -> datetime:
     """Камчатское время для пользовательских расчётов (день/сутки, стрики)."""

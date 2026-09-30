@@ -1,19 +1,26 @@
 #!/usr/bin/env python3
-"""Однократная миграция: исторические метки времени в БД хранились в
-КАМЧАТСКОМ локальном времени. После унификации все колонки пишутся в UTC.
+"""ОДНОКРАТНАЯ (легаси) миграция меток времени: UTC -> локальное камчатское.
 
-Скрипт сдвигает значения, записанные ДО перехода на UTC, на -TZ_OFFSET_HOURS
-(по умолчанию 12 ч), чтобы они корректно сравнивались с новыми UTC-границами
-в репозиториях (db_bound). Значения, уже записанные в UTC (после деплоя),
-не трогаются: сдвигается только всё, что строго раньше момента переключения
---cutover — времени публикации новой версии, измеренного по-старому
-(камчатское локальное время).
+ВНИМАНИЕ: текущая версия приложения хранит created_at/last_seen в ЛОКАЛЬНОМ
+(камчатском) времени — «в базе то же, что на часах». Скрипт нужен только для
+баз, созданных промежуточными сборками эпохи UTC-хранения (коммиты с
+«унификация Камчатка <-> UTC»): он сдвигает метки, записанные в период
+UTC-хранения, на +TZ_OFFSET_HOURS (по умолчанию 12 ч).
+
+--direction to_local  (по умолчанию): сдвиг +hours (эпоха UTC -> локальное).
+--direction to_utc    : обратный ход (-hours), если снова решите хранить UTC.
+
+Сдвигается только всё строго раньше --cutover — момента перехода между
+режимами хранения, измеренного в ЛОКАЛЬНОМ времени; более новые записи
+(уже локальные) не трогаются.
 
 Использование (из каталога bot/):
     python scripts/migrate_tz_to_utc.py --dry-run \
         --cutover "2026-10-01T00:00:00"
     python scripts/migrate_tz_to_utc.py --cutover "2026-10-01T00:00:00"
     python scripts/migrate_tz_to_utc.py --rollback --cutover "2026-10-01T00:00:00"
+    # обратный режим (если снова захотите хранить UTC):
+    python scripts/migrate_tz_to_utc.py --direction to_utc --cutover "..."
 
 Требует DATABASE_URL в окружении/.env (см. app.config.get_settings).
 Перед запуском сделайте резервную копию БД!
@@ -85,22 +92,27 @@ async def run_migration(url: str, stmts, cutover: str) -> None:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="TZ->UTC data migration")
+    ap = argparse.ArgumentParser(description="Time-storage migration (UTC <-> local Kamchatka)")
     ap.add_argument("--cutover", required=True,
-                    help="Момент переключения приложения на UTC в СТАРОМ "
-                         "камчатском времени, ISO (например '2026-10-01T00:00:00'). "
-                         "Метки раньше него считаются камчатскими и сдвигаются.")
+                    help="Момент перехода режима хранения меток, измеренный в "
+                         "ЛОКАЛЬНОМ камчатском времени, ISO "
+                         "(например '2026-10-01T00:00:00'). Метки раньше него "
+                         "считаются записанными в старом режиме и сдвигаются.")
     ap.add_argument("--hours", type=int, default=None,
                     help="Сдвиг в часах (по умолчанию TZ_OFFSET_HOURS из настроек)")
+    ap.add_argument("--direction", choices=["to_local", "to_utc"], default="to_local",
+                    help="to_local (по умолчанию): эпоха UTC-хранения -> локальное "
+                         "камчатское (+часы). to_utc: локальное -> UTC (-часы).")
     ap.add_argument("--rollback", action="store_true",
-                    help="Обратный сдвиг (+часы) на случай отмены миграции")
+                    help="Обратный ход относительно --direction")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
     hours = args.hours if args.hours is not None else get_settings().tz_offset_hours
-    direction = 1 if args.rollback else -1
+    base = 1 if args.direction == "to_local" else -1
+    direction = -base if args.rollback else base
     stmts = build_statements(hours, direction)
-    tag = "ROLLBACK" if args.rollback else "MIGRATE"
+    tag = ("ROLLBACK-" if args.rollback else "") + args.direction
 
     if args.dry_run:
         print(f"DRY RUN ({tag}, shift={hours * direction:+d} h, "

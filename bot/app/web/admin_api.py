@@ -163,12 +163,12 @@ async def dashboard_token(request: Request) -> dict:
 @router.get("/stats/overview", dependencies=[Depends(_tok)])
 async def stats_overview() -> dict:
     from app.db.models import (Achievement, ChannelSubscriber, Event, Pet,
-                               User, UserAchievement)
+                               User, UserAchievement, utcnow)
     async with _session() as s:
         users_total = (await s.execute(select(func.count(User.tg_id)))).scalar() or 0
         users_week = (await s.execute(
             select(func.count(User.tg_id)).where(
-                User.created_at >= func.now() - timedelta(days=7)))).scalar() or 0
+                User.created_at >= utcnow() - timedelta(days=7)))).scalar() or 0
         banned = (await s.execute(
             select(func.count(User.tg_id)).where(User.is_banned == True))).scalar() or 0  # noqa: E712
         pets_total = (await s.execute(select(func.count(Pet.id)).where(

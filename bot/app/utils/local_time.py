@@ -22,19 +22,18 @@ def today() -> date:
 def localize(dt: datetime) -> datetime:
     """Перевод момента в камчатское отображение.
 
-    Aware-значения переводятся штатно. Для naive-значений действует
-    эвристика совместимости: исторически приложение писало в БД камчатское
-    время без зоны (после унификации — UTC). Если naive-момент выглядит как
+    Aware-значения переводятся штатно. Naive-метки из БД — это текущее
+    хранилище (локальное камчатское время): возвращаем как есть. Эвристика
+    совместимости осталась только для периода UTC-хранения (промежуточные
+    сборки писали created_at в UTC): если naive-момент выглядит как
     «будущее» для Камчатки (например, UTC-полдень при локальных 03:00),
-    считаем его UTC и сдвигаем на +12 ч; иначе — старыми камчатскими данными.
-    Разбор неоднозначен только в интервале <12 ч вокруг полуночи, что для
-    пользовательских экранов допустимо.
+    считаем его UTC и сдвигаем на +12 ч.
     """
     if dt.tzinfo is not None:
         return dt.astimezone(KAMCHATKA_TZ)
-    now_utc = utc_now().replace(tzinfo=None)
-    if dt > now_utc + timedelta(hours=6):
-        # явное «будущее» для Камчатки → почти наверняка naive-UTC
+    local_naive = now().replace(tzinfo=None)
+    if dt > local_naive + timedelta(hours=6):
+        # явное «будущее» для Камчатки → метка эпохи UTC-хранения
         return (dt + timedelta(hours=12)).replace(tzinfo=KAMCHATKA_TZ)
     return dt.replace(tzinfo=KAMCHATKA_TZ)
 
@@ -45,14 +44,15 @@ def as_utc(dt: datetime) -> datetime:
 
 
 def db_bound(dt: datetime) -> datetime:
-    """Граница для SQL-сравнений с колонками created_at/last_seen (хранятся в UTC).
+    """Граница для SQL-сравнений с колонками created_at/last_seen.
 
-    Aware-границы переводятся в UTC напрямую; naive считаем локальными
-    (камчатскими) — так исторически вызывающий код передаёт local_now().
+    Колонки хранят локальное (камчатское) время (см. models.utcnow), поэтому
+    aware-границы приводим к Камчатке и снимаем зону; naive считаются уже
+    локальными — возвращаем как есть.
     """
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=KAMCHATKA_TZ).astimezone(timezone.utc)
-    return dt.astimezone(timezone.utc)
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(KAMCHATKA_TZ)
+    return dt.replace(tzinfo=None)
 
 
 def from_iso(value: str | None) -> datetime | None:

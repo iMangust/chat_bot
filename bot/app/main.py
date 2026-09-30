@@ -15,7 +15,7 @@ from loguru import logger
 from sqlalchemy import inspect as sa_inspect
 
 from app.config import get_settings
-from app.db.models import Base
+from app.db.models import Base, utcnow
 from app.db.session import DbMiddleware, engine, session_factory
 from app.handlers import (access as access_handlers, admin, arena, errors,
                           events, games, merch, shop, social,
@@ -431,11 +431,12 @@ async def _backfill_subscriber_chats_v202(engine) -> None:
                 """INSERT OR IGNORE INTO channel_subscribers
                        (user_id, username, first_name, first_seen, last_seen_at,
                         chats, ever_contacted, last_contact_at)
-                   SELECT:uid, NULL, '', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP,
+                   SELECT :uid, NULL, '', :ts, :ts,
 :chats, 0, NULL
                    WHERE NOT EXISTS (SELECT 1 FROM channel_subscribers
                                      WHERE user_id =:uid)"""),
-                {"uid": uid, "chats": _json.dumps(sorted(set(chats)))})
+                {"uid": uid, "chats": _json.dumps(sorted(set(chats))),
+                 "ts": utcnow().strftime("%Y-%m-%d %H:%M:%S")})
             fixed += res.rowcount or 0
         for uid, chats in ((u, c) for u, c in by_user.items() if u in have_by_user):
             res = await conn.execute(text(
