@@ -153,10 +153,37 @@ async def _render_list(cb: CallbackQuery, session, bot: Bot | None = None) -> No
                        "(create 'events' table)", type(exc).__name__, exc)
         all_ev = await _selfheal_reload_events(exc, session)
     logger.info("menu:events loaded {} events from DB", len(all_ev))
+    # ВАЖНО (реальный баг, сентябрь 2026): в БД поле date хранится и как
+    # «2026-10-01», и как «2026-10-1» (SQLite/MySQL сравнивают строки
+    # лексически). Тогда прошедшее событие «2026-9-30» > «2026-10-05» — и
+    # фильтр ниже считал его будущим. На экране с 10+ кнопками Telegram
+    # отклонял edit_message_text ошибкой BUTTON_TYPE_INVALID, бот молчал —
+    # пользователь видел «кнопка не реагирует». Нормализуем дату к ISO
+    # перед любым сравнением.
+    def _iso(e) -> str:
+        raw = str(getattr(e, "date", "") or "").strip()
+        if not raw:
+            return ""
+        parts = raw.replace("/", "-").replace(".", "-")[:10].split("-")
+        try:
+            if len(parts) == 3:
+                y, m, d = (int(p) for p in parts)
+                return f"{y:04d}-{m:02d}-{d:02d}"
+        except ValueError:
+            pass
+        return raw
     today = local_now().date().isoformat()
-    events = [e for e in all_ev if (e.date or "9999") >= today]
-    past = [e for e in all_ev if (e.date or "9999") < today][-5:]
+    events = sorted((e for e in all_ev if _iso(e) >= today or not _iso(e)),
+                    key=_iso)
+    past = [e for e in all_ev if _iso(e) and _iso(e) < today][-5:]
     b = InlineKeyboardBuilder()
+    # Жёсткий лимит кнопок: Telegram отклоняет разметку, если суммарная длина
+    # callback_data всех кнопок превышает 64 байта (BUTTON_DATA_INVALID /
+    # BUTTON_TYPE_INVALID). Раньше при >10 событиях edit падал молча — и
+    # пользователь видел «кнопка не реагирует». Оставляем 8 событий + служебные.
+    MAX_EVENT_BUTTONS = 8
+    events = events[:MAX_EVENT_BUTTONS]
+    past = past[-(max(0, MAX_EVENT_BUTTONS - len(events))):]
     if not events and not past:
         text = ("<b>📅 Мероприятия канала</b>\n\n"
                 "Пока пусто 🎪\n"

@@ -18,7 +18,7 @@ from app.config import get_settings
 from app.db.models import Base
 from app.db.session import DbMiddleware, engine, session_factory
 from app.handlers import (access as access_handlers, admin, arena, errors,
-                          games, merch,
+                          events, games, merch,
                           settings as settings_handlers, shop, social, start,
                           stats, tamagotchi, tracker)
 from app.handlers.shop import seed_items
@@ -126,6 +126,7 @@ class BotRuntime:
                 start.router, tracker.router,
                 tamagotchi.router, games.router, shop.router,
                 merch.router,
+                events.router,
                 social.router, arena.router, stats.router,
                 settings_handlers.router,
             )
@@ -133,7 +134,16 @@ class BotRuntime:
 
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
-            from app.main import _backfill_subscriber_chats_v202, _migrate_channel_subscribers_v20
+            from app.main import (_backfill_subscriber_chats_v202,
+                                  _light_migrations,
+                                  _migrate_channel_subscribers_v20,
+                                  ensure_events_table)
+            # Тот же набор миграций/само-исцелений схемы, что и в app.main.on_startup:
+            # без него лёгкие колонки (welcome_shown и др.) и таблица events не
+            # создаются при запуске через веб-панель.
+            async with engine.begin() as conn:
+                await _light_migrations(conn)
+            await ensure_events_table(engine)
             await _migrate_channel_subscribers_v20(engine)
             await _backfill_subscriber_chats_v202(engine)
             async with session_factory() as session:
