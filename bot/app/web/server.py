@@ -15,6 +15,9 @@ WEB_DIR = Path(__file__).resolve().parent
 
 app = FastAPI(title="TamaBot Control Panel", docs_url=None, redoc_url=None)
 
+from app.web.admin_api import router as admin_router  # noqa: E402
+app.include_router(admin_router)
+
 LOCALHOST_IPS = {"127.0.0.1", "::1"}
 # Пустой DASHBOARD_ALLOWED_IPS = доступ только с localhost (см. _parse_allowed)
 
@@ -149,6 +152,8 @@ async def ip_allowlist_middleware(request: Request, call_next):
     if not _ip_allowed(_client_ip(request), _allowlist()):
         return JSONResponse({"detail": "Доступ запрещён: ваш IP не в белом списке"},
                             status_code=403)
+    # помечаем запрос как допущенный интерфейсом панели (для /api/token)
+    request.state.allowed = True
     return await call_next(request)
 
 class LogHub:

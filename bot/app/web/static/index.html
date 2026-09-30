@@ -143,6 +143,50 @@ footer{padding:7px 22px;border-top:1px solid var(--border);font-size:11.5px;colo
 ::-webkit-scrollbar-thumb{background:#2a3348;border-radius:6px}
 ::-webkit-scrollbar-track{background:transparent}
 @media(max-width:900px){nav{width:64px}.nav-item span.txt{display:none}.set-row{grid-template-columns:1fr}}
+
+/* ===== data views styles ===== */
+.toolbar select{background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:13px}
+.chk{font-size:13px;color:var(--muted);display:inline-flex;align-items:center;gap:6px}
+.tbl{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
+.tbl th{text-align:left;color:var(--muted);font-weight:600;padding:8px 10px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg)}
+.tbl td{padding:7px 10px;border-bottom:1px solid var(--border-soft,rgba(255,255,255,.06));vertical-align:middle}
+.tbl tr:hover td{background:rgba(255,255,255,.03)}
+.tbl small{color:var(--muted)}
+.sub-tbl{margin:4px 0 8px}
+.rowbtns{white-space:nowrap;text-align:right}
+.mini{background:var(--panel);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:3px 8px;font-size:12px;cursor:pointer;margin-left:4px}
+.mini:hover{border-color:var(--accent,#7c5cff)}
+.empty{padding:18px;text-align:center;color:var(--muted);font-size:13.5px;background:var(--panel);border:1px dashed var(--border);border-radius:10px;margin-top:10px}
+.empty.small{padding:8px;font-size:12px;margin:6px 0}
+.pager{margin-top:12px;display:flex;gap:8px;align-items:center;color:var(--muted);font-size:13px}
+.mbar{height:7px;background:rgba(255,255,255,.08);border-radius:4px;overflow:hidden;margin-top:4px;min-width:90px}
+.mbar i{display:block;height:100%;border-radius:4px}
+.kv{display:grid;grid-template-columns:max-content 1fr max-content 1fr;gap:6px 14px;margin:10px 0;font-size:13.5px}
+.kv span{color:var(--muted)}
+.needs{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;margin:8px 0}
+.need{font-size:12.5px;color:var(--muted)}
+.achips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.achip{background:var(--panel);border:1px solid var(--border);border-radius:14px;padding:4px 10px;font-size:12.5px;opacity:.55}
+.achip.got{opacity:1;border-color:#7c5cff55}
+.editrow{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin:8px 0}
+.editrow label{font-size:12.5px;color:var(--muted);display:flex;flex-direction:column;gap:4px}
+.editrow input{width:110px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:7px 9px}
+.catbox{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-top:14px}
+.cathead{display:flex;align-items:center;gap:8px;font-size:15px;margin-bottom:6px}
+.prodbox{border-left:2px solid var(--border);padding:6px 0 4px 14px;margin:8px 0}
+.prodhead{display:flex;align-items:center;gap:8px;font-size:14px;flex-wrap:wrap}
+.cellnum{width:80px;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 6px;font-size:13px}
+.spacer{flex:1}
+.modal-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:flex-start;justify-content:center;z-index:100;padding:4vh 12px;overflow:auto}
+.modal{background:var(--panel);border:1px solid var(--border);border-radius:14px;max-width:720px;width:100%;box-shadow:0 18px 60px rgba(0,0,0,.5)}
+.modal-head{display:flex;justify-content:space-between;align-items:center;padding:14px 18px;border-bottom:1px solid var(--border);font-size:15px}
+.modal-body{padding:16px 18px;max-height:75vh;overflow:auto}
+.modal-body h3{margin:2px 0 6px}.modal-body h4{margin:16px 0 6px;font-size:13.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
+.form{display:flex;flex-direction:column;gap:10px;font-size:13.5px}
+.form label{display:flex;flex-direction:column;gap:4px;color:var(--muted)}
+.form input,.form textarea,.form select{background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 10px;font-size:13.5px;font-family:inherit}
+.form.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.form .full{grid-column:1/-1}
 </style>
 </head>
 <body>
@@ -159,6 +203,13 @@ footer{padding:7px 22px;border-top:1px solid var(--border);font-size:11.5px;colo
 <main>
   <nav>
     <div class="nav-item active" data-view="dash">📊 <span class="txt">Обзор</span></div>
+    <div class="nav-item" data-view="users">👥 <span class="txt">Пользователи</span></div>
+    <div class="nav-item" data-view="pets">🐾 <span class="txt">Питомцы</span></div>
+    <div class="nav-item" data-view="ach">🏅 <span class="txt">Достижения</span></div>
+    <div class="nav-item" data-view="merch">🧢 <span class="txt">Мерч</span></div>
+    <div class="nav-item" data-view="events">📅 <span class="txt">Мероприятия</span></div>
+    <div class="nav-item" data-view="subs">📺 <span class="txt">Подписчики</span></div>
+    <div class="nav-item" data-view="notifs">📨 <span class="txt">Очередь</span></div>
     <div class="nav-item" data-view="logs">📜 <span class="txt">Логи</span></div>
     <div class="nav-item" data-view="settings">⚙️ <span class="txt">Настройки</span></div>
   </nav>
@@ -177,6 +228,84 @@ footer{padding:7px 22px;border-top:1px solid var(--border);font-size:11.5px;colo
         <div class="card wide"><div class="label">Фоновые задачи планировщика</div><div id="cJobs" style="font-size:13.5px;color:var(--muted)">нет данных</div></div>
       </div>
       <div class="err-box" id="errBox"></div>
+      <h2 style="margin-top:22px">Сводка по базе <span>пользователи, питомцы, мерч, события</span></h2>
+      <div class="grid" id="dbStats"><div class="card"><div class="label">Загрузка…</div></div></div>
+    </section>
+
+    <!-- ================= Users ================= -->
+    <section class="view" id="view-users">
+      <h2>Пользователи <span id="usersTotal"></span></h2>
+      <div class="toolbar">
+        <input class="search" id="userSearch" placeholder="🔎 имя, @username или ID…">
+        <select id="userSort">
+          <option value="created">сначала новые</option>
+          <option value="active">по активности</option>
+          <option value="xp">по опыту</option>
+          <option value="level">по уровню</option>
+          <option value="coins">по монетам</option>
+        </select>
+        <select id="userBanned">
+          <option value="">все</option><option value="no">активные</option><option value="yes">забаненные</option>
+        </select>
+        <button class="btn" id="usersRefresh">↻ Обновить</button>
+      </div>
+      <div id="usersTable"></div>
+      <div class="pager" id="usersPager"></div>
+    </section>
+
+    <!-- ================= Pets ================= -->
+    <section class="view" id="view-pets">
+      <h2>Питомцы <span id="petsTotal"></span></h2>
+      <div class="toolbar">
+        <input class="search" id="petSearch" placeholder="🔎 кличка или владелец…">
+        <button class="btn" id="petsRefresh">↻ Обновить</button>
+      </div>
+      <div id="petsTable"></div>
+      <div class="pager" id="petsPager"></div>
+    </section>
+
+    <!-- ================= Achievements ================= -->
+    <section class="view" id="view-ach">
+      <h2>Достижения <span>справочник и статистика выдач</span></h2>
+      <div class="toolbar"><label class="chk"><input type="checkbox" id="achHolders"> показывать число владельцев</label>
+        <button class="btn" id="achRefresh">↻ Обновить</button></div>
+      <div id="achTable"></div>
+    </section>
+
+    <!-- ================= Merch ================= -->
+    <section class="view" id="view-merch">
+      <h2>Мерч <span>каталог: категории → товары → варианты</span></h2>
+      <div class="toolbar">
+        <button class="btn primary" id="mcAddCat">＋ Категория</button>
+        <button class="btn" id="mcAddProd">＋ Товар</button>
+        <button class="btn" id="mcRefresh">↻ Обновить</button>
+        <button class="btn" id="mcResv">🧾 Брони</button>
+      </div>
+      <div id="merchTree"></div>
+    </section>
+
+    <!-- ================= Events ================= -->
+    <section class="view" id="view-events">
+      <h2>Мероприятия <span id="eventsCount"></span></h2>
+      <div class="toolbar">
+        <button class="btn primary" id="evAdd">＋ Новое мероприятие</button>
+        <button class="btn" id="evRefresh">↻ Обновить</button>
+      </div>
+      <div id="eventsTable"></div>
+    </section>
+
+    <!-- ================= Subscribers ================= -->
+    <section class="view" id="view-subs">
+      <h2>Подписчики каналов <span id="subsTotal"></span></h2>
+      <div class="toolbar"><button class="btn" id="subsRefresh">↻ Обновить</button></div>
+      <div id="subsTable"></div>
+    </section>
+
+    <!-- ================= Notifications queue ================= -->
+    <section class="view" id="view-notifs">
+      <h2>Очередь уведомлений <span>последние 100</span></h2>
+      <div class="toolbar"><button class="btn" id="notifsRefresh">↻ Обновить</button></div>
+      <div id="notifsTable"></div>
     </section>
 
     <!-- ================= Logs ================= -->
@@ -231,7 +360,7 @@ footer{padding:7px 22px;border-top:1px solid var(--border);font-size:11.5px;colo
 <script>
 "use strict";
 const $=s=>document.querySelector(s);
-const state={status:null,draft:{},settings:[],logFilter:new Set(["DEBUG","INFO","SUCCESS","WARNING","ERROR"]),paused:false};
+const state={status:null,draft:{},settings:[],logFilter:new Set(["DEBUG","INFO","SUCCESS","WARNING","ERROR"]),paused:false,loadedViews:{}};
 
 /* ---------------- toasts ---------------- */
 function toast(msg,type="ok",ms=4200){
@@ -491,5 +620,6 @@ function escapeHtml(s){return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","
 setInterval(()=>{if(state.status&&state.status.settings&&!$("#liveLevel").value)
   $("#liveLevel").options[0].textContent="live-уровень: "+(state.status.settings.logLevel||"INFO");},5000);
 </script>
+<script src="/static/data_views.js"></script>
 </body>
 </html>

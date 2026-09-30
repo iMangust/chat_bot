@@ -23,6 +23,29 @@ os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
 os.environ["BOT_TOKEN"] = "123456:TEST-token-for-functional-test"
 os.environ["REDIS_URL"] = ""
 os.environ["CHANNELS"] = "[]"
+# Локальный тест: пользователь id=42 НЕ админ — проверяем «пользовательскую»
+# ветку меню (пустой список → заглушка). Явно обнуляем ADMIN_IDS, чтобы
+# значение из .env репозитория или другого теста не превратило 42 в админа.
+os.environ["ADMIN_IDS"] = "[]"
+
+# Тесты запускаются в одном pytest-процессе; get_settings() — lru_cache.
+# Сбрасываем кеш, чтобы настройки этого файла (в т.ч. ADMIN_IDS=[]) не
+# наследовались от других тестов и наоборот.
+from app.config import get_settings as _gs  # noqa: E402
+_gs.cache_clear()
+
+# ВАЖНО: app.db.session создаёт engine при импорте — если модуль уже был
+# импортирован другим тестом процесса (с его файловой sqlite), движок
+# указывал бы на чужую базу и видел её данные (регрессия: «Встреча» из
+# теста admin_api попадала в экран мероприятий). Пересоздаём engine/
+# session_factory на настройки ЭТОГО теста (:memory:).
+import app.db.session as _dbs  # noqa: E402
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
+
+_s = _gs()
+_dbs.engine = create_async_engine(_s.database_url)
+_dbs.session_factory = async_sessionmaker(
+    _dbs.engine, class_=_dbs.AsyncSession, expire_on_commit=False)
 
 from aiogram.client.session.base import BaseSession  # noqa: E402
 from aiogram.methods import GetMe, SendChatAction  # noqa: E402

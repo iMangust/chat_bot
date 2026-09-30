@@ -30,7 +30,25 @@ os.environ["BOT_TOKEN"] = "123456:TEST-token-for-functional-test"
 os.environ["REDIS_URL"] = ""
 os.environ["CHANNELS"] = "[]"
 os.environ["ADMIN_IDS"] = "[42]"          # пользователь id=42 — админ
+
+# Сброс lru-кеша настроек: иначе get_settings() вернёт кеш другого теста
+# из этого же pytest-процесса (например, с ADMIN_IDS=[]).
+from app.config import get_settings as _gs  # noqa: E402
+_gs.cache_clear()
 os.environ["MERCH_ENABLED"] = "true"
+
+# ВАЖНО: app.db.session создаёт engine при импорте — если этот модуль уже
+# был импортирован другим тестом процесса (с его файловой sqlite), движок
+# указывал бы на чужую базу и видел её данные (регрессия: «Встреча» из
+# теста admin_api попадала в экран мероприятий). Принудительно пересоздаём
+# engine/session_factory на настройки ЭТОГО теста (:memory:).
+import app.db.session as _dbs  # noqa: E402
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
+
+_s = _gs()
+_dbs.engine = create_async_engine(_s.database_url)
+_dbs.session_factory = async_sessionmaker(
+    _dbs.engine, class_=_dbs.AsyncSession, expire_on_commit=False)
 
 from aiogram.client.session.base import BaseSession  # noqa: E402
 from aiogram.methods import GetMe, SendChatAction  # noqa: E402
