@@ -130,6 +130,16 @@ _LIGHT_COLUMNS: dict[str, list[tuple[str, str]]] = {
     ],
     "users": [
         ("welcome_shown", "BOOLEAN NOT NULL DEFAULT 0"),
+        # Колонки из более новых версий модели, которых нет в старых БД
+        # (create_all не меняет существующие таблицы). Без них любой
+        # SELECT/INSERT по users падает с OperationalError/ProgrammingError
+        # («no such column users.created_at» / «column users.created_at does
+        # not exist») — ровно тот каскад ошибок, что был в логах на /start.
+        ("created_at", "DATETIME"),
+        ("updated_at", "DATETIME"),
+        ("messages_count", "INTEGER NOT NULL DEFAULT 0"),
+        ("reactions_given", "INTEGER NOT NULL DEFAULT 0"),
+        ("reactions_received", "INTEGER NOT NULL DEFAULT 0"),
     ],
 }
 
