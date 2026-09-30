@@ -294,6 +294,17 @@ class _MenuFallback(BaseFilter):
 @router.callback_query(F.data == "menu:events")
 async def menu_events(cb: CallbackQuery, session, bot: Bot) -> None:
     from aiogram.methods import AnswerCallbackQuery
+    # Если Telegram не прислал исходное сообщение (cb.message is None —
+    # бывает при очень старых/анонимных клавиатурах и у некоторых клиентов),
+    # раньше бот молча «ничего не делал»: показываем явный alert.
+    if cb.message is None:
+        with contextlib.suppress(Exception):
+            await bot(AnswerCallbackQuery(
+                callback_query_id=cb.id,
+                text="Нажми /start — покажу свежее меню 🙂", show_alert=True))
+        logger.warning("menu:events without message (user={})",
+                       cb.from_user.id if cb.from_user else "?")
+        return
     try:
         await _render_list(cb, session, bot=bot)
     except Exception as exc:
@@ -387,8 +398,19 @@ async def event_going(cb: CallbackQuery, session) -> None:
 
 
 async def _admin_home(cb: CallbackQuery, session) -> None:
+    # Явная реакция на каждое нажатие (раньше при отсутствии прав или битом
+    # сообщении callback не answer'ился вовсе — кнопка выглядела «мёртвой»).
+    if cb.message is None:
+        with contextlib.suppress(Exception):
+            await cb.answer("Нажми /start — покажу свежее меню 🙂", show_alert=True)
+        return
     if not _is_event_admin(cb.from_user.id):
-        await cb.answer("Только для админов.", show_alert=True)
+        s = get_settings()
+        logger.warning("evadmin:home DENIED user={} (admin_ids={!r}, "
+                       "merch_admin_id={!r})", cb.from_user.id,
+                       s.admin_ids, s.merch_admin_id)
+        await cb.answer("Только для админов. Добавь свой ID в ADMIN_IDS в .env "
+                        "и перезапусти бота.", show_alert=True)
         return
     repo = EventRepository(session)
     all_ev = await repo.all()
@@ -414,6 +436,10 @@ async def evadmin_home(cb: CallbackQuery, session) -> None:
 
 
 async def _admin_list(cb: CallbackQuery, session) -> None:
+    if cb.message is None:
+        with contextlib.suppress(Exception):
+            await cb.answer("Нажми /start — покажу свежее меню 🙂", show_alert=True)
+        return
     if not _is_event_admin(cb.from_user.id):
         await cb.answer("Только для админов.", show_alert=True)
         return
