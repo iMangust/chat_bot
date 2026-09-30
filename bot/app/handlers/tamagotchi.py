@@ -241,7 +241,14 @@ async def cmd_pet(message: Message, session: AsyncSession) -> None:
                                            walking=svc.on_walk(pet)))
 
 @router.callback_query(F.data == "menu:pet")
-async def pet_screen(cb: CallbackQuery, session: AsyncSession) -> None:
+async def pet_screen(cb: CallbackQuery, session: AsyncSession,
+                     state: FSMContext) -> None:
+    # «Питомец» — точка входа раздела из главного меню. Если пользователь
+    # сидит в шагах онбординга (например, дошёл до выбора имени), нажатие
+    # должно выйти из FSM и показать обычный экран (питомца или CTA
+    # «усыновить»), а не угодить в заглушку без ответа.
+    if await state.get_state() is not None:
+        await state.clear()
     svc = TamagotchiService(session)
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
@@ -369,7 +376,7 @@ async def pet_adopt_confirm(cb: CallbackQuery, session: AsyncSession,
         cb.message,
         "🐣 Прежний питомец пристроен в историю. Выбери нового:\n\n"
         + _species_picker_text(),
-        reply_markup=species_picker())
+        reply_markup=species_picker(cb.message.chat.id))
     await cb.answer()
 
 @router.callback_query(F.data == "pet:adopt_cancel", AdoptConfirm.confirm)
@@ -403,7 +410,7 @@ async def pet_adopt_screen(cb: CallbackQuery, session: AsyncSession,
             cb.message,
             "🐣 Выбери питомца — у каждого свой характер и бонусы:\n\n"
             + _species_picker_text(),
-            reply_markup=species_picker())
+            reply_markup=species_picker(cb.message.chat.id))
         await cb.answer()
         return
     if cur_state == str(Onboarding.choosing_pet_name.state):
@@ -422,7 +429,7 @@ async def pet_adopt_screen(cb: CallbackQuery, session: AsyncSession,
             cb.message,
             "🐣 Выбери питомца — у каждого свой характер и бонусы:\n\n"
             + _species_picker_text(),
-            reply_markup=species_picker())
+            reply_markup=species_picker(cb.message.chat.id))
         await cb.answer()
         return
     await state.set_state(AdoptConfirm.confirm)

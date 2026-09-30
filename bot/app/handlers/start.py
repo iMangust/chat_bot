@@ -276,33 +276,61 @@ def _no_pet_menu_kb():
     from app.keyboards.inline import adopt_cta_kb
     return adopt_cta_kb()
 
-async def _picker_screen(state: FSMContext, message=None, cb=None) -> None:
+async def _picker_screen(state: FSMContext, message=None, cb=None,
+                         suppress_back: bool = False) -> None:
     await state.set_state(Onboarding.choosing_pet_species)
     text = ("🐣 Шаг 1 из 3. Выбери питомца — у каждого свой характер и бонусы:\n\n"
             + species_picker_text())
+    chat_id = (cb.message.chat.id if cb is not None and cb.message
+               else message.chat.id if message is not None else None)
+    # suppress_back=True — экран перерисован кнопкой «Назад» с шага имени:
+    # повторный «Назад → onb:species_back» был бы самопетлёй, подавляем его
+    # (back_cb="" означает «только 🏠 Меню»).
+    back_cb = "" if suppress_back else None
     if cb is not None:
-        await safe_edit_or_answer(cb.message, text, reply_markup=species_picker())
+        await safe_edit_or_answer(cb.message, text,
+                                  reply_markup=species_picker(chat_id, back_cb))
     elif message is not None:
-        await message.answer(text, reply_markup=species_picker())
+        await message.answer(text, reply_markup=species_picker(chat_id, back_cb))
 
 @router.callback_query(F.data == "onb:species_back")
 async def cb_species_back(cb: CallbackQuery, state: FSMContext) -> None:
-    await _picker_screen(state, cb=cb)
+    # «Назад» с шага 2 (имя) — перерисовать шаг 1 (выбор вида). На самом
+    # шаге 1 кнопка «Назад» строится с явным подавлением (suppress_back),
+    # чтобы не получилось петли «Назад → onb:species_back → тот же экран».
+    await _picker_screen(state, cb=cb, suppress_back=True)
     await cb.answer()
 
 @router.callback_query(F.data.startswith("onb:species:"))
 async def cb_pick_species(cb: CallbackQuery, state: FSMContext) -> None:
     code = cb.data.split(":")[2]
     if code not in SPECIES_DATA:
+        # Повторный вход в онбординг с экрана, где уже показан пикер вида
+        # (например, «🥚 Усыновить питомца» из CTA-экрана «нет питомца»,
+        # который сам лежит на шаге 1): перерисовываем шаг 1 вместо ошибки
+        # «Такого питомца нет». Кнопки «Усыновить» на этих экранах — это
+        # вход в раздел, а не выбор вида.
+        cur = await state.get_state()
+        if cur == str(Onboarding.choosing_pet_species.state):
+            await _picker_screen(state, cb=cb)
+            await cb.answer()
+            return
         await cb.answer("Такого питомца нет", show_alert=True)
         return
     await state.update_data(species=code)
     await state.set_state(Onboarding.choosing_pet_name)
-    await safe_edit_or_answer(cb.message, 
-        f"{SPECIES_DATA[code]['emoji']} Отличный выбор — {SPECIES_DATA[code]['title']}!\n\n"
-        "Шаг 2 из 3. Выбери имя питомцу (или напиши своё сообщением):",
-        reply_markup=start_pet_name_suggestions(PET_NAME_SUGGESTIONS),
-    )
+    # «Имя своё…» — это не имя, а приглашение написать своё сообщением:
+    # сразу просим текст, чтобы не показывать тот же список suggestions
+    # (визуальная самопетля).
+    if code == "Имя своё…":
+        await safe_edit_or_answer(cb.message, "✍️ Напиши своё имя питомца сообщением:")
+    else:
+        await safe_edit_or_answer(cb.message, 
+            f"{SPECIES_DATA[code]['emoji']} Отличный выбор — {SPECIES_DATA[code]['title']}!\n\n"
+            "Шаг 2 из 3. Выбери имя питомцу (или напиши своё сообщением):",
+            reply_markup=start_pet_name_suggestions(PET_NAME_SUGGESTIONS,
+                                                    cb.message.chat.id),
+        )
     await cb.answer()
 
 @router.message(Onboarding.choosing_pet_species, F.text & ~F.text.startswith("/"))
@@ -435,26 +463,15 @@ async def _render_main_menu(cb: CallbackQuery, session: AsyncSession,
                                      cb.from_user.username)
     link = invite_link_for(user.tg_id)
     reward = get_settings().invite_reward_coins
-    # Если у пользователя нет питомца и он ещё не завершал онбординг —
-    # показываем экран выбора вида питомца прямо из меню, чтобы кнопка
-    # «Усыновить» была рабочей (раньше она уходила в мёртвый коллбэк).
-    if not user.onboarded:
-        has_pet = await PetRepository(session).has_pet(user.tg_id)
-        if not has_pet:
-            # state может быть None (вызов из catch-all роутера events без FSM);
-            # тогда просто показываем экран выбора вида без записи стейта.
-            if state is not None:
-                await _picker_screen(state, cb=cb)
-            else:
-                await safe_edit_or_answer(cb.message,
-                                          ("🐣 Выбери питомца — у каждого свой характер "
-                                           "и бонусы:\n\n" + species_picker_text()),
-                                          reply_markup=species_picker())
-            await cb.answer()
-            return
+    has_pet = await PetRepository(session).has_pet(user.tg_id)
+    # «Меню» — это всегда главное меню: раньше у неонборднутых без питомца оно
+    # перескакивало на экран выбора питомца, из-за чего «Назад/Меню» из любого
+    # раздела (например, из мерча) вёл в онбординг. Теперь выбор питомца —
+    # обычная кнопка «🥚 Усыновить питомца» внутри меню (main_menu(has_pet=False)).
     page %= len(MENU_PAGES) + (1 if _menu_is_admin(cb.from_user.id) else 0)
     await safe_edit_or_answer(cb.message, _main_menu_text(user, min(page, len(MENU_PAGES) - 1)),
                               reply_markup=main_menu(link=link, reward=reward,
                                                      page=page,
-                                                     is_admin=_menu_is_admin(cb.from_user.id)))
+                                                     is_admin=_menu_is_admin(cb.from_user.id),
+                                                     has_pet=has_pet))
     await cb.answer()

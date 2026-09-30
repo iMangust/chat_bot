@@ -45,7 +45,8 @@ ADMIN_TOOLS_PAGE = ("🛠 Инструменты админа", [
 ])
 
 def main_menu(link: str | None = None, reward: int = 0,
-              page: int = 0, is_admin: bool = False) -> InlineKeyboardMarkup:
+              page: int = 0, is_admin: bool = False,
+              has_pet: bool = True) -> InlineKeyboardMarkup:
     settings = get_settings()
     pages = list(MENU_PAGES)
     if is_admin:
@@ -56,7 +57,16 @@ def main_menu(link: str | None = None, reward: int = 0,
                for t, cb in actions
                if not (cb == "menu:merch" and not settings.merch_enabled)]
     kb_rows: list[list[InlineKeyboardButton]] = _two_per_row(buttons)
+    # У пользователя без питомца в разделе «Игра» нет центрального экрана —
+    # добавляем явный CTA прямо в меню, чтобы не уводить его стрелками
+    # листания в онбординг против воли. Отдельной строкой ПОСЛЕ постраничной
+    # навигации (◀️ 📖 ▶️): так «▶️» гарантированно остаётся последней кнопкой
+    # своей строки и ведёт на следующую страницу меню, а не открывает выбор
+    # питомца (CTA никогда не «склеивается» со стрелками в один ряд).
     kb_rows.append(_page_nav("menu", page, len(pages), title))
+    if not has_pet:
+        kb_rows.append([InlineKeyboardButton(
+            text="🥚 Усыновить питомца", callback_data="pet:adopt")])
     invite_label = f"🤝 Пригласить друга (+{reward})" if reward else "🤝 Пригласить друга"
     if link and settings.show_invite_button:
         kb_rows.append([InlineKeyboardButton(text=invite_label, url=link)])
@@ -292,6 +302,19 @@ def _nav_buttons(back_cb: str | None) -> list[InlineKeyboardButton]:
     return out
 
 
+def onb_back_from_name(chat_id: int | None) -> list[InlineKeyboardButton]:
+    """Строка навигации для шага «Имя питомца» (шаг 2 из 3).
+
+    «⬅️ Назад» ведёт строго на шаг 1 (выбор вида): общий сборщик навигации
+    здесь не подходит — под шагом имени в стеке лежит 'pet:adopt', и
+    generic-логика показала бы кнопку «Назад → pet:adopt», которая просто
+    перерисовывает текущий экран (визуальная самопетля). «🏠 Меню» —
+    гарантированный выход из онбординга со сбросом стека."""
+    return [InlineKeyboardButton(text=BACK_LABEL,
+                                 callback_data="onb:species_back"),
+            InlineKeyboardButton(text=HOME_LABEL, callback_data="menu:main")]
+
+
 def nav_row(section: str | None, back_cb: str | None = None
             ) -> list[InlineKeyboardButton]:
     """Готовая нижняя строка навигации для ручной сборки клавиатуры.
@@ -336,11 +359,16 @@ def train_menu(chat_id: int | None = None) -> InlineKeyboardMarkup:
     with_nav(b, "pet", chat_id)
     return b.as_markup()
 
-def start_pet_name_suggestions(names: list[str]) -> InlineKeyboardMarkup:
+def start_pet_name_suggestions(names: list[str],
+                               chat_id: int | None = None) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     for n in names:
         b.button(text=f"✨ {n}", callback_data=f"onb:name:{n}")
     b.adjust(2)
+    # Шаг 2 из 3: «⬅️ Назад» — на шаг 1 (выбор вида), «🏠 Меню» — выход в
+    # главное меню со сбросом стека. Раньше здесь не было никакой возможности
+    # выйти: кнопка «Назад» вела обратно на тот же экран (самопетля).
+    b.row(*onb_back_from_name(chat_id))
     return b.as_markup()
 
 def onboard_done() -> InlineKeyboardMarkup:
@@ -353,7 +381,28 @@ def welcome_start_button() -> InlineKeyboardMarkup:
     b.button(text="✅ Начать", callback_data="onb:start")
     return b.as_markup()
 
-def species_picker() -> InlineKeyboardMarkup:
+def onboard_back_cb(chat_id: int | None) -> str:
+    """Callback кнопки «⬅️ Назад» на экране выбора вида питомца (шаг 1).
+
+    Возвращает туда, откуда пользователь вошёл в онбординг. Исключения —
+    записи, которые перерисовали бы тот же экран (визуальные самопетли):
+    'onb:*' (шаги игнорируются стеком как шум), 'pet:adopt*' (повторно
+    откроют пикер), 'menu:main'/'menu:home' (под окном онбординга и так
+    лежит главное меню). Если подходящей записи нет — «Назад» не нужен,
+    остаётся только «🏠 Меню» (пустая строка = подавить кнопку)."""
+    from app.utils import nav as _nav
+    for cb in reversed(_nav.mem_stack(chat_id)):
+        if not cb or cb.endswith(":noop") or cb == "noop":
+            continue
+        head = cb.split(":")[0]
+        if head in ("onb", "pet") or cb in ("menu:main", "menu:home"):
+            continue
+        return cb
+    return ""
+
+
+def species_picker(chat_id: int | None = None,
+                   back_cb: str | None = None) -> InlineKeyboardMarkup:
     from app.services.tamagotchi import SPECIES_DATA
     b = InlineKeyboardBuilder()
     for code, sp in SPECIES_DATA.items():
@@ -361,6 +410,13 @@ def species_picker() -> InlineKeyboardMarkup:
     b.adjust(2)
     b.row(InlineKeyboardButton(text="🤝 Пока просто смотреть статистику",
                                callback_data="onb:skip"))
+    # Выход из онбординга: «⬅️ Назад» — туда, откуда вошли (обычно главное
+    # меню), «🏠 Меню» — гарантированный выход в меню со сбросом стека.
+    # Пользователь не должен оказываться в ловушке из шагов выбора.
+    # back_cb="" — явно подавить «Назад» (экран перерисован самим «Назад»).
+    if back_cb is None:
+        back_cb = onboard_back_cb(chat_id)
+    append_nav(b, None, back_cb=back_cb or "")
     return b.as_markup()
 
 def adopt_cta_kb() -> InlineKeyboardMarkup:
