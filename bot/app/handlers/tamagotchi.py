@@ -205,8 +205,6 @@ async def _weather_text() -> str:
     else:
         text += "\n\n⚠️ Реальные данные недоступны — действует сезонная модель," \
                 " погодные эффекты и риски простуды отключены."
-    from app.services.weather import weather_source_line
-    text += "\n\n" + weather_source_line()
     return text
 
 

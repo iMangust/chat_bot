@@ -27,7 +27,6 @@ OWM_ONECALL_URL = f"{OWM_BASE}/3.0/onecall"
 OWM_CURRENT_URL = f"{OWM_BASE}/2.5/weather"
 OWM_FORECAST_URL = f"{OWM_BASE}/2.5/forecast"
 OPENWEATHER_KEY_ENV = "OPENWEATHER_API_KEY"
-WEATHER_VERIFY_URL = ("https://openweathermap.org/city/2122104")
 _HTTP_CONNECT_TIMEOUT = 6.0
 _HTTP_READ_TIMEOUT = 10.0
 
@@ -56,15 +55,17 @@ def openweather_key() -> str:
     return ""
 
 def weather_source_line() -> str:
+    """Служебная строка о состоянии источника погоды.
+
+    В пользовательских экранах погоды не показывается (см. _weather_text);
+    оставлена для диагностики/логики, опционально может выводиться в панели.
+    """
     if openweather_key():
         src = "OpenWeather (openweathermap.org)"
     else:
         src = ("OpenWeather (openweathermap.org) — ключ ещё не задан, "
                "сейчас показывается сезонная модель")
-    return (f"🔗 Источник данных: {src}.\n"
-            f"🧭 Сверить вручную: погода Петропавловска-Камчатского — "
-            f"{WEATHER_VERIFY_URL}\n"
-            "⚠️ Между источниками возможны расхождения 1–2° и по силе ветра.")
+    return f"🔗 Источник данных: {src}."
 
 def _timeout():
     import httpx
