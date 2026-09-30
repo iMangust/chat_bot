@@ -59,6 +59,80 @@ def _client_ip(request: Request) -> str:
             return first
     return peer
 
+_ENV_FILE_CACHE: dict = {"path": None}
+
+
+def _env_file() -> Path | None:
+    """Путь к .env — тот же резолвер, что использует редактор настроек панели."""
+    if _ENV_FILE_CACHE["path"] is not None and _ENV_FILE_CACHE["path"] != "none":
+        return _ENV_FILE_CACHE["path"]  # type: ignore[return-value]
+    try:
+        from app.console.settings_store import env_path
+        f = env_path()
+    except Exception:
+        f = Path.cwd() / ".env"
+    if f.is_file():
+        _ENV_FILE_CACHE["path"] = f
+        return f
+    _ENV_FILE_CACHE["path"] = "none"
+    return None
+
+
+def _env_value(key: str) -> str | None:
+    """Значение из файла .env напрямую (без кэша pydantic-settings)."""
+    f = _env_file()
+    if not f:
+        return None
+    try:
+        for line in f.read_text(encoding="utf-8").splitlines():
+            s = line.strip()
+            if s.startswith("#") or "=" not in s:
+                continue
+            k, _, v = s.partition("=")
+            if k.strip() == key:
+                return v.strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return None
+
+
+def _resolve_bind(host_cli: str | None, port_cli: int | None) -> tuple[str, int]:
+    """Хост/порт панели: CLI > env (.env напрямую) > настройки приложения > умолчания.
+
+    Если DASHBOARD_HOST задан как внешний IP машины — привязка к нему падает
+    (IP выдаётся NAT-шлюзом провайдера), поэтому такие значения заменяются на
+    0.0.0.0 с предупреждением.
+    """
+    from loguru import logger
+
+    host = host_cli or os.environ.get("DASHBOARD_HOST") or _env_value("DASHBOARD_HOST")
+    port_raw = (port_cli if port_cli not in (None, 8765)
+                else os.environ.get("DASHBOARD_PORT") or _env_value("DASHBOARD_PORT"))
+    if not host or not port_raw:
+        try:
+            s = get_settings_cached()
+            host = host or s.dashboard_host
+            port_raw = port_raw or str(s.dashboard_port)
+        except Exception:
+            pass
+    host = (host or "127.0.0.1").strip()
+    try:
+        port = int(port_raw or 8765)
+    except ValueError:
+        port = 8765
+    try:
+        addr = ipaddress.ip_address(host)
+        if not addr.is_unspecified and not addr.is_loopback:
+            logger.warning(
+                "DASHBOARD_HOST={} — это адрес интерфейса/NAT, а не локальный адрес. "
+                "Привязка к нему невозможна, слушаем 0.0.0.0 (доступ по белому списку IP)",
+                host)
+            host = "0.0.0.0"
+    except ValueError:
+        pass  # hostname — оставляем как есть
+    return host, port
+
+
 def get_settings_cached():
     from app.config import get_settings
     return get_settings()
@@ -300,7 +374,8 @@ def _open_browser(url: str) -> None:
     except Exception:
         pass
 
-async def amain(host: str, port: int, autostart: bool, open_browser: bool) -> int:
+async def amain(host: str | None, port: int | None, autostart: bool, open_browser: bool) -> int:
+    host, port = _resolve_bind(host, port)
     import uvicorn
     from loguru import logger
 
@@ -344,8 +419,10 @@ def main() -> None:
     import argparse
 
     parser = argparse.ArgumentParser(description="TamaBot — веб-панель управления")
-    parser.add_argument("--host", default=os.environ.get("DASHBOARD_HOST", "127.0.0.1"))
-    parser.add_argument("--port", type=int, default=int(os.environ.get("DASHBOARD_PORT", "8765")))
+    parser.add_argument("--host", default=None,
+                        help="адрес прослушивания (по умолчанию из .env DASHBOARD_HOST)")
+    parser.add_argument("--port", type=int, default=None,
+                        help="порт панели (по умолчанию из .env DASHBOARD_PORT)")
     parser.add_argument("--no-open", action="store_true", help="не открывать браузер")
     parser.add_argument("--no-start", action="store_true", help="не запускать бота автоматически")
     args = parser.parse_args()
