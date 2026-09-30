@@ -426,7 +426,7 @@ async def cb_main_menu_home_alias(cb: CallbackQuery, session: AsyncSession,
     await cb_main_menu(cb, session, state)
 
 async def _render_main_menu(cb: CallbackQuery, session: AsyncSession,
-                            state: FSMContext, page: int = 0) -> None:
+                            state: FSMContext | None, page: int = 0) -> None:
     if cb.message is None:
         await cb.answer("Открой бота командой /start 🙂", show_alert=True)
         return
@@ -441,7 +441,15 @@ async def _render_main_menu(cb: CallbackQuery, session: AsyncSession,
     if not user.onboarded:
         has_pet = await PetRepository(session).has_pet(user.tg_id)
         if not has_pet:
-            await _picker_screen(state, cb=cb)
+            # state может быть None (вызов из catch-all роутера events без FSM);
+            # тогда просто показываем экран выбора вида без записи стейта.
+            if state is not None:
+                await _picker_screen(state, cb=cb)
+            else:
+                await safe_edit_or_answer(cb.message,
+                                          ("🐣 Выбери питомца — у каждого свой характер "
+                                           "и бонусы:\n\n" + species_picker_text()),
+                                          reply_markup=species_picker())
             await cb.answer()
             return
     page %= len(MENU_PAGES) + (1 if _menu_is_admin(cb.from_user.id) else 0)

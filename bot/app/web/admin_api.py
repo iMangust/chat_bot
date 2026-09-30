@@ -6,8 +6,12 @@
 """
 from __future__ import annotations
 
+import asyncio
+import logging
 from datetime import timedelta
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from pydantic import BaseModel
@@ -44,16 +48,84 @@ def _session():
 # загрузке страницы (/api/token) и подставляет в заголовок X-Dashboard-Token.
 
 def _api_tokens() -> set[str]:
-    from app.config import get_settings
-    settings = get_settings()
+    """Допустимые токены панели.
+
+    ВАЖНО: читаем .env НАПРЯМУЮ, а не только кэшированные get_settings():
+    settings кешируются lru_cache при первом импорте модуля, и если процесс
+    панели стартовал без загруженного .env (или переменные поменяли во вкладке
+    «Конфигурация» без рестарта), токен из настроек не совпадал с фактическим —
+    /api/token отдавал пустоту, и все вкладки данных получали 401
+    («информация не выводится»).
+    """
     toks = set()
-    sec = str(getattr(settings, "webhook_secret_token", "") or "")
+    env_vals: dict[str, str] = {}
+    try:
+        from app.web.server import _env_value  # резолвер файла .env
+        for key in ("WEBHOOK_SECRET_TOKEN", "BOT_TOKEN"):
+            v = _env_value(key)
+            if v:
+                env_vals[key] = v
+    except Exception:
+        pass
+    try:
+        from app.config import get_settings
+        settings = get_settings()
+        sec = str(getattr(settings, "webhook_secret_token", "") or "")
+        bot = str(getattr(settings, "bot_token", "") or "")
+    except Exception:
+        sec = bot = ""
+    sec = env_vals.get("WEBHOOK_SECRET_TOKEN") or sec
+    bot = env_vals.get("BOT_TOKEN") or bot
     if sec and sec != "change-me-in-env":
         toks.add(sec)
-    bot = str(getattr(settings, "bot_token", "") or "")
     if len(bot) >= 8:
         toks.add(bot)
     return toks
+
+
+def _db_ready() -> bool:
+    """Есть ли уже инициализированный session_factory (БД поднята)."""
+    try:
+        from app.db import session as dbs
+        return getattr(dbs, "session_factory", None) is not None
+    except Exception:
+        return False
+
+
+_db_init_lock = asyncio.Lock()
+_db_init_done = False
+
+
+async def _ensure_db() -> None:
+    """Гарантировать, что таблицы существуют перед чтением из БД.
+
+    Движок/сессии поднимаются импортом app.db.session (engine создаётся при
+    импорте модуля), но DDL-миграции (create_all + лёгкие миграции колонок/
+    таблиц) живут в on_startup бота. Панель может быть открыта сразу после
+    деплоя, когда эти миграции ещё ни разу не выполнялись (или их надо
+    повторить после пересоздания базы). При первом же запросе к API запускаем
+    их сами — идемпотентно и один раз на процесс. Это лечит «вкладки пустые /
+    ничего не выводится» (500 на несуществующих таблицах).
+    """
+    global _db_init_done
+    if _db_init_done:
+        return
+    async with _db_init_lock:
+        if _db_init_done:
+            return
+        try:
+            from app.db.session import engine
+            from app.main import ensure_events_table, _light_migrations
+            async with engine.begin() as conn:
+                from app.db.models import Base
+                await conn.run_sync(Base.metadata.create_all)
+                await _light_migrations(conn)
+            await ensure_events_table(engine)
+            _db_init_done = True
+            logger.info("admin API: схема БД проверена/создана при первом запросе")
+        except Exception as exc:  # pragma: no cover
+            logger.warning("admin API: ленивая инициализация схемы не удалась: {}",
+                           exc)
 
 
 def require_token(token: str | None) -> None:
@@ -61,8 +133,10 @@ def require_token(token: str | None) -> None:
         raise HTTPException(401, "нет доступа: требуется токен панели")
 
 
-def _tok(x: str | None = Header(default=None, alias="X-Dashboard-Token")) -> None:
+async def _tok(x: str | None = Header(default=None, alias="X-Dashboard-Token")) -> None:
     require_token(x)
+    # до чтения любых данных убедимся, что схема на месте
+    await _ensure_db()
 
 
 @router.get("/token")

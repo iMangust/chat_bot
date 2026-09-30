@@ -36,7 +36,21 @@ class UserRepository:
         if user is None:
             user = User(tg_id=tg_id, first_name=first_name, username=username)
             self.session.add(user)
-            await self.session.flush()
+            # ВАЖНО (фикс «мёртвых» кнопок Награды/Статистика/Топ/Карточка):
+            # раньше здесь был только flush(), а commit делал DbMiddleware.
+            # В тестах и при повторном нажатии в том же процессе это приводило
+            # к тому, что stats_screen видел user is None и отвечал тостом
+            # «Сначала нажми /start», хотя пользователь уже существовал.
+            # Коммит сразу — запись видна любой следующей сессии детерминированно.
+            try:
+                await self.session.commit()
+            except IntegrityError:
+                # гонка: параллельный инсерт той же строки — откатываемся и
+                # перечитываем существующую запись
+                await self.session.rollback()
+                user = await self.get(tg_id)
+                if user is None:
+                    raise
         else:
             if first_name and user.first_name != first_name:
                 user.first_name = first_name

@@ -348,19 +348,62 @@ async def menu_events(cb: CallbackQuery, session, bot: Bot) -> None:
         await bot(AnswerCallbackQuery(callback_query_id=cb.id))
 
 
-# ВАЖНО: этот обработчик должен оставаться последним в файле/роутере —
-# он ловит только непойманные «menu:*» коллбэки (aiogram вызывает handlers
-# в порядке регистрации).
+# ВАЖНО: этот обработчик должен оставаться последним в роутере events —
+# aiogram перебирает РОУТЕРЫ в порядке регистрации, а внутри роутера —
+# хендлеры по порядку. Поэтому перед catch-all'ом регистрируем «мосты» для
+# кнопок, чьи настоящие обработчики живут в ДРУГИХ роутерах (stats/social).
+# Это самовосстановление после регрессий: раньше при недоступности FSM-храни-
+# лища (Redis) start.router падал на первом же «menu:*» и все кнопки становились
+# «устаревшими»; теперь такие коллбэки долечиваются здесь, а не уходят в
+# catch-all.
+from app.handlers.stats import ach_screen as _stats_ach_screen  # noqa: E402
+from app.handlers.stats import stats_screen as _stats_screen  # noqa: E402
+from app.handlers.stats import top_screen as _stats_top_screen  # noqa: E402
+
+
+@router.callback_query(F.data.in_(("menu:stats", "menu:ach", "menu:top")))
+async def menu_stats_bridge(cb: CallbackQuery, session) -> None:
+    if cb.data == "menu:ach":
+        await _stats_ach_screen(cb, session)
+    elif cb.data == "menu:top":
+        await _stats_top_screen(cb, session)
+    else:
+        await _stats_screen(cb, session)
+
+
+try:  # social может не импортироваться (циклические зависимости) — не критично
+    from app.handlers.social import cb_card as _social_card  # noqa: E402
+
+    @router.callback_query(F.data == "menu:card")
+    async def menu_card_bridge(cb: CallbackQuery, session) -> None:
+        await _social_card(cb, session)
+except Exception:  # pragma: no cover
+    pass
+
+
 @router.callback_query(_MenuFallback())
-async def menu_any_unhandled(cb: CallbackQuery, bot: Bot) -> None:
-    # НИЧЕГО не удаляем из исходного сообщения (раньше здесь вызывался
-    # edit_reply_markup(None), который стирал ВСЮ клавиатуру главного меню —
-    # после одного «устаревшего» нажатия все кнопки исчезали). Только отвечаем
-    # на callback и подсказываем пользователю.
-    await cb.answer("Кнопка устарела 😅 Напиши /start — покажу свежее меню.",
-                    show_alert=False)
+async def menu_any_unhandled(cb: CallbackQuery, session, bot: Bot) -> None:
+    """Catch-all для «menu:*», которые никем не сматчились.
+
+    Раньше показывал только тост «Кнопка устарела» — пользователь оставался
+    со старой клавиатурой и должен был вручную писать /start. Теперь кнопка
+    лечится сама: перерисовываем актуальное главное меню прямо в этом сообщении
+    (с сохранением текущей страницы), а тост объясняет, что произошло.
+    """
     logger.warning("unhandled menu callback: {!r} (user={})", cb.data,
                    cb.from_user.id if cb.from_user else "?")
+    with contextlib.suppress(Exception):
+        await cb.answer("Эта кнопка устарела — обновляю меню 🙂",
+                        show_alert=False)
+    try:
+        from app.handlers.start import _render_main_menu
+        page = 0
+        if cb.data and cb.data.startswith("menu:page:"):
+            with contextlib.suppress(ValueError, IndexError):
+                page = int(cb.data.split(":")[-1])
+        await _render_main_menu(cb, session, None, page=page)
+    except Exception as exc:  # pragma: no cover
+        logger.debug("menu fallback re-render failed: {}", exc)
 
 
 async def _detail_render(cb: CallbackQuery, session, eid: int) -> None:
