@@ -24,7 +24,10 @@ def _dt(v: Any) -> str | None:
     if v is None:
         return None
     try:
-        return v.strftime("%Y-%m-%d %H:%M:%S")
+        # Панель смотрят на Камчатке: моменты из БД (UTC или старые naive-
+        # локальные метки) приводим к местному времени перед выводом.
+        from app.utils.local_time import localize
+        return localize(v).strftime("%Y-%m-%d %H:%M")
     except Exception:
         return str(v)
 

@@ -12,7 +12,7 @@ from app.db.repositories import ActivityRepository, UserRepository
 from app.services.achievements import AchievementService
 from app.utils.html_text import esc
 from app.utils.redis import set_cooldown
-from app.utils.local_time import now as local_now
+from app.utils.local_time import db_bound, now as local_now
 
 def _aware(dt: datetime) -> datetime:
     from app.utils.local_time import localize
@@ -190,7 +190,7 @@ class ActivityService:
             select(func.count()).select_from(ReactionLog).where(
                 ReactionLog.from_user == from_user,
                 ReactionLog.to_user == to_user,
-                ReactionLog.created_at >= day_start,
+                ReactionLog.created_at >= db_bound(day_start),
                 ReactionLog.is_counted.is_(True),
             )
         )).scalar_one()

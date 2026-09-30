@@ -13,7 +13,7 @@ from app.db.models import (
     ReactionLog, User, UserAchievement, UserStat, utcnow,
 )
 from app.services.access import numeric_chat_id
-from app.utils.local_time import now as local_now
+from app.utils.local_time import db_bound, now as local_now
 
 class UserRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -72,7 +72,7 @@ class UserRepository:
     async def active_since(self, since: datetime) -> list[int]:
         stmt = (
             select(ChatMessageLog.user_id)
-            .where(ChatMessageLog.created_at >= since, ChatMessageLog.is_counted.is_(True))
+            .where(ChatMessageLog.created_at >= db_bound(since), ChatMessageLog.is_counted.is_(True))
             .distinct()
         )
         return list((await self.session.execute(stmt)).scalars())
@@ -123,7 +123,7 @@ class UserRepository:
         cnt = func.count().label("cnt")
         sub = (
             select(ChatMessageLog.user_id.label("uid"), cnt)
-            .where(ChatMessageLog.created_at >= since, ChatMessageLog.is_counted.is_(True))
+            .where(ChatMessageLog.created_at >= db_bound(since), ChatMessageLog.is_counted.is_(True))
             .group_by(ChatMessageLog.user_id)
             .order_by(cnt.desc())
             .limit(limit)
@@ -140,7 +140,7 @@ class UserRepository:
         cnt = func.count().label("cnt")
         sub = (
             select(ReactionLog.to_user.label("uid"), cnt)
-            .where(ReactionLog.created_at >= since, ReactionLog.is_counted.is_(True))
+            .where(ReactionLog.created_at >= db_bound(since), ReactionLog.is_counted.is_(True))
             .group_by(ReactionLog.to_user)
             .order_by(cnt.desc())
             .limit(limit)
@@ -205,7 +205,7 @@ class ActivityRepository:
             )
         )
         if since is not None:
-            stmt = stmt.where(ChatMessageLog.created_at >= since)
+            stmt = stmt.where(ChatMessageLog.created_at >= db_bound(since))
         return (await self.session.execute(stmt)).scalar_one()
 
     async def daily_counts(self, tg_id: int, days: int = 7,
@@ -220,7 +220,7 @@ class ActivityRepository:
             .where(
                 ChatMessageLog.user_id == tg_id,
                 ChatMessageLog.is_counted.is_(True),
-                ChatMessageLog.created_at >= start.replace(hour=0, minute=0, second=0, microsecond=0),
+                db_bound(start.replace(hour=0, minute=0, second=0, microsecond=0)),
             )
             .group_by("d")
         )
@@ -235,7 +235,7 @@ class ActivityRepository:
                               since: datetime | None = None) -> dict[str, int]:
         cond = [ChatMessageLog.user_id == tg_id, ChatMessageLog.is_counted.is_(True)]
         if since is not None:
-            cond.append(ChatMessageLog.created_at >= since)
+            cond.append(ChatMessageLog.created_at >= db_bound(since))
         stmt = (
             select(ChatMessageLog.media_type, func.count(),
                    func.coalesce(func.sum(ChatMessageLog.is_reply.cast(Integer)), 0),
@@ -282,7 +282,8 @@ class ActivityRepository:
         return True
 
     async def day_totals(self, day: datetime) -> list[tuple[int, int]]:
-        start = day.replace(hour=0, minute=0, second=0, microsecond=0)
+        # Границы «локального дня» переводим в UTC — created_at хранится в UTC.
+        start = db_bound(day.replace(hour=0, minute=0, second=0, microsecond=0))
         stmt = (
             select(ChatMessageLog.user_id, func.count().label("cnt"))
             .where(

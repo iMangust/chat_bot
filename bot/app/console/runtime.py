@@ -292,6 +292,23 @@ class BotRuntime:
             out.append((job.id, nxt.strftime("%d.%m %H:%M:%S") if nxt else "—"))
         return out
 
+    def reschedule_cron_jobs(self) -> None:
+        """Пересоздаёт cron-джобы с текущими часами из Settings (после
+        сохранения DAILY_REPORT_HOUR / *_REMINDER_HOUR без рестарта)."""
+        if self._scheduler is None or not self._scheduler.running:
+            return
+        try:
+            from app.tasks.scheduler import build_scheduler
+            new = build_scheduler(self.bot)
+            old = self._scheduler
+            new.start()
+            self._scheduler = new
+            with contextlib.suppress(Exception):
+                old.shutdown(wait=False)
+        except Exception as exc:
+            logger.warning("reschedule_cron_jobs failed: {}: {}",
+                           type(exc).__name__, exc)
+
 runtime = BotRuntime()
 
 def setup_file_logging(level: str = "INFO") -> Path:

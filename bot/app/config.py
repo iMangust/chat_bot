@@ -147,10 +147,12 @@ class Settings(BaseSettings):
     dashboard_allowed_ips: str = ""
     dashboard_trust_proxy: bool = False
 
-    tz_offset_hours: int = 3
-    daily_report_hour_utc: int = 17
-    morning_reminder_hour_utc: int = 7
-    evening_reminder_hour_utc: int = 16
+    tz_offset_hours: int = 12  # Камчатка (UTC+12); см. Asia/Kamchatka
+    # Часы отправки в ЛОКАЛЬНОМ времени (TZ_OFFSET_HOURS), а не в UTC:
+    # раньше назывались *_utc, но планировщик работал в MSK+9 — путаница.
+    daily_report_hour: int = 21
+    morning_reminder_hour: int = 9
+    evening_reminder_hour: int = 20
     pet_warning_min_hours: int = 6
     streak_warn_threshold_sec: int = 6 * 3600
     invite_reward_coins: int = 50
@@ -192,4 +194,62 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()
+    s = Settings()
+    # Обратная совместимость старых .env: раньше часы рассылок задавались в UTC
+    # (DAILY_REPORT_HOUR_UTC и т.п.), теперь — в локальном времени. Если в окружении
+    # остались только старые ключи, пересчитываем их в локальные часы.
+    _legacy_map = {
+        "daily_report_hour": "DAILY_REPORT_HOUR_UTC",
+        "morning_reminder_hour": "MORNING_REMINDER_HOUR_UTC",
+        "evening_reminder_hour": "EVENING_REMINDER_HOUR_UTC",
+    }
+    for field, env_key in _legacy_map.items():
+        raw = os.environ.get(env_key)
+        if raw is None or not str(raw).strip():
+            continue
+        new_key = field.upper()
+        if os.environ.get(new_key) is not None:  # явное новое значение важнее
+            continue
+        try:
+            legacy_utc = int(str(raw))
+        except ValueError:
+            continue
+        object.__setattr__(s, field, (legacy_utc + s.tz_offset_hours) % 24)
+    # Pydantic Settings по умолчанию не читает переменные окружения в момент
+    # вызова — фиксируем часы рассылок явно, чтобы их можно было менять
+    # через панель без рестарта (HOT_KEYS).
+    for field in _legacy_map:
+        env_val = os.environ.get(field.upper())
+        if env_val is not None and str(env_val).strip():
+            try:
+                object.__setattr__(s, field, int(str(env_val)))
+            except ValueError:
+                pass
+    return s
+
+
+def apply_hot_schedule_keys(updates: dict[str, str]) -> None:
+    """Применяет DAILY_REPORT_HOUR / MORNING|EVENING_REMINDER_HOUR из сохранённых
+    настроек к живому экземпляру Settings (без рестарта процесса)."""
+    s = get_settings()
+    mapping = {"DAILY_REPORT_HOUR": "daily_report_hour",
+               "MORNING_REMINDER_HOUR": "morning_reminder_hour",
+               "EVENING_REMINDER_HOUR": "evening_reminder_hour"}
+    for key, field in mapping.items():
+        val = updates.get(key)
+        if val is None or not str(val).strip():
+            continue
+        try:
+            object.__setattr__(s, field, int(str(val)))
+        except ValueError:
+            pass
+
+
+def utc_hour_of(local_hour: int) -> int:
+    """Локальный час (TZ_OFFSET_HOURS) -> час в UTC."""
+    return (local_hour - get_settings().tz_offset_hours) % 24
+
+
+def local_hour_of(utc_hour: int) -> int:
+    """Час в UTC -> локальный час (TZ_OFFSET_HOURS)."""
+    return (utc_hour + get_settings().tz_offset_hours) % 24

@@ -10,11 +10,19 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 def utcnow() -> datetime:
-    from app.utils.local_time import now as kamchatka_now
-    return kamchatka_now()
+    """Момент в UTC — колонки created_at/last_seen хранятся в UTC.
+
+    (Раньше функция называлась utcnow, но возвращала камчатское время —
+    из-за этого «вчерашний день» в стрик-проверке сдвигался на 12 часов.)
+    """
+    from app.utils.local_time import now as _unused  # noqa: F401 (совместимость)
+    from app.utils.local_time import utc_now
+    return utc_now()
 
 def localnow() -> datetime:
-    return utcnow()
+    """Камчатское время для пользовательских расчётов (день/сутки, стрики)."""
+    from app.utils.local_time import now
+    return now()
 
 class Base(DeclarativeBase):
     __table_args__ = {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"}

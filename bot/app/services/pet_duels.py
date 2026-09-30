@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import random
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import Pet, PetDuel, User
 from app.services.notifications import queue_notification
 from app.utils.html_text import esc
-from app.utils.local_time import now as local_now
+from app.utils.local_time import localize, now as local_now
 
 DUEL_XP_WIN = 12
 DUEL_XP_LOSS = 3
@@ -64,17 +64,16 @@ async def pick_opponent(session: AsyncSession, pet: Pet) -> Pet | None:
     return random.choice(rows) if rows else None
 
 def duel_cooldown_left(pet: Pet, now=None) -> int:
+    from app.utils.local_time import from_iso
     now = now or local_now()
     last = (pet.settings_extra or {}).get("duel_last_ts")
     if not last:
         return 0
-    try:
-        ts = datetime.fromisoformat(last)
-    except (TypeError, ValueError):
+    ts = from_iso(str(last))  # naive-метка = локальное время, как её и писали
+    if ts is None:
         return 0
-    if ts.tzinfo is None:
-        ts = ts.replace(tzinfo=timezone.utc)
-    return max(0, int(FIGHT_COOLDOWN_SEC - (now - ts).total_seconds()))
+    now_a = now if now.tzinfo else localize(now)
+    return max(0, int(FIGHT_COOLDOWN_SEC - (now_a - ts).total_seconds()))
 
 async def fight(session: AsyncSession, pet: Pet) -> dict:
     now = local_now()
@@ -161,7 +160,7 @@ async def finish_week(session: AsyncSession, prev_week: str | None = None) -> bo
     from app.db.models import LeaderboardSnapshot
     now = local_now()
     if prev_week is None:
-        iso_dt = datetime(now.year, now.month, now.day, tzinfo=timezone.utc) - __import__("datetime").timedelta(days=7)
+        iso_dt = now - timedelta(days=7)  # маркер недели — по камчатскому времени
         prev_week = week_key(iso_dt)
     marker = f"pet_duel_award:{prev_week}"
     already = (await session.execute(

@@ -6,8 +6,10 @@ from sqlalchemy import Integer, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (ChatMessageLog, LeaderboardSnapshot, Pet, ReactionLog,
-                           User, UserStat, utcnow)
+                           User, UserStat)
+from app.utils.local_time import now as local_now
 from app.services.notifications import queue_notification
+from app.utils.local_time import db_bound
 from app.utils.html_text import esc as _esc
 
 MEDALS = {1: "🥇", 2: "🥈", 3: "🥉"}
@@ -28,7 +30,7 @@ async def top_messages(session: AsyncSession, since: datetime | None,
     cnt = func.count(ChatMessageLog.id).label("c")
     q = (select(User, cnt)
          .join(ChatMessageLog, ChatMessageLog.user_id == User.tg_id)
-         .where(ChatMessageLog.created_at >= since, ChatMessageLog.is_counted.is_(True))
+         .where(ChatMessageLog.created_at >= db_bound(since), ChatMessageLog.is_counted.is_(True))
          .group_by(User.tg_id).order_by(cnt.desc()).limit(limit))
     return [(u, c) for u, c in (await session.execute(q)).all() if c > 0]
 
@@ -42,7 +44,7 @@ async def top_reactions(session: AsyncSession, since: datetime | None,
     cnt = func.count(ReactionLog.id).label("c")
     q = (select(User, cnt)
          .join(ReactionLog, ReactionLog.to_user == User.tg_id)
-         .where(ReactionLog.created_at >= since)
+         .where(ReactionLog.created_at >= db_bound(since))
          .group_by(User.tg_id).order_by(cnt.desc()).limit(limit))
     return [(u, c) for u, c in (await session.execute(q)).all() if c > 0]
 
@@ -56,7 +58,7 @@ async def top_reactions_given(session: AsyncSession, since: datetime | None,
     cnt = func.count(ReactionLog.id).label("c")
     q = (select(User, cnt)
          .join(ReactionLog, ReactionLog.from_user == User.tg_id)
-         .where(ReactionLog.created_at >= since)
+         .where(ReactionLog.created_at >= db_bound(since))
          .group_by(User.tg_id).order_by(cnt.desc()).limit(limit))
     return [(u, c) for u, c in (await session.execute(q)).all() if c > 0]
 
@@ -64,7 +66,7 @@ async def top_karma(session: AsyncSession, since: datetime | None,
                     limit: int = 10) -> list[tuple[User, int]]:
     cond = [ChatMessageLog.is_counted.is_(True)]
     if since is not None:
-        cond.append(ChatMessageLog.created_at >= since)
+        cond.append(ChatMessageLog.created_at >= db_bound(since))
     karma = (func.coalesce(func.sum(ChatMessageLog.is_reply.cast(Integer)), 0)
              + func.coalesce(func.sum(ChatMessageLog.mentions_count), 0)).label("k")
     q = (select(User, karma)
@@ -162,7 +164,9 @@ def leaderboard_text(payload: dict) -> str:
 
 async def snapshot_weekly(session: AsyncSession,
                           now: datetime | None = None) -> dict | None:
-    now = now or utcnow()
+    # Недельный топ считается по КАМЧАТСКИМ понедельникам: границы потом
+    # переводятся в UTC внутри top_* (db_bound).
+    now = now or local_now()
     this_monday = (now - timedelta(days=now.weekday())).replace(
         hour=0, minute=0, second=0, microsecond=0)
     week_start = this_monday - timedelta(days=7)

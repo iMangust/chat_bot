@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import timedelta, timezone
+from datetime import datetime, timedelta, timezone
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
@@ -20,7 +20,7 @@ from app.services.notifications import (build_daily_report, build_pet_sad_text,
 from app.services.pet_social import list_friends
 from app.services.tamagotchi import TamagotchiService, compute_mood
 from app.utils.redis import acquire_lock, release_lock
-from app.utils.local_time import now as local_now
+from app.utils.local_time import KAMCHATKA_TZ, localize, now as local_now
 
 async def decay_all_pets(bot: Bot) -> None:
     if not await acquire_lock("decay", ttl_sec=60 * 25):
@@ -121,10 +121,9 @@ async def check_streak_expiry(bot: Bot) -> None:
             for u in users:
                 last_date = None
                 if u.last_active_date is not None:
-                    la = u.last_active_date
-                    if la.tzinfo is None:
-                        la = la.replace(tzinfo=timezone.utc)
-                    last_date = la.astimezone(timezone.utc).date()
+                    # День стрика — КАМЧАТСКИЙ календарный день; naive-метки из
+                    # старых БД считаем локальными (см. localize).
+                    last_date = localize(u.last_active_date).date()
                 if last_date != yesterday:
                     if u.streak_days > 0:
                         expired += 1
@@ -313,7 +312,14 @@ async def weather_updater(bot: Bot) -> None:
         logger.warning("weather updater failed: {}: {}", type(exc).__name__, exc)
 
 def build_scheduler(bot: Bot) -> AsyncIOScheduler:
-    sched = AsyncIOScheduler(timezone="UTC")
+    # Планировщик живёт в КАМЧАТСКОЙ зоне: в расписании указываются привычные
+    # локальные часы (DAILY_REPORT_HOUR и т.п.), а не UTC.
+    from zoneinfo import ZoneInfo
+    try:
+        tz = ZoneInfo("Asia/Kamchatka")
+    except Exception:
+        tz = KAMCHATKA_TZ
+    sched = AsyncIOScheduler(timezone=tz)
     sched.add_job(decay_all_pets, "interval", minutes=30, args=[bot],
                   max_instances=1, coalesce=True, id="decay")
     sched.add_job(flush_notifications, "interval", minutes=1, args=[bot],
@@ -321,16 +327,17 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
     sched.add_job(scan_channel_members, "interval",
                   minutes=get_settings().channel_scan_minutes, args=[bot],
                   max_instances=1, coalesce=True, id="chanscan")
+    # 00:15 по Камчатке: к этому моменту локальный день гарантированно сменился
     sched.add_job(check_streak_expiry, "cron", hour=0, minute=15, args=[bot],
                   id="streaks")
     st = get_settings()
-    sched.add_job(daily_reports, "cron", hour=st.daily_report_hour_utc, minute=5,
+    sched.add_job(daily_reports, "cron", hour=st.daily_report_hour, minute=5,
                   args=[bot], id="daily", max_instances=1, coalesce=True)
-    sched.add_job(evening_streak_warnings, "cron", hour=st.evening_reminder_hour_utc,
+    sched.add_job(evening_streak_warnings, "cron", hour=st.evening_reminder_hour,
                   minute=40, args=[bot], id="streakwarn", max_instances=1, coalesce=True)
-    sched.add_job(weekly_leaderboard, "cron", day_of_week="mon", hour=0, minute=30,
+    sched.add_job(weekly_leaderboard, "cron", day_of_week="mon", hour=8, minute=30,
                   args=[bot], id="weeklylb", max_instances=1, coalesce=True)
-    sched.add_job(weekly_arena_finish, "cron", day_of_week="mon", hour=0, minute=40,
+    sched.add_job(weekly_arena_finish, "cron", day_of_week="mon", hour=8, minute=40,
                   args=[bot], id="weeklyarena", max_instances=1, coalesce=True)
     if st.mtproto_sync_minutes > 0 and st.telegram_api_id and st.telegram_api_hash:
         sched.add_job(mtproto_delta_sync, "interval", minutes=st.mtproto_sync_minutes,

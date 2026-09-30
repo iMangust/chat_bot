@@ -107,6 +107,24 @@ async def release_lock(name: str) -> None:
     r = await _try_redis()
     if r is not None:
         await r.delete(f"lock:{name}")
+    else:
+        _mem_store.pop(f"lock:{name}", None)
+
+
+async def renew_lock(name: str, ttl_sec: int) -> bool:
+    """Продлить/взять лок (idempotent): используется для самолечения cron-джоб,
+    чей TTL больше периода запуска."""
+    r = await _try_redis()
+    if r is not None:
+        try:
+            return bool(await r.set(f"lock:{name}", "1", xx=False, ex=_norm_ttl(ttl_sec)))
+        except TypeError:
+            key_full = f"lock:{name}"
+            await r.set(key_full, "1")
+            await r.expire(key_full, _norm_ttl(ttl_sec))
+            return True
+    _mem_store[f"lock:{name}"] = time.monotonic() + float(_norm_ttl(ttl_sec))
+    return True
 
 async def remember_for(name: str, ttl_sec: int) -> bool:
     r = await _try_redis()
