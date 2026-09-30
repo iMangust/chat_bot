@@ -146,6 +146,8 @@ class Settings(BaseSettings):
     dashboard_port: int = 8765
     dashboard_allowed_ips: str = ""
     dashboard_trust_proxy: bool = False
+    # Явный токен доступа к API панели (приоритет над WEBHOOK_SECRET_TOKEN/BOT_TOKEN)
+    dashboard_token: str = ""
 
     tz_offset_hours: int = 12  # Камчатка (UTC+12); см. Asia/Kamchatka
     # Часы отправки в ЛОКАЛЬНОМ времени (TZ_OFFSET_HOURS), а не в UTC:

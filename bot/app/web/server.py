@@ -9,11 +9,16 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 WEB_DIR = Path(__file__).resolve().parent
 
 app = FastAPI(title="TamaBot Control Panel", docs_url=None, redoc_url=None)
+
+# Статика панели (/static/data_views.js и т.д.). Без этого mount браузер
+# получал 404 на data_views.js — все вкладки с данными оставались пустыми.
+app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="static")
 
 from app.web.admin_api import router as admin_router  # noqa: E402
 app.include_router(admin_router)

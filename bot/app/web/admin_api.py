@@ -53,6 +53,9 @@ def _session():
 def _api_tokens() -> set[str]:
     """Допустимые токены панели.
 
+    Приоритет: DASHBOARD_TOKEN (явный токен панели) > WEBHOOK_SECRET_TOKEN
+    (если задан и не дефолтный) > BOT_TOKEN.
+
     ВАЖНО: читаем .env НАПРЯМУЮ, а не только кэшированные get_settings():
     settings кешируются lru_cache при первом импорте модуля, и если процесс
     панели стартовал без загруженного .env (или переменные поменяли во вкладке
@@ -64,7 +67,7 @@ def _api_tokens() -> set[str]:
     env_vals: dict[str, str] = {}
     try:
         from app.web.server import _env_value  # резолвер файла .env
-        for key in ("WEBHOOK_SECRET_TOKEN", "BOT_TOKEN"):
+        for key in ("DASHBOARD_TOKEN", "WEBHOOK_SECRET_TOKEN", "BOT_TOKEN"):
             v = _env_value(key)
             if v:
                 env_vals[key] = v
@@ -73,12 +76,16 @@ def _api_tokens() -> set[str]:
     try:
         from app.config import get_settings
         settings = get_settings()
+        dash = str(getattr(settings, "dashboard_token", "") or "")
         sec = str(getattr(settings, "webhook_secret_token", "") or "")
         bot = str(getattr(settings, "bot_token", "") or "")
     except Exception:
-        sec = bot = ""
+        dash = sec = bot = ""
+    dash = env_vals.get("DASHBOARD_TOKEN") or dash
     sec = env_vals.get("WEBHOOK_SECRET_TOKEN") or sec
     bot = env_vals.get("BOT_TOKEN") or bot
+    if dash:
+        toks.add(dash)
     if sec and sec != "change-me-in-env":
         toks.add(sec)
     if len(bot) >= 8:

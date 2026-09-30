@@ -187,8 +187,8 @@ footer{padding:7px 22px;border-top:1px solid var(--border);font-size:11.5px;colo
 .form input,.form textarea,.form select{background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 10px;font-size:13.5px;font-family:inherit}
 .form.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .form .full{grid-column:1/-1}
+.celltxt{width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 6px;font-size:12.5px;font-family:monospace}
 </style>
-  .celltxt{width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 6px;font-size:12.5px;font-family:monospace}
 </head>
 <body>
 <header>
@@ -662,6 +662,7 @@ function escapeHtml(s){return String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","
 setInterval(()=>{if(state.status&&state.status.settings&&!$("#liveLevel").value)
   $("#liveLevel").options[0].textContent="live-уровень: "+(state.status.settings.logLevel||"INFO");},5000);
 </script>
-<script src="/static/data_views.js"></script>
+<script src="/static/data_views.js" onerror="var t=document.getElementById('dvErr');if(t)t.style.display='block'"></script>
+<div id="dvErr" style="display:none;position:fixed;left:50%;bottom:16px;transform:translateX(-50%);background:#b3261e;color:#fff;padding:10px 18px;border-radius:10px;font-size:14px;z-index:999">⚠ Не загружен /static/data_views.js — вкладки с данными работать не будут. Обновите страницу (Ctrl+F5) или пересоберите/перезапустите панель.</div>
 </body>
 </html>
