@@ -218,7 +218,15 @@ async def _render_list(cb: CallbackQuery, session, bot: Bot | None = None) -> No
                 return
             raise
         return
-    await safe_edit_or_answer(cb.message, text, reply_markup=markup)
+    # cb.message отсутствует (например, инлайн-сообщение в каталоге) или bot
+    # не передан (вызов из админ-хелперов) — используем старый путь; иначе
+    # safe_edit_or_answer(None, ...) падал с AttributeError.
+    if cb.message is not None:
+        await safe_edit_or_answer(cb.message, text, reply_markup=markup)
+    elif bot is not None:
+        from aiogram.methods import SendMessage
+        await bot(SendMessage(chat_id=cb.from_user.id, text=text,
+                              parse_mode=ParseMode.HTML, reply_markup=markup))
 
 
 async def _selfheal_reload_events(exc: Exception, session) -> list:

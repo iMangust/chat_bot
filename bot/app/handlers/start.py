@@ -416,6 +416,15 @@ async def cb_main_menu_page(cb: CallbackQuery, session: AsyncSession,
 async def cb_main_menu_noop(cb: CallbackQuery) -> None:
     await cb.answer()
 
+# Совместимость со старыми клавиатурами: в боте никогда не было обработчика
+# «menu:home» (домашняя кнопка — это «menu:main»). Если у пользователя в чате
+# осталось сообщение со старой разметки, нажатие такой кнопки раньше уходило в
+# catch-all и показывало «Кнопка устарела». Теперь просто рендерим главное меню.
+@router.callback_query(F.data == "menu:home")
+async def cb_main_menu_home_alias(cb: CallbackQuery, session: AsyncSession,
+                                  state: FSMContext) -> None:
+    await cb_main_menu(cb, session, state)
+
 async def _render_main_menu(cb: CallbackQuery, session: AsyncSession,
                             state: FSMContext, page: int = 0) -> None:
     if cb.message is None:
