@@ -98,6 +98,13 @@ async def merch_screen(cb: CallbackQuery, session) -> None:
     if s.merch_url:
         b.row(InlineKeyboardButton(text="🌐 Открыть магазин мерча", url=s.merch_url))
         _vsplit(b)
+    # Кнопка управления для админов мерча — по аналогии с экраном
+    # «📅 Мероприятия», где админу показывается «🛠 Управление мероприятиями».
+    # Раньше в этом экране такой кнопки не было вовсе, и попасть в
+    # «madmin:home» можно было только через страницу «Инструменты админа»
+    # главного меню.
+    if _is_merch_admin(cb.from_user.id):
+        _vbtn(b, "🛠 Управление мерчем", "madmin:home")
     _vbtn(b, "🏠 Меню", "menu:main")
     await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=b.as_markup())
     await cb.answer()
@@ -492,7 +499,16 @@ def _vrow(b):
     b.adjust(1)
 
 
+# Последний выбранный админом код категории. Нужен для кнопки «➕ Новый товар»
+# на главной странице управления: обработчик зарегистрирован по префиксу
+# "madmin:addprod:" и читает parts[2] (код категории). Раньше кнопка вела на
+# голлый "madmin:addprod" — ни под один фильтр он не попадал, ловился
+# catch-all'ем «Кнопка устарела», и кнопка выглядела мёртвой.
+_last_cat_code: str = ""
+
+
 def _admin_kb(extra_rows=None) -> InlineKeyboardBuilder:
+    global _last_cat_code
     b = InlineKeyboardBuilder()
     for row in (extra_rows or []):
         for text, cb_data in row:
@@ -502,7 +518,12 @@ def _admin_kb(extra_rows=None) -> InlineKeyboardBuilder:
     _vbtn(b, "📋 Брони", "merch:myres")
     _vsplit(b)
     _vbtn(b, "➕ Новая категория", "madmin:addcat")
-    _vbtn(b, "➕ Новый товар", "madmin:addprod")
+    if _last_cat_code:
+        add_prod_cb = f"madmin:addprod:{_last_cat_code}"
+    else:
+        # Категорию ещё не выбирали — ведём в каталог, где она выбирается.
+        add_prod_cb = "madmin:catalog"
+    _vbtn(b, "➕ Новый товар", add_prod_cb)
     _vsplit(b)
     _vbtn(b, "⬅️ В магазин", "menu:merch")
     _vbtn(b, "🏠 Меню", "menu:main")
@@ -691,6 +712,8 @@ async def madmin_cat_products(cb: CallbackQuery, session) -> None:
     if not _is_merch_admin(cb.from_user.id):
         return await cb.answer("Только для админов мерча 🙅", show_alert=True)
     code = cb.data.split(":")[2]
+    global _last_cat_code
+    _last_cat_code = code
     repo = MerchRepository(session)
     cat = await repo.get_category(code)
     if cat is None:
@@ -715,15 +738,30 @@ async def madmin_cat_products(cb: CallbackQuery, session) -> None:
     await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=b.as_markup())
     await cb.answer()
 
-@router.callback_query(F.data.startswith("madmin:addprod:"))
+@router.callback_query(F.data.startswith("madmin:addprod"))
 async def madmin_addprod_start(cb: CallbackQuery, session, state: FSMContext) -> None:
     if not _is_merch_admin(cb.from_user.id):
         return await cb.answer("Только для админов мерча 🙅", show_alert=True)
-    code = cb.data.split(":")[2]
+    parts = cb.data.split(":")
+    code = parts[2] if len(parts) > 2 else ""
     repo = MerchRepository(session)
-    cat = await repo.get_category(code)
+    cat = await repo.get_category(code) if code else None
     if cat is None:
-        return await cb.answer("Категория не найдена 😅", show_alert=True)
+        # Категория не указана/не найдена (например, кнопка «➕ Новый товар»
+        # с главной страницы управления без выбранной категории) — предложим
+        # выбрать, вместо тихой ошибки.
+        cats = await repo.categories()
+        if not cats:
+            return await cb.answer("Сначала создай категорию 🙅", show_alert=True)
+        b = InlineKeyboardBuilder()
+        for c in cats:
+            b._vb(f"{c.icon} {c.title}", f"madmin:addprod:{c.code}")
+        _vsplit(b)
+        _vbtn(b, "⬅️ Назад", "madmin:home")
+        await safe_edit_or_answer(
+            cb.message, "🧢 <b>Новый товар</b>\n\nВыбери категорию:",
+            reply_markup=b.as_markup())
+        return await cb.answer()
     await state.set_state(MerchStates.awaiting)
     await state.update_data(step="prod_name", cat_code=code)
     b = InlineKeyboardBuilder()
