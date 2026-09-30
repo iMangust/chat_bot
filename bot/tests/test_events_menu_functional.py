@@ -153,8 +153,84 @@ async def _run() -> None:
     kb = json.dumps(src.get("reply_markup", {}), ensure_ascii=False)
     assert "menu:main" in kb, f"В клавиатуре нет кнопки Меню: {kb}"
 
+    # 5. Кнопки в клавиатуре НЕ задублированы (as_markup() должен вызываться
+    #    ровно один раз; иначе Telegram отклоняет edit с BUTTON_DATA_INVALID).
+    assert kb.count("menu:events") <= 1, \
+        f"Дублирование кнопок в разметке: {kb}"
+
     print("FUNCTIONAL TEST OK: menu:events -> handler called, "
           "answer sent, empty-list stub rendered")
+
+
+async def _run_repeat_press() -> None:
+    """Повторное нажатие «Мероприятия» при уже открытом экране.
+
+    Telegram отвечает BadRequest «message is not modified». Это НЕ должно
+    приводить ни к какой видимой поломке: callback answer'ится, из исходного
+    сообщения ничего не вычищается (клавиатура остаётся на месте).
+    """
+    from aiogram import Bot, Dispatcher
+
+    import app.db.session as dbs
+    from app.config import get_settings
+    from app.db.models import Base
+    from app.handlers import (access as access_handlers, admin, arena, errors,
+                              events, games, merch, settings as settings_h,
+                              shop, social, start, stats, tamagotchi, tracker)
+    from app.main import _make_fsm_storage, probe_fsm_storage
+
+    engine = dbs.engine
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    dp = Dispatcher(storage=await probe_fsm_storage(
+        _make_fsm_storage(get_settings().redis_url)))
+    dp.update.outer_middleware(dbs.DbMiddleware())
+    dp.callback_query.outer_middleware(errors.ErrorNotifyMiddleware())
+    # Роутеры модулей уже «прикреплены» к первому Dispatcher (модули синглтоны)
+    # — отвязываем их перед повторной регистрацией во втором диспетчере.
+    routers = [errors.error_router, admin.router, access_handlers.router,
+               start.router, tracker.router, tamagotchi.router, games.router,
+               shop.router, merch.router, events.router, social.router,
+               arena.router, stats.router, settings_h.router]
+    for rt in routers:
+        parent = getattr(rt, "_parent_router", None)
+        if parent is not None and rt in parent.sub_routers:
+            parent.sub_routers.remove(rt)
+        rt._parent_router = None
+        for child in list(rt.sub_routers):
+            child._parent_router = None
+        rt.sub_routers.clear()
+    dp.include_routers(*routers)
+    dp.errors.register(errors.on_error)
+
+    class NotModifiedSession(FakeSession):
+        async def make_request(self, bot, method, timeout=None):
+            name = type(method).__name__
+            if name == "EditMessageText":
+                from aiogram.exceptions import TelegramBadRequest
+                raise TelegramBadRequest(method, {
+                    "ok": False, "error_code": 400,
+                    "description": "Bad Request: message is not modified"})
+            return await super().make_request(bot, method, timeout)
+
+    session = NotModifiedSession()
+    bot = Bot(token=get_settings().bot_token, session=session)
+
+    upd = _build_update(bot)
+    # первое нажатие падает на not-modified, второе — проверяем отсутствие
+    # edit_reply_markup(None) (удаления клавиатуры) и наличие ответа на callback
+    await dp.feed_update(bot, upd)
+
+    names = [m for m, _ in session.record]
+    answered = [d for m, d in session.record if m == "AnswerCallbackQuery"]
+    assert answered, f"При not-modified callback не answer'нут: {names}"
+    markup_clears = [d for m, d in session.record
+                     if m == "EditMessageReplyMarkup"
+                     and not d.get("reply_markup")]
+    assert not markup_clears, \
+        f"Хендлер стёр клавиатуру сообщения: {markup_clears}"
+    print("REPEAT-PRESS TEST OK: not-modified handled silently, keyboard kept")
 
 
 def test_events_menu_functional():
@@ -162,6 +238,13 @@ def test_events_menu_functional():
     logger.remove()
     logger.add(lambda m: _captured_logs.append(str(m)), level="DEBUG")
     asyncio.run(_run())
+
+
+def test_events_menu_repeat_press_not_modified():
+    from loguru import logger
+    logger.remove()
+    logger.add(lambda m: _captured_logs.append(str(m)), level="DEBUG")
+    asyncio.run(_run_repeat_press())
 
 
 if __name__ == "__main__":

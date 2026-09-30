@@ -116,6 +116,11 @@ async def _index_exists(conn, index_name: str) -> bool:
 
     return bool(await conn.run_sync(_check))
 
+# Таблицы, которые могут отсутствовать в старых БД полностью (create_all их
+# не досоздаёт, если таблица уже есть с другим набором колонок). Создаются
+# через Base.metadata.create_all(tables=[...]) по факту отсутствия.
+_LIGHT_TABLES: tuple[str, ...] = ("events",)
+
 _LIGHT_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "pets": [
         ("generation", "INTEGER NOT NULL DEFAULT 1"),
@@ -444,12 +449,107 @@ async def _backfill_subscriber_chats_v202(engine) -> None:
             logger.info("миграция v2.0.2: чат(ы) восстановлены из истории "
                         "сообщений/реакций для {} подписчик(ов)", fixed)
 
+def _table_exists_in_db(db_url: str, table: str) -> bool:
+    """Проверка наличия таблицы без привязки к активным connection-pool'ам.
+
+    Отдельный engine + мгновенное закрытие: безопасно вызывать даже из
+    работающего цикла событий (после drop_engine/pool restart).
+    """
+    import asyncio
+
+    from sqlalchemy import inspect as _sa_inspect
+    from sqlalchemy.ext.asyncio import create_async_engine as _cae
+
+    async def _check() -> bool:
+        eng = _cae(db_url)
+        try:
+            async with eng.connect() as conn:
+                return bool(await conn.run_sync(
+                    lambda sc: _sa_inspect(sc).has_table(table)))
+        finally:
+            await eng.dispose()
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is not None:
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor(1) as ex:
+            fut = ex.submit(asyncio.run, _check())
+            return fut.result(timeout=30)
+    return asyncio.run(_check())
+
+
+async def ensure_events_table(engine_obj=None) -> bool:
+    """Гарантирует существование таблицы events (создаёт по модели, если её нет).
+
+    Возвращает True, если была создана заново. Идемпотентно; ошибки проглатывает
+    с логом — вызывается и из on_startup, и «на лету» из хендлера мероприятий.
+    """
+    from sqlalchemy import text
+    from sqlalchemy.exc import OperationalError, ProgrammingError
+
+    eng = engine_obj or engine
+    created = False
+    try:
+        async with eng.begin() as conn:
+            exists = await conn.run_sync(
+                lambda sc: sa_inspect(sc).has_table("events"))
+            if not exists:
+                from app.db.models import Base, Event
+                await conn.run_sync(Base.metadata.create_all,
+                                    tables=[Event.__table__])
+                created = True
+                logger.warning("миграция v2.0.3: таблица 'events' отсутствовала "
+                               "— создана по модели")
+            else:
+                # на случай неполной старой таблицы — досоздать ключевые колонки
+                cols = {c["name"] for c in (await conn.run_sync(
+                    lambda sc: sa_inspect(sc).get_columns("events")))}
+                for col, ddl in (("date", "VARCHAR(10) NOT NULL DEFAULT ''"),
+                                 ("icon", "VARCHAR(16) NOT NULL DEFAULT '🎪'"),
+                                 ("going", "JSON")):
+                    if col not in cols:
+                        try:
+                            await conn.execute(text(
+                                f"ALTER TABLE events ADD COLUMN {col} {ddl}"))
+                            logger.info("миграция v2.0.3: events.{} добавлена", col)
+                        except Exception as exc:
+                            logger.debug("миграция events.{} пропущена: {}",
+                                         col, type(exc).__name__)
+    except (OperationalError, ProgrammingError) as exc:
+        logger.error("ensure_events_table failed: {}: {}",
+                    type(exc).__name__, str(exc)[:200])
+    except Exception as exc:  # pragma: no cover - защита от редких диалектов
+        logger.error("ensure_events_table unexpected: {}: {}",
+                    type(exc).__name__, str(exc)[:200])
+    return created
+
+
 async def _light_migrations(conn) -> None:
     from sqlalchemy import text
 
     dialect = conn.dialect.name
 
+    # Таблицы целиком (могут отсутствовать в старых БД полностью).
+    for tname in _LIGHT_TABLES:
+        exists = await conn.run_sync(
+            lambda sc, t=tname: sa_inspect(sc).has_table(t))
+        if not exists:
+            from app.db.models import Base
+            table_obj = Base.metadata.tables.get(tname)
+            if table_obj is not None:
+                await conn.run_sync(Base.metadata.create_all,
+                                    tables=[table_obj])
+                logger.warning("лёгкая миграция: таблица '{}' отсутствовала — "
+                               "создана по модели ({})", tname, dialect)
+
     for table, columns in _LIGHT_COLUMNS.items():
+        tbl_exists = await conn.run_sync(
+            lambda sc, t=table: sa_inspect(sc).has_table(t))
+        if not tbl_exists:
+            continue  # create_all создаст её целиком вместе со всеми колонками
         for column, ddl_type in columns:
             if not await _column_exists(conn, table, column):
                 sql = f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}"
@@ -498,6 +598,9 @@ async def on_startup(bot: Bot) -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await _light_migrations(conn)
+    # Самолечение «мертвой» кнопки «Мероприятия»: в старых/битых БД таблицы
+    # events может не быть вовсе (SELECT падает с OperationalError).
+    await ensure_events_table(engine)
     await _renumber_merch_category_codes(engine)
     await _migrate_channel_subscribers_v20(engine)
     await _backfill_subscriber_chats_v202(engine)

@@ -141,8 +141,17 @@ async def _render_list(cb: CallbackQuery, session, bot: Bot | None = None) -> No
     try:
         all_ev = await repo.all()
     except Exception as exc:
-        logger.exception("menu:events DB query failed: {}", exc)
-        raise
+        from sqlalchemy.exc import DisconnectionError, OperationalError, ProgrammingError
+        if not isinstance(exc, (OperationalError, ProgrammingError,
+                                DisconnectionError)):
+            logger.exception("menu:events DB query failed: {}", exc)
+            raise
+        # САМОЛЕЧЕНИЕ «мертвой» кнопки: самая частая причина OperationalError
+        # здесь — таблица events отсутствует в старой БД (её никогда не
+        # создавали миграции). Создаём её по модели и повторяем запрос.
+        logger.warning("menu:events DB error {!r}: {} — trying self-heal "
+                       "(create 'events' table)", type(exc).__name__, exc)
+        all_ev = await _selfheal_reload_events(exc, session)
     logger.info("menu:events loaded {} events from DB", len(all_ev))
     today = local_now().date().isoformat()
     events = [e for e in all_ev if (e.date or "9999") >= today]
@@ -172,6 +181,12 @@ async def _render_list(cb: CallbackQuery, session, bot: Bot | None = None) -> No
         b.button(text="🛠 Управление мероприятиями", callback_data="evadmin:home")
         _vrow(b)
     b.button(text="🏠 Меню", callback_data="menu:main")
+    # ВАЖНО: InlineKeyboardBuilder.as_markup() НЕ сбрасывает накопленные кнопки.
+    # Если вызвать его дважды (например, при ретрае после «message is not
+    # modified»), во второй разметке каждая кнопка продублируется и Telegram
+    # отклонит edit с ошибкой «BUTTON_DATA_INVALID» — пользователь увидит
+    # «ничего не происходит». Фиксируем разметку ровно один раз.
+    markup = b.as_markup()
     # Дефолтный Message в aiogram 3.x не «смонтирован» на конкретный Bot,
     # поэтому target.edit_text()/answer() без явного монтирования падает с
     # RuntimeError («This method is not mounted to a any bot instance») — и
@@ -183,17 +198,75 @@ async def _render_list(cb: CallbackQuery, session, bot: Bot | None = None) -> No
         if msg.text or msg.caption:
             await bot(EditMessageText(
                 chat_id=msg.chat.id, message_id=msg.message_id,
-                text=text, parse_mode=ParseMode.HTML, reply_markup=b.as_markup()))
+                text=text, parse_mode=ParseMode.HTML, reply_markup=markup))
         else:
             logger.warning("menu:events source message has no text; sending new instead")
             await bot(SendMessage(
                 chat_id=msg.chat.id, text=text,
-                parse_mode=ParseMode.HTML, reply_markup=b.as_markup()))
+                parse_mode=ParseMode.HTML, reply_markup=markup))
 
     if cb.message is not None and bot is not None:
-        await _render_on(cb.message)
+        try:
+            await _render_on(cb.message)
+        except Exception as exc:
+            # «message is not modified» — штатная ситуация (пользователь
+            # повторно нажал кнопку и экран уже актуален). Не считаем это
+            # ошибкой: просто отвечаем на callback без редизплея.
+            low = str(exc).lower()
+            if "not modified" in low:
+                logger.debug("menu:events edit skipped (not modified)")
+                return
+            raise
         return
-    await safe_edit_or_answer(cb.message, text, reply_markup=b.as_markup())
+    await safe_edit_or_answer(cb.message, text, reply_markup=markup)
+
+
+async def _selfheal_reload_events(exc: Exception, session) -> list:
+    """Восстановление после OperationalError на запросе мероприятий.
+
+    1) Если в БД нет таблицы events — создаём её по модели (миграция v2.0.3).
+    2) Откатываем сессию обработчика (после ошибки транзакция «aborted» на PG).
+    3) Читаем список событий новой отдельной сессией, чтобы не зависеть от
+       состояния сессии запросившего апдейта.
+    """
+    import app.db.session as dbs
+    from app.db.models import Event
+    from sqlalchemy import inspect as sa_inspect
+    from sqlalchemy import select
+
+    # 1) Досоздать отсутствующую таблицу events (по модели, идемпотентно).
+    try:
+        from app.main import ensure_events_table
+        created = await ensure_events_table(dbs.engine)
+        if created:
+            logger.warning("menu:events self-heal: таблица 'events' создана")
+    except Exception as heal_exc:
+        logger.warning("menu:events self-heal create failed: {!r}: {}",
+                       type(heal_exc).__name__, heal_exc)
+
+    # 2) Откатить сессию апдейта (на PostgreSQL после ошибки транзакции все
+    #    следующие запросы в ней падают с InFailedSqlTransaction/OperationalError).
+    with contextlib.suppress(Exception):
+        await session.rollback()
+
+    # 3) Перечитать новой сессией; при этом проверяем наличие таблицы напрямую,
+    #    чтобы дать понятный лог вместо повторного «no such table».
+    try:
+        async with dbs.engine.connect() as conn:
+            has_tbl = await conn.run_sync(
+                lambda sc: sa_inspect(sc).has_table("events"))
+        if not has_tbl:
+            logger.error("menu:events self-heal: таблица 'events' так и не "
+                         "создана — проверьте права на БД и пришлите лог запуска")
+            return []
+        async with dbs.session_factory() as s2:
+            return list((await s2.execute(
+                select(Event).order_by(Event.date, Event.id)
+            )).scalars().all())
+    except Exception as exc2:
+        logger.exception("menu:events self-heal reload failed: {} ({})",
+                         exc2, type(exc2).__name__)
+        raise
 
 
 class _MenuFallback(BaseFilter):
@@ -234,16 +307,14 @@ async def menu_events(cb: CallbackQuery, session, bot: Bot) -> None:
 # в порядке регистрации).
 @router.callback_query(_MenuFallback())
 async def menu_any_unhandled(cb: CallbackQuery, bot: Bot) -> None:
-    if cb.message is not None:
-        with contextlib.suppress(Exception):
-            await cb.message.edit_reply_markup(reply_markup=None)
-    await cb.answer("Меню обновилось 🔄 — нажми /start или кнопку ещё раз.",
+    # НИЧЕГО не удаляем из исходного сообщения (раньше здесь вызывался
+    # edit_reply_markup(None), который стирал ВСЮ клавиатуру главного меню —
+    # после одного «устаревшего» нажатия все кнопки исчезали). Только отвечаем
+    # на callback и подсказываем пользователю.
+    await cb.answer("Кнопка устарела 😅 Напиши /start — покажу свежее меню.",
                     show_alert=False)
-    # Подсказка: сразу показать актуальное главное меню текстом, чтобы
-    # пользователь не остался «в пустоте» после устаревшей кнопки.
-    with contextlib.suppress(Exception):
-        await bot.send_message(cb.from_user.id,
-                               "Кнопка устарела 😅 Напиши /start — покажу свежее меню.")
+    logger.warning("unhandled menu callback: {!r} (user={})", cb.data,
+                   cb.from_user.id if cb.from_user else "?")
 
 
 async def _detail_render(cb: CallbackQuery, session, eid: int) -> None:
