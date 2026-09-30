@@ -18,11 +18,27 @@ from app.keyboards.inline import pet_hub
 from app.keyboards.paged import paged_keyboard, paged_pages
 from app.handlers.tamagotchi import set_pet_page
 from app.services.tamagotchi import TamagotchiService
+from app.utils import nav
 from app.utils.safe_edit import safe_edit_or_answer
 
 router = Router(name="shop")
 
 _SHOP_PAGE_CTX: dict[int, int] = {}
+
+
+def _nav_back_from(cb: CallbackQuery, default: str) -> str:
+    """Callback кнопки «⬅️ Назад» для постраничных экранов магазина/инвентаря:
+    вершина стека навигации (экран, откуда пришли), если она не относится к
+    текущему разделу; иначе безопасный корень из PET_PAGES («🎒 Вещи»)."""
+    chat_id = cb.message.chat.id if cb.message else None
+    stack = nav.mem_stack(chat_id)
+    own_prefixes = ("shop", "inv", "buy", "use", "style")
+    for entry in reversed(stack):
+        head = entry.split(":")[0]
+        if head not in own_prefixes and not entry.endswith(":noop"):
+            return entry
+    return default
+
 
 ITEMS_SEED = [
     dict(code="food_bread", name="Хлеб", icon="🍞", type="food", price=5,
@@ -188,7 +204,7 @@ async def shop_screen(cb: CallbackQuery, session: AsyncSession,
 
     kb, page = paged_keyboard(
         content_buttons, prefix="shop", title="🛒 Магазин", page=page,
-        back_cb="menu:main", pages=all_pages,
+        back_cb=_nav_back_from(cb, "pet:page:1"), pages=all_pages,
     )
     _SHOP_PAGE_CTX[cb.message.chat.id] = page
     await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=kb)
@@ -283,7 +299,7 @@ async def inventory_screen(cb: CallbackQuery, session: AsyncSession) -> None:
         lines.append(f"{item.icon} {html.escape(item.name)} ×{inv.quantity}")
     kb, page = paged_keyboard(
         content_buttons, prefix="inv", title="🎒 Инвентарь", page=page,
-        back_cb="menu:pet", home_cb="menu:main", pages=all_pages,
+        back_cb=_nav_back_from(cb, "pet:page:1", section="inv"), pages=all_pages,
     )
     await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=kb)
     await cb.answer()

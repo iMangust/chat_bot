@@ -5,6 +5,9 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 PAGE_SIZE = 6
 NAV_ROW = "◀️"
 
+BACK_LABEL = "⬅️ Назад"
+HOME_LABEL = "🏠 Меню"
+
 def _button_width(btn: InlineKeyboardButton) -> int:
     text = btn.text or ""
     visual = sum(2 if ord(ch) > 0x2190 else 1 for ch in text)
@@ -77,7 +80,15 @@ def paged_keyboard(
 
     if url_button is not None:
         kb_rows.append([url_button])
-    exit_cb = home_cb or back_cb
-    if exit_cb:
-        kb_rows.append([InlineKeyboardButton(text="🏠 Меню", callback_data=exit_cb)])
+    # Единая нижняя строка навигации: «⬅️ Назад» (в корень раздела/экран
+    # источника) + «🏠 Меню» (главное меню). home_cb=None означает «домами
+    # служит back_cb» — отдельная кнопка «Меню» тогда не нужна.
+    nav_btns: list[InlineKeyboardButton] = []
+    if back_cb:
+        nav_btns.append(InlineKeyboardButton(text=BACK_LABEL, callback_data=back_cb))
+    home_target = home_cb if home_cb is not None else back_cb
+    if home_target and home_target != back_cb:
+        nav_btns.append(InlineKeyboardButton(text=HOME_LABEL, callback_data=home_target))
+    if nav_btns:
+        kb_rows.append(nav_btns)
     return InlineKeyboardMarkup(inline_keyboard=kb_rows), page

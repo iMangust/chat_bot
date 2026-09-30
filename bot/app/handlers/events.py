@@ -17,6 +17,7 @@ from app.config import get_settings
 from app.db.repositories import EventRepository
 from app.utils.local_time import now as local_now
 from app.utils.safe_edit import safe_edit_or_answer
+from app.keyboards.inline import _nav_back_cb
 
 
 
@@ -206,6 +207,12 @@ async def _render_list(cb: CallbackQuery, session, bot: Bot | None = None) -> No
                 _vrow(b)
     if _is_event_admin(cb.from_user.id):
         b.button(text="🛠 Управление мероприятиями", callback_data="evadmin:home")
+        _vrow(b)
+    # «⬅️ Назад» — туда, откуда зашли в события; «🏠 Меню» — сброс истории.
+    chat_id = cb.message.chat.id if cb.message else None
+    back_cb = _nav_back_cb("events", chat_id)
+    if back_cb and back_cb != "menu:main":
+        b.button(text="⬅️ Назад", callback_data=back_cb)
         _vrow(b)
     b.button(text="🏠 Меню", callback_data="menu:main")
     # ВАЖНО: InlineKeyboardBuilder.as_markup() НЕ сбрасывает накопленные кнопки.
@@ -493,7 +500,10 @@ async def _admin_home(cb: CallbackQuery, session) -> None:
     _vrow(b)
     b.button(text="📋 Все мероприятия", callback_data="evadmin:list")
     _vrow(b)
-    b.button(text="⬅️ Назад к списку", callback_data="menu:events")
+    # «Назад к списку» — туда, откуда пришли (обычно список событий);
+    # если истории нет — жёстко в корень раздела мероприятий.
+    back_ev = _nav_back_cb("events", cb.message.chat.id if cb.message else None)         or "menu:events"
+    b.button(text="⬅️ Назад к списку", callback_data=back_ev)
     b.button(text="🏠 Меню", callback_data="menu:main")
     _vrow(b)
     await safe_edit_or_answer(cb.message, text, reply_markup=b.as_markup())

@@ -11,7 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Pet
 from app.db.repositories import PetRepository
-from app.keyboards.inline import back_to_main
+from app.keyboards.inline import (back_to_main, nav_row, with_nav,
+                                  _nav_back_cb)
 from app.services.achievements import AchievementService
 from app.services.pet_social import (MAX_FRIENDS, list_friends, make_friends,
                                      render_friend_list, suggest_friend)
@@ -33,11 +34,13 @@ def _vrow(b):
 
 router = Router(name="social")
 
-def _friend_kb(pet_name: str, other_id: int) -> InlineKeyboardMarkup:
+def _friend_kb(pet_name: str, other_id: int,
+               chat_id: int | None = None) -> InlineKeyboardMarkup:
     kb = InlineKeyboardBuilder()
     kb.button(text=f"🤝 Познакомиться с {pet_name}", callback_data=f"fr:add:{other_id}")
     _vrow(kb)
-    kb.button(text="🐾 К питомцу", callback_data="menu:pet")
+    # «⬅️ Назад» — по истории (обычно вкладка «🎮 Досуг»), «🏠 Меню» — домой.
+    with_nav(kb, "friends", chat_id)
     return kb.as_markup()
 
 async def _friends_screen(cb: CallbackQuery, session: AsyncSession, note: str = "") -> None:
@@ -48,7 +51,11 @@ async def _friends_screen(cb: CallbackQuery, session: AsyncSession, note: str = 
         return
     friends = await list_friends(session, pet.id)
     text = render_friend_list(pet, friends)
-    markup = back_to_main()
+    chat_id = cb.message.chat.id if cb.message else None
+    b = InlineKeyboardBuilder()
+    b.button(text="🐾 К питомцу", callback_data="menu:pet")
+    with_nav(b, "friends", chat_id)
+    markup = b.as_markup()
     if len(friends) < MAX_FRIENDS:
         sug = await suggest_friend(session, pet)
         if sug is not None:
@@ -56,7 +63,7 @@ async def _friends_screen(cb: CallbackQuery, session: AsyncSession, note: str = 
             sp_emoji = SPECIES_DATA.get(key, {}).get("emoji", "🐾")
             text += (f"\n\n💡 <b>Рекомендация:</b> {sp_emoji} <b>{html.escape(sug.name)}</b> "
                      f"(ур. {sug.level}) ждёт знакомства!")
-            markup = _friend_kb(html.escape(sug.name), sug.id)
+            markup = _friend_kb(html.escape(sug.name), sug.id, chat_id)
     if note:
         text = f"{note}\n\n{text}"
     await safe_edit_or_answer(cb.message, text, reply_markup=markup)
@@ -88,7 +95,15 @@ async def cb_friend_add(cb: CallbackQuery, session: AsyncSession) -> None:
     await _friends_screen(cb, session, note=("✅ " if ok else "ℹ️ ") + msg)
     await cb.answer(msg[:50])
 
-async def _send_card(message: Message, session: AsyncSession, tg_id: int) -> None:
+def _card_kb(chat_id: int | None = None) -> InlineKeyboardMarkup:
+    """Карточка профиля: «⬅️ Назад» по истории переходов, «🏠 Меню» — домой."""
+    b = InlineKeyboardBuilder()
+    b.row(*nav_row("card", back_cb=_nav_back_cb("card", chat_id)))
+    return b.as_markup()
+
+
+async def _send_card(message: Message, session: AsyncSession, tg_id: int,
+                     chat_id: int | None = None) -> None:
     png, changed = await get_or_render_card(session, tg_id)
     if not png:
         await message.answer("Не удалось собрать карточку — сначала /start 🙂")
@@ -99,7 +114,7 @@ async def _send_card(message: Message, session: AsyncSession, tg_id: int) -> Non
         BufferedInputFile(png, filename="profile.png"),
         caption=("🪪 Твоя карточка игрока: ранг, питомец во всех деталях, арена и динамика."
                  + hint + " Обновляется автоматически при росте статов."),
-        reply_markup=back_to_main(),
+        reply_markup=_card_kb(chat_id),
     )
 
 @router.callback_query(F.data == "menu:card")
@@ -107,7 +122,8 @@ async def cb_card(cb: CallbackQuery, session: AsyncSession) -> None:
     if cb.message is None:
         await cb.answer("Нет сообщения-контекста 😅 Нажми /start", show_alert=True)
         return
-    await _send_card(cb.message, session, cb.from_user.id)
+    await _send_card(cb.message, session, cb.from_user.id,
+                     chat_id=cb.message.chat.id if cb.message else None)
     await cb.answer("Карточка готова ✨")
 
 @router.callback_query(F.data == "noop")
@@ -116,4 +132,5 @@ async def cb_noop(cb: CallbackQuery) -> None:
 
 @router.message(Command("card", "profile"), F.chat.type == "private")
 async def cmd_card(message: Message, session: AsyncSession) -> None:
-    await _send_card(message, session, message.from_user.id)
+    await _send_card(message, session, message.from_user.id,
+                     chat_id=message.chat.id)

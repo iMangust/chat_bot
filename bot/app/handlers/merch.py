@@ -14,6 +14,8 @@ from loguru import logger
 
 from app.config import get_settings
 from app.db.repositories import MerchRepository
+from app.keyboards.inline import nav_row
+from app.utils import nav
 from app.utils.safe_edit import safe_edit_or_answer
 
 
@@ -105,7 +107,11 @@ async def merch_screen(cb: CallbackQuery, session) -> None:
     # главного меню.
     if _is_merch_admin(cb.from_user.id):
         _vbtn(b, "🛠 Управление мерчем", "madmin:home")
-    _vbtn(b, "🏠 Меню", "menu:main")
+    # «Назад» — туда, откуда зашли в мерч (обычно главное меню или хаб
+    # питомца); «Меню» — сброс истории и выход в главный экран.
+    back = await nav.back_target(cb.message.chat.id if cb.message else None,
+                                 "menu:main")
+    b.row(*nav_row("merch", back_cb=back))
     await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=b.as_markup())
     await cb.answer()
 
@@ -130,8 +136,10 @@ async def merch_category(cb: CallbackQuery, session) -> None:
         lines.append(f"• <b>{html.escape(p.name)}</b> — от {price_min:,} ₽ · всего {total_stock} шт.")
         b._vb(f"{cat.icon} {p.name}", f"merch:prod:{p.id}")
         _vsplit(b)
-    _vbtn(b, "⬅️ К категориям", "menu:merch")
-    _vbtn(b, "🏠 Меню", "menu:main")
+    # «Назад» — в экран мерча (список категорий), «Меню» — в главное.
+    back = await nav.back_target(cb.message.chat.id if cb.message else None,
+                                 "menu:merch")
+    b.row(*nav_row("merch", back_cb=back))
     await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=b.as_markup())
     await cb.answer()
 
@@ -165,8 +173,8 @@ async def merch_product(cb: CallbackQuery, session) -> None:
         for sz in sizes:
             b._vb(sz, f"merch:size:{pid}:{sz}")
         _vsplit(b)
-        _vbtn(b, "⬅️ Назад", back_cb)
-        _vbtn(b, "🏠 Меню", "menu:main")
+        # «Назад» — в категорию товара (или туда, откуда зашли в карточку).
+        b.row(*nav_row("merch", back_cb=back_cb))
         await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=b.as_markup())
         return await cb.answer()
     if colors:
@@ -228,8 +236,8 @@ async def merch_size(cb: CallbackQuery, session) -> None:
             continue
         b._vb(c, f"merch:var:{v.id}")
     _vsplit(b)
-    _vbtn(b, "⬅️ К размерам", f"merch:prod:{pid}")
-    _vbtn(b, "🏠 Меню", "menu:main")
+    # «Назад» — к выбору размера этой модели.
+    b.row(*nav_row("merch", back_cb=f"merch:prod:{pid}"))
     await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=b.as_markup())
     await cb.answer()
 
@@ -251,8 +259,9 @@ async def _render_variant_screen(cb: CallbackQuery, repo: MerchRepository,
         _vsplit(b)
     elif v.reserved_by is not None:
         text += "\n\n⏳ Эта позиция уже забронирована. Освободится после продажи или отмены брони."
-    _vbtn(b, "⬅️ Назад", back_cb)
-    _vbtn(b, "🏠 Меню", "menu:main")
+    # «Назад» — на экран, с которого пришли к этой позиции (размер/цвет,
+    # выбор размера или категория товара).
+    b.row(*nav_row("merch", back_cb=back_cb))
     msg = cb.message
     try:
         if photo:

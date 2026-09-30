@@ -23,7 +23,8 @@ async def _pet_or_alert(cb: CallbackQuery, session: AsyncSession):
 @router.callback_query(F.data == "arena:open")
 async def arena_open(cb: CallbackQuery, session: AsyncSession) -> None:
     set_pet_page(cb.message.chat.id, 2)
-    text, kb = await arena_screen(session, cb.from_user.id)
+    text, kb = await arena_screen(session, cb.from_user.id,
+                                  chat_id=cb.message.chat.id if cb.message else None)
     await safe_edit_or_answer(cb.message, text, reply_markup=kb)
     await cb.answer()
 
@@ -33,7 +34,8 @@ async def arena_noop(cb: CallbackQuery) -> None:
 
 @router.message(Command("arena"), F.chat.type == "private")
 async def cmd_arena(message: Message, session: AsyncSession) -> None:
-    text, kb = await arena_screen(session, message.from_user.id)
+    text, kb = await arena_screen(session, message.from_user.id,
+                                  chat_id=message.chat.id)
     await message.answer(text, reply_markup=kb, parse_mode="HTML")
 
 @router.callback_query(F.data == "arena:fight")
@@ -58,7 +60,8 @@ async def arena_fight(cb: CallbackQuery, session: AsyncSession) -> None:
             report = (f"{head}{pet.name} ({result['power_a']}) vs "
                       f"{opp.name} ({result['power_b']}) · "
                       f"очков недели: {result['my_score']} · осталось боёв: {result['left']}")
-            text, kb = await arena_screen(session, cb.from_user.id)
+            text, kb = await arena_screen(session, cb.from_user.id,
+                                  chat_id=cb.message.chat.id if cb.message else None)
             await safe_edit_or_answer(cb.message, f"{report}\n\n{text}", reply_markup=kb)
             await cb.answer("🥊 Бой сыгран!")
     finally:
@@ -132,7 +135,8 @@ async def _style_screen(cb: CallbackQuery, session: AsyncSession,
     svc = TamagotchiService(session)
     slot_keys = list(svc.GEAR_SLOTS.keys())
     slot_key = slot_keys[slots_page] if 0 <= slots_page < len(slot_keys) else None
-    kb = style_keyboard(svc, pet, slots_page=slots_page, item_page=item_page)
+    kb = style_keyboard(svc, pet, slots_page=slots_page, item_page=item_page,
+                        chat_id=cb.message.chat.id if cb.message else None)
     await safe_edit_or_answer(cb.message,
                               _style_text(pet, user, svc, notice, slot_key),
                               reply_markup=kb)

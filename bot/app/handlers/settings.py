@@ -19,18 +19,21 @@ _FLAG_LABELS = {
     "daily_report": "🌅 Ежедневный отчёт",
 }
 
-async def _render_settings(session: AsyncSession, message: Message, tg_id: int) -> None:
+async def _render_settings(session: AsyncSession, message: Message, tg_id: int,
+                           chat_id: int | None = None) -> None:
     ns = await NotificationRepository(session).get_or_create(tg_id)
     flags = {k: bool(getattr(ns, k)) for k in _FLAG_LABELS}
     text = ("⚙️ <b>Настройки уведомлений</b>\n\n"
             "Я пишу в ЛС только когда это действительно нужно.\n"
             "Здесь можно всё отключить — нажми на тумблер:\n\n"
             + "\n".join(f"{'✅' if flags[k] else '❌'} {label}" for k, label in _FLAG_LABELS.items()))
-    await safe_edit_or_answer(message, text, reply_markup=settings_keyboard(flags))
+    await safe_edit_or_answer(message, text,
+                              reply_markup=settings_keyboard(flags, chat_id))
 
 @router.callback_query(F.data == "menu:settings")
 async def cb_settings(cb: CallbackQuery, session: AsyncSession) -> None:
-    await _render_settings(session, cb.message, cb.from_user.id)
+    await _render_settings(session, cb.message, cb.from_user.id,
+                           chat_id=cb.message.chat.id if cb.message else None)
     await cb.answer()
 
 @router.callback_query(F.data.startswith("set:"))
@@ -44,7 +47,8 @@ async def cb_toggle(cb: CallbackQuery, session: AsyncSession) -> None:
     new = not bool(getattr(ns, key))
     setattr(ns, key, new)
     await session.commit()
-    await _render_settings(session, cb.message, cb.from_user.id)
+    await _render_settings(session, cb.message, cb.from_user.id,
+                           chat_id=cb.message.chat.id if cb.message else None)
     await cb.answer(("Включено: " if new else "Выключено: ") + _FLAG_LABELS[key])
 
 @router.message(Command("award", "awards"), F.chat.type == "private")

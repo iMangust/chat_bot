@@ -21,6 +21,7 @@ from app.handlers import (access as access_handlers, admin, arena, errors,
                           events, games, merch, shop, social,
                           start, stats, tamagotchi, tracker)
 from app.middlewares.gate import AccessGateMiddleware
+from app.middlewares.nav_stack import NavStackMiddleware
 from app.middlewares.throttle import ThrottleMiddleware
 from app.db.repositories import seed_merch_catalog
 from app.handlers.shop import seed_items
@@ -689,6 +690,10 @@ async def main() -> None:
     dp.update.outer_middleware(AccessGateMiddleware())
     dp.callback_query.outer_middleware(ThrottleMiddleware())
     dp.callback_query.outer_middleware(errors.ErrorNotifyMiddleware())
+    # Стек навигации «Назад»: кладём в конец цепочки, чтобы remember()
+    # отработал уже после AccessGate (на заблокированных чатах не пишем)
+    # и Throttle (на задудоченных тапах не плодим историю).
+    dp.callback_query.outer_middleware(NavStackMiddleware())
 
     dp.include_routers(
         errors.error_router,

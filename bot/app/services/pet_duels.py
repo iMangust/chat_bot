@@ -118,7 +118,8 @@ async def fight(session: AsyncSession, pet: Pet) -> dict:
         "power_a": duel_power(pet), "power_b": duel_power(opponent),
     }
 
-async def arena_screen(session: AsyncSession, tg_id: int) -> tuple[str, object]:
+async def arena_screen(session: AsyncSession, tg_id: int,
+                       chat_id: int | None = None) -> tuple[str, object]:
     from app.keyboards.inline import arena_keyboard
 
     wk = week_key()
@@ -141,7 +142,7 @@ async def arena_screen(session: AsyncSession, tg_id: int) -> tuple[str, object]:
         if cd > 0:
             can_fight = False
             hint = f"Питомец отдыхает после боя — следующий через {cd} сек."
-    return text, arena_keyboard(can_fight=can_fight, hint=hint)
+    return text, arena_keyboard(can_fight=can_fight, hint=hint, chat_id=chat_id)
 
 async def weekly_top(session: AsyncSession, wk: str | None = None,
                      limit: int = 10) -> list[tuple[Pet, User, PetDuel]]:

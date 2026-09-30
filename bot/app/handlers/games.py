@@ -22,6 +22,11 @@ router = Router(name="games")
 
 RPS_EMOJI = {"rock": "🪨", "scissors": "✂️", "paper": "📄"}
 
+
+def _chat_of(cb: CallbackQuery) -> int | None:
+    """chat_id для стека навигации: «Назад» строится по истории этого чата."""
+    return cb.message.chat.id if cb.message else None
+
 class Games(StatesGroup):
     guessing = State()
     rps = State()
@@ -48,7 +53,7 @@ async def games_screen(cb: CallbackQuery, state: FSMContext, session: AsyncSessi
         "• ✂️ <i>Камень-ножницы-бумага</i> — честный рандом\n"
         "• 🃏 <i>Двадцать одно</i> — набери ≤21; 🧠 интеллект делает дилера «мягче»\n\n"
         "Победа: +15 XP и море счастья. Поражение всё равно даёт опыт!",
-        reply_markup=games_menu(),
+        reply_markup=games_menu(_chat_of(cb)),
     )
     await cb.answer()
 
@@ -65,7 +70,7 @@ async def start_guess(cb: CallbackQuery, state: FSMContext, session: AsyncSessio
         f"🔢 Питомец загадал число от 1 до 20. Друзья шепчут, что оно в диапазоне "
         f"<b>{lo}…{hi}</b> (чем умнее питомец, тем точнее подсказка!).\n\n"
         "Нажми кнопку-вариант или напиши своё число сообщением:",
-        reply_markup=guess_hint_keyboard(lo, hi),
+        reply_markup=guess_hint_keyboard(lo, hi, _chat_of(cb)),
     )
     await cb.answer()
 
@@ -88,7 +93,7 @@ async def do_guess_cb(cb: CallbackQuery, state: FSMContext, session: AsyncSessio
         await bump_games_won(session, cb.from_user.id)
     hint = "" if won else f" Это было число <b>{secret}</b>."
     await safe_edit_or_answer(cb.message, f"{result}{hint}\n\n" + await svc.render_async(pet),
-                               reply_markup=games_menu())
+                               reply_markup=games_menu(_chat_of(cb)))
     await cb.answer()
 
 @router.message(Games.guessing, F.text & F.text.strip().isdigit())
@@ -112,8 +117,9 @@ async def do_guess_msg(message: Message, state: FSMContext, session: AsyncSessio
     if won:
         await bump_games_won(session, message.from_user.id)
     hint = "" if won else f" Это было число <b>{secret}</b>."
-    await message.answer(f"{result}{hint}", reply_markup=games_menu(),
-                           parse_mode="HTML")
+    await message.answer(f"{result}{hint}",
+                         reply_markup=games_menu(message.chat.id),
+                         parse_mode="HTML")
 
 @router.callback_query(F.data == "game:rps")
 async def start_rps(cb: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
@@ -124,7 +130,7 @@ async def start_rps(cb: CallbackQuery, state: FSMContext, session: AsyncSession)
     await safe_edit_or_answer(cb.message, 
         "✂️ <b>Камень-ножницы-бумага!</b>\n\n"
         f"{pet.name} уже выбрал ход (честный рандом). Выбирай свой — откроемся одновременно.",
-        reply_markup=rps_keyboard(),
+        reply_markup=rps_keyboard(_chat_of(cb)),
     )
     await cb.answer()
 
@@ -152,7 +158,7 @@ async def play_rps(cb: CallbackQuery, state: FSMContext, session: AsyncSession) 
     await safe_edit_or_answer(cb.message, 
         f"Ты: {RPS_EMOJI[mine]} · {pet.name}: {RPS_EMOJI[theirs]} — {outcome}\n\n"
         f"{result}\n\n" + await svc.render_async(pet),
-        reply_markup=games_menu(),
+        reply_markup=games_menu(_chat_of(cb)),
     )
     from app.utils.fx import apply_effect
     await apply_effect(cb, "win" if won else ("play" if draw else "lose"),
@@ -212,7 +218,7 @@ async def start_blackjack(cb: CallbackQuery, state: FSMContext, session: AsyncSe
         f"Твои карты: <b>{_bj_render(player)}</b> ({_bj_value(player)})\n"
         f"Карты дилера: <b>{_bj_render(dealer, hidden=True)}</b>\n\n"
         "«Ещё» — взять карту, «Хватит» — остановиться. Больше 21 — перебор!",
-        reply_markup=twentyone_keyboard(),
+        reply_markup=twentyone_keyboard(_chat_of(cb)),
     )
     await cb.answer()
 
@@ -243,7 +249,7 @@ async def _bj_finish(cb: CallbackQuery, state: FSMContext, session: AsyncSession
     await safe_edit_or_answer(cb.message,
         f"Твои: <b>{_bj_render(player)}</b> ({pv}) · {pet.name}: <b>{_bj_render(dealer)}</b> ({dv})\n"
         f"{outcome}\n\n{result}",
-        reply_markup=games_menu(),
+        reply_markup=games_menu(_chat_of(cb)),
     )
     try:
         await cb.answer(outcome[:200])
@@ -267,7 +273,7 @@ async def bj_hit(cb: CallbackQuery, state: FSMContext, session: AsyncSession) ->
         f"🃏 Твои карты: <b>{_bj_render(player)}</b> ({pv})\n"
         f"Карты дилера: <b>{_bj_render(dealer, hidden=True)}</b>\n\n"
         "Ещё или хватит?",
-        reply_markup=twentyone_keyboard(),
+        reply_markup=twentyone_keyboard(_chat_of(cb)),
     )
     await cb.answer(f"🃏 У тебя {pv} · в колоде ещё {len(deck)} карт")
 

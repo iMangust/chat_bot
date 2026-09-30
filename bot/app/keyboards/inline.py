@@ -60,7 +60,7 @@ def main_menu(link: str | None = None, reward: int = 0,
     invite_label = f"🤝 Пригласить друга (+{reward})" if reward else "🤝 Пригласить друга"
     if link and settings.show_invite_button:
         kb_rows.append([InlineKeyboardButton(text=invite_label, url=link)])
-    kb_rows.append([InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main")])
+    # Это и есть главное меню — отдельная кнопка «Домой» здесь не нужна.
     return InlineKeyboardMarkup(inline_keyboard=kb_rows)
 
 PET_PAGES: list[tuple[str, list[tuple[str, str]]]] = [
@@ -111,48 +111,213 @@ def pet_hub(page: int = 0, critical: bool = False,
     buttons.append(InlineKeyboardButton(text="📜 История питомцев", callback_data="pet:history"))
     kb_rows = _two_per_row(buttons)
     kb_rows.append(_page_nav("pet", page, n, title))
-    kb_rows.append([InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main")])
+    # Хаб питомца — верхний уровень раздела: только «🏠 Меню».
+    kb_rows.append([InlineKeyboardButton(text=HOME_LABEL, callback_data="menu:main")])
     return InlineKeyboardMarkup(inline_keyboard=kb_rows)
 
-def games_menu() -> InlineKeyboardMarkup:
+
+# Коллбэки «своего раздела»: если запись стека — экран того же раздела,
+# где сейчас находится пользователь (вкладки хаба питомца, листание
+# пагинации, повторный вход), это не «выход наружу». Для кнопки «Назад»
+# такие записи пропускаем и копаемся глубже в истории — иначе «Назад»
+# вёл бы на тот же экран, где пользователь уже сидит (самопетля).
+# Особый случай — 'menu:*': это входы в РАЗНЫЕ разделы (мерч, события,
+# статы…), поэтому для профилных секций ('stats', 'merch', …) они всегда
+# валидные точки возврата; исключение — 'menu:pet', которое для секций
+# внутри хаба питомца (games/shop/style/…) является «своим» входом.
+_SECTION_OWN_PREFIXES: dict[str, tuple[str, ...]] = {
+    "games": ("game", "rps", "guess", "bj", "pet"),
+    "arena": ("arena", "pet"),
+    "friends": ("fr", "pet"),
+    "shop": ("shop", "buy", "use", "inv", "style", "pet"),
+    "inv": ("inv", "use", "shop", "buy", "style", "pet"),
+    "style": ("style", "pet"),
+    "pet": ("pet",),
+    "merch": ("merch",),
+    "events": ("ev",),
+    "stats": ("ach", "top"),   # соседние экраны «Профиля» — не точка возврата
+    "ach": ("ach",),           # own head + 'menu:ach' (см. функцию ниже)
+    "top": ("top",),           # own head + 'menu:top'
+    "card": (),                # карточка — тупик: возврат по истории/в меню
+    "settings": ("set",),      # own head + 'menu:settings'
+}
+
+def _is_own_section_entry(cb: str, section: str | None) -> bool:
+    if cb in ("menu:main", "menu:home"):
+        return False  # главное меню — валидная точка возврата с любого экрана
+    if cb == "menu:weather":
+        return True   # кнопка-команда /weather: возвращаться на неё бессмысленно
+    sec = section or ""
+    # Выход из профиля в его же корневой экран (stats → ach/top) — петля.
+    if sec and cb == f"menu:{sec}":
+        return True
+    head = cb.split(":")[0]
+    if head in _SECTION_OWN_PREFIXES.get(sec, ()):
+        return True
+    # 'menu:*' — входы в разделы главного меню. Внутри подраздела хаба
+    # питомца повторный 'menu:pet' — это тот же хаб (листание/повторный
+    # вход), а не выход наружу; для прочих секций 'menu:...' остаётся
+    # валидной исторической точкой возврата.
+    if head == "menu" and cb == "menu:pet" and sec in {"games", "arena",
+                                                       "friends", "shop",
+                                                       "inv", "style", "pet"}:
+        return True
+    return False
+
+
+def _nav_back_cb(section: str | None, chat_id: int | None) -> str | None:
+    """Callback для кнопки «⬅️ Назад»: ближайшая подходящая запись стека
+    навигации (экран, откуда пришли на этот), а если стек пуст или вся
+    история — «свой» раздел — безопасный корень раздела. Синхронная версия
+    читает локальное зеркало стека; актуальность обеспечивает
+    NavStackMiddleware, который после каждого коллбэка перечитывает
+    Redis-стек в зеркало (см. middlewares/nav_stack.py)."""
+    from app.utils import nav as _nav
+    stack = _nav.mem_stack(chat_id)
+    root = SECTION_ROOTS.get(section or "", "menu:main")
+    if not stack:
+        return root
+    for cb in reversed(stack):
+        if not cb or cb.endswith(":noop") or cb == "noop":
+            continue
+        # Корень текущего раздела в истории — это сам текущий экран или
+        # его листание: не «Назад», а повторный вход. Пропускаем, чтобы
+        # кнопка не вела на то же место, где пользователь уже сидит.
+        if root != "menu:main" and cb == root:
+            continue
+        if _is_own_section_entry(cb, section):
+            continue
+        # Если корень раздела лежит в истории ГЛУБЖЕ найденной записи,
+        # «Назад» должен вести в корень раздела, а не перескакивать его
+        # сразу в главное меню (Мерч → Категория: «Назад» = список мерча).
+        if root != "menu:main" and root in stack[:stack.index(cb)]:
+            return root
+        return cb
+    return root
+
+
+def with_nav(b: InlineKeyboardBuilder, section: str | None,
+             chat_id: int | None = None) -> InlineKeyboardBuilder:
+    """Добавляет в билдер строку «⬅️ Назад» + «🏠 Меню»; «Назад» учитывает
+    локальную историю переходов этого чата."""
+    return append_nav(b, section, _nav_back_cb(section, chat_id))
+
+def games_menu(chat_id: int | None = None) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="🔢 Угадай число · 🧠 помогает", callback_data="game:guess")
     b.row()
     b.button(text="✂️ Камень-ножницы-бумага", callback_data="game:rps")
     b.button(text="🃏 Двадцать одно · 🧠 помогает", callback_data="game:blackjack")
     b.adjust(1, 2)
-    b.row(InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main"))
+    with_nav(b, "games", chat_id)
     return b.as_markup()
 
-def rps_keyboard() -> InlineKeyboardMarkup:
+def rps_keyboard(chat_id: int | None = None) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="🪨 Камень", callback_data="rps:rock")
     b.button(text="✂️ Ножницы", callback_data="rps:scissors")
     b.button(text="📄 Бумага", callback_data="rps:paper")
     b.adjust(3)
-    b.row(InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main"))
+    # «Назад» — по истории (обычно в меню игр): игрок может передумать.
+    append_nav(b, "games", back_cb=_nav_back_cb("games", chat_id))
     return b.as_markup()
 
-def twentyone_keyboard() -> InlineKeyboardMarkup:
+def twentyone_keyboard(chat_id: int | None = None) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="➕ Ещё карту", callback_data="bj:hit")
     b.button(text="✋ Хватит", callback_data="bj:stand")
     b.adjust(2)
-    b.row(InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main"))
+    append_nav(b, "games", back_cb=_nav_back_cb("games", chat_id))
     return b.as_markup()
 
-def guess_hint_keyboard(secret_lo: int, secret_hi: int) -> InlineKeyboardMarkup:
+def guess_hint_keyboard(secret_lo: int, secret_hi: int,
+                        chat_id: int | None = None) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     mid = (secret_lo + secret_hi) // 2
     for n in (secret_lo, mid, secret_hi):
         b.button(text=str(n), callback_data=f"guess:{n}")
     b.adjust(3)
-    b.row(InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main"))
+    append_nav(b, "games", back_cb=_nav_back_cb("games", chat_id))
     return b.as_markup()
 
 def back_to_main() -> InlineKeyboardMarkup:
+    """Экранный хаб (например, страница питомца): только «🏠 Меню».
+    На экранах помельче используется nav_row/append_nav с кнопкой «⬅️ Назад»."""
     b = InlineKeyboardBuilder()
-    b.button(text="🏠 Меню", callback_data="menu:main")
+    b.button(text=HOME_LABEL, callback_data="menu:main")
+    return b.as_markup()
+
+
+# ============================================================================
+# Единая навигация «Назад / Меню» по всем разделам бота.
+#
+# Правила:
+#  • «⬅️ Назад» ведёт туда, откуда пользователь пришёл на экран. Источник
+#    перехода лежит в стеке навигации (app/utils/nav.py); если стек пуст
+#    (рестарт без Redis, первое сообщение), кнопка деградирует до безопасного
+#    корня раздела из таблицы ниже — никогда не в чужой раздел;
+#  • «🏠 Меню» всегда ведёт в главное меню и сбрасывает стек;
+#  • корни разделов — обычные «menu:*»/«pet:page:*» коллбэки, которые
+#    обрабатываются штатными хендлерами («menu:card», «menu:stats», «menu:ach»,
+#    «menu:top» продублированы мостами в роутере events, который регистрируется
+#    раньше social/stats).
+#
+# Значения по умолчанию для back_cb (когда стек пуст):
+SECTION_ROOTS: dict[str, str] = {
+    "pet": "menu:pet",            # 🐾 Питомец: уход / вещи / досуг
+    "shop": "pet:page:1",         # 🛒 Магазин питомца ← вкладка «🎒 Вещи»
+    "inv": "pet:page:1",          # 🎒 Инвентарь ← вкладка «🎒 Вещи»
+    "style": "pet:page:1",        # 🎨 Гардероб ← вкладка «🎒 Вещи»
+    "games": "pet:page:2",        # 🎮 Мини-игры ← вкладка «🎮 Досуг»
+    "arena": "pet:page:2",        # 🏟 Арена ← вкладка «🎮 Досуг»
+    "friends": "pet:page:2",      # 🐾 Друзья ← вкладка «🎮 Досуг»
+    "merch": "menu:merch",        # 🧢 Наш мерч
+    "events": "menu:events",      # 📅 Мероприятия
+    "stats": "menu:stats",        # 📊 Статистика
+    "ach": "menu:ach",            # 🏆 Достижения
+    "top": "menu:top",            # 🏅 Топы
+    "card": "menu:card",          # 🖼 Карточка профиля
+    "settings": "menu:settings",  # ⚙️ Уведомления
+}
+
+BACK_LABEL = "⬅️ Назад"
+HOME_LABEL = "🏠 Меню"
+
+
+def _nav_buttons(back_cb: str | None) -> list[InlineKeyboardButton]:
+    out: list[InlineKeyboardButton] = []
+    if back_cb and back_cb != "menu:main":
+        out.append(InlineKeyboardButton(text=BACK_LABEL, callback_data=back_cb))
+    out.append(InlineKeyboardButton(text=HOME_LABEL, callback_data="menu:main"))
+    return out
+
+
+def nav_row(section: str | None, back_cb: str | None = None
+            ) -> list[InlineKeyboardButton]:
+    """Готовая нижняя строка навигации для ручной сборки клавиатуры.
+    back_cb=None — взять корень раздела (используется, когда стек уже учтён
+    или недоступен); back_cb="" — подавить кнопку «Назад» (только «Меню»)."""
+    if back_cb is None:
+        back_cb = SECTION_ROOTS.get(section or "", "menu:main")
+    return _nav_buttons(back_cb)
+
+
+def append_nav(b: InlineKeyboardBuilder, section: str | None,
+               back_cb: str | None = None) -> InlineKeyboardBuilder:
+    """Добавляет в билдер нижнюю строку «⬅️ Назад» + «🏠 Меню»."""
+    b.row(*nav_row(section, back_cb))
+    return b
+
+
+def nav_kb(section: str | None,
+           rows: list[list[InlineKeyboardButton]] | None = None,
+           back_cb: str | None = None) -> InlineKeyboardMarkup:
+    """Клавиатура из строк экрана + нижняя навигационная строка."""
+    b = InlineKeyboardBuilder()
+    for row in (rows or []):
+        if row:
+            b.row(*row)
+    append_nav(b, section, back_cb)
     return b.as_markup()
 
 def adopt_confirm_kb() -> InlineKeyboardMarkup:
@@ -162,13 +327,13 @@ def adopt_confirm_kb() -> InlineKeyboardMarkup:
     b.adjust(1)
     return b.as_markup()
 
-def train_menu() -> InlineKeyboardMarkup:
+def train_menu(chat_id: int | None = None) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="💪 Сила", callback_data="pet:train:strength")
     b.button(text="🏃 Ловкость", callback_data="pet:train:agility")
     b.button(text="🧠 Интеллект", callback_data="pet:train:intellect")
     b.adjust(2)
-    b.row(InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main"))
+    with_nav(b, "pet", chat_id)
     return b.as_markup()
 
 def start_pet_name_suggestions(names: list[str]) -> InlineKeyboardMarkup:
@@ -205,23 +370,25 @@ def adopt_cta_kb() -> InlineKeyboardMarkup:
     b.adjust(1)
     return b.as_markup()
 
-def pet_history_kb(has_current: bool = True) -> InlineKeyboardMarkup:
+def pet_history_kb(has_current: bool = True,
+                   chat_id: int | None = None) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     if has_current:
         b.button(text="🐾 К текущему", callback_data="menu:pet")
     b.button(text="🥚 Усыновить нового", callback_data="pet:adopt")
     b.adjust(2)
-    b.row(InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main"))
+    with_nav(b, "pet", chat_id)
     return b.as_markup()
 
 def achievements_list(pairs: list, page: int = 0,
-                      total_pages: int | None = None) -> InlineKeyboardMarkup:
+                      total_pages: int | None = None,
+                      chat_id: int | None = None) -> InlineKeyboardMarkup:
     if total_pages is None:
         total_pages = max(1, (len(pairs) + 8 - 1) // 8)
     total_pages = max(1, total_pages)
     b = InlineKeyboardBuilder()
     b.row(*_page_nav("ach", page, total_pages, "🏆 Достижения"))
-    b.row(InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main"))
+    with_nav(b, "ach", chat_id)
     return b.as_markup()
 
 TOP_SECTION_LABELS = {"talk": "💬 Болтуны", "react": "💖 Реакции",
@@ -230,7 +397,8 @@ TOP_SECTION_LABELS = {"talk": "💬 Болтуны", "react": "💖 Реакци
                       "overall": "👑 Общий", "emotional": "🎭 Эмоциональные",
                       "karma": "💚 Добряки"}
 
-def top_tabs(active: str = "week", section: str = "talk") -> InlineKeyboardMarkup:
+def top_tabs(active: str = "week", section: str = "talk",
+             chat_id: int | None = None) -> InlineKeyboardMarkup:
     from app.handlers.stats import TOP_SECTIONS
     keys = [k for k, _ in TOP_SECTIONS]
     idx = keys.index(section) if section in keys else 0
@@ -250,10 +418,11 @@ def top_tabs(active: str = "week", section: str = "talk") -> InlineKeyboardMarku
         InlineKeyboardButton(text=f"{title} 📖 {idx + 1}/{n}", callback_data="top:noop"),
         InlineKeyboardButton(text="▶️", callback_data=next_cb),
     )
-    b.row(InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main"))
+    with_nav(b, "top", chat_id)
     return b.as_markup()
 
-def settings_keyboard(flags: dict[str, bool]) -> InlineKeyboardMarkup:
+def settings_keyboard(flags: dict[str, bool],
+                      chat_id: int | None = None) -> InlineKeyboardMarkup:
     labels = {
         "pet_reminders": "🐾 Питомец скучает",
         "streak_reminders": "🔥 Стрик под угрозой",
@@ -265,20 +434,22 @@ def settings_keyboard(flags: dict[str, bool]) -> InlineKeyboardMarkup:
         on = flags.get(key, True)
         b.button(text=f"{'✅' if on else '❌'} {label}", callback_data=f"set:{key}")
     b.adjust(2)
-    b.row(InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main"))
+    with_nav(b, "settings", chat_id)
     return b.as_markup()
 
-def arena_keyboard(can_fight: bool = True, hint: str = "") -> InlineKeyboardMarkup:
+def arena_keyboard(can_fight: bool = True, hint: str = "",
+                   chat_id: int | None = None) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     if can_fight:
         b.button(text="⚔️ Вызов", callback_data="arena:fight")
     else:
         b.button(text=(hint[:52] or "⏳ Подожди…"), callback_data="arena:noop")
-    b.row(InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main"))
+    with_nav(b, "arena", chat_id)
     return b.as_markup()
 
 def style_keyboard(svc, pet, slots_page: int = 0,
-                   item_page: int = 0) -> InlineKeyboardMarkup:
+                   item_page: int = 0,
+                   chat_id: int | None = None) -> InlineKeyboardMarkup:
     from app.services.tamagotchi import STYLE_ITEMS_PER_PAGE
 
     b = InlineKeyboardBuilder()
@@ -326,8 +497,8 @@ def style_keyboard(svc, pet, slots_page: int = 0,
                 nav.append(InlineKeyboardButton(
                     text="➡️", callback_data=f"style:page:{slots_page}:{item_page + 1}"))
             b.row(*nav)
-    b.row(InlineKeyboardButton(text="🐾 К питомцу", callback_data="pet:page:1"),
-          InlineKeyboardButton(text="🏠 Меню", callback_data="menu:main"))
+    # «Назад» — по истории (обычно вкладка «🎒 Вещи» хаба питомца).
+    with_nav(b, "style", chat_id)
     return b.as_markup()
 
 def open_slot_of(cb_data: str) -> int | None:

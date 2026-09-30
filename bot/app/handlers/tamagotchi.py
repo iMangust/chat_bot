@@ -460,7 +460,9 @@ async def pet_history_screen(cb: CallbackQuery, session: AsyncSession) -> None:
                          f"\n   ↳ {reason}, {when}")
         text = "\n".join(lines)
     await safe_edit_or_answer(cb.message, text,
-                              reply_markup=pet_history_kb(has_current=current is not None))
+                              reply_markup=pet_history_kb(
+                                  has_current=current is not None,
+                                  chat_id=cb.message.chat.id if cb.message else None))
     await cb.answer()
 
 async def _after_action(cb: CallbackQuery, session: AsyncSession, result_text: str,
@@ -588,7 +590,9 @@ async def train_screen(cb: CallbackQuery, session: AsyncSession) -> None:
         f"  💪 — профиль 🐶 · 🏃 — профиль 🦊 · 🧠 — профиль 🦉 (сейчас у тебя {sp['emoji']})\n",
         "⚡ Тренировка стоит 15 энергии и 8 сытости.",
     ]
-    await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=train_menu())
+    await safe_edit_or_answer(cb.message, "\n".join(lines),
+                              reply_markup=train_menu(
+                                  cb.message.chat.id if cb.message else None))
     await cb.answer()
 
 @router.callback_query(F.data.startswith("pet:train:"))

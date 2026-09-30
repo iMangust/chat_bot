@@ -10,8 +10,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.repositories import UserRepository
 from aiogram.filters import Command
 
-from app.keyboards.inline import (achievements_list, back_to_main, main_menu,
-                                  top_tabs)
+from app.keyboards.inline import (achievements_list, back_to_main,
+                                  main_menu, nav_row, top_tabs,
+                                  with_nav)
 from app.services.leaderboard import (overall_top, top_emotional, top_karma,
                                       top_levels, top_messages, top_pets,
                                       top_reactions, top_streaks)
@@ -63,7 +64,15 @@ async def stats_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     breakdown = _breakdown_text(st.get("breakdown") or {})
     if breakdown:
         text += f"\n\n🧩 Из чего состоят сообщения:\n{breakdown}"
-    await safe_edit_or_answer(cb.message, text, reply_markup=back_to_main())
+    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    _b = InlineKeyboardBuilder()
+    _b.button(text="🏆 Достижения", callback_data="menu:ach")
+    _b.button(text="🏅 Топы", callback_data="menu:top")
+    _b.adjust(2)
+    # «⬅️ Назад» — по истории переходов (обычно в главное меню);
+    # «🏠 Меню» — гарантированный выход на главный экран.
+    with_nav(_b, "stats", cb.message.chat.id if cb.message else None)
+    await safe_edit_or_answer(cb.message, text, reply_markup=_b.as_markup())
     await cb.answer()
 
 MEDIA_LABELS: list[tuple[str, str]] = [
@@ -128,7 +137,9 @@ async def ach_screen(cb: CallbackQuery, session: AsyncSession, page: int = 0) ->
     items = await svc.list_for_user(cb.from_user.id)
     text, page, total_pages = _render_achievements(items, page=page)
     await safe_edit_or_answer(cb.message, text,
-                              reply_markup=achievements_list(items, page, total_pages))
+                              reply_markup=achievements_list(
+                                  items, page, total_pages,
+                                  chat_id=cb.message.chat.id if cb.message else None))
     await cb.answer()
 
 @router.callback_query(F.data.startswith("ach:page:"))
@@ -255,7 +266,9 @@ async def top_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     period, section = _parse_top_cb(cb.data)
     _TOP_CTX["me"] = cb.from_user.id
     text = await _top_section(session, period, section)
-    await safe_edit_or_answer(cb.message, text, reply_markup=top_tabs(period, section))
+    await safe_edit_or_answer(cb.message, text,
+                              reply_markup=top_tabs(period, section,
+                                                    chat_id=cb.message.chat.id if cb.message else None))
     await cb.answer()
 
 @router.message(Command("top"), F.chat.type == "private")
