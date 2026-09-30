@@ -68,6 +68,7 @@ def _alias_short_mtproto_keys() -> None:
             continue
     pairs = {
         "TELEGRAM_API_ID": ("API_ID",),
+        # обратные алиасы: короткое имя берём из длинного, если задано только оно
         "TELEGRAM_API_HASH": ("API_HASH",),
         "TELEGRAM_PHONE": ("PHONE",),
         "TELEGRAM_PASSWORD": ("TELEGRAM_PASSWORD",),
@@ -75,14 +76,25 @@ def _alias_short_mtproto_keys() -> None:
         "MTPROTO_SESSION": ("SESSION_FILE",),
         "MTPROTO_ANSWER_MODE": ("ANSWER_MODE",),
     }
-    for target, sources in pairs.items():
-        if os.getenv(target):
-            continue
-        for src in sources:
-            v = os.getenv(src) or vals.get(src)
-            if v:
-                os.environ[target] = v
-                break
+    # обратный маппинг: если задано только длинное имя — проставляем короткое
+    # (часть кода читает их напрямую через os.getenv)
+    reverse = {
+        "API_ID": ("TELEGRAM_API_ID",),
+        "API_HASH": ("TELEGRAM_API_HASH",),
+        "PHONE": ("TELEGRAM_PHONE",),
+        "SESSION_STRING": ("MTPROTO_SESSION_STRING",),
+        "SESSION_FILE": ("MTPROTO_SESSION",),
+        "ANSWER_MODE": ("MTPROTO_ANSWER_MODE",),
+    }
+    for mapping in (pairs, reverse):
+        for target, sources in mapping.items():
+            if os.getenv(target):
+                continue
+            for src in sources:
+                v = os.getenv(src) or vals.get(src)
+                if v:
+                    os.environ[target] = v
+                    break
 
 _alias_short_mtproto_keys()
 
@@ -130,6 +142,8 @@ class Settings(BaseSettings):
 
     admin_ids: list[int] = []
 
+    dashboard_host: str = "127.0.0.1"
+    dashboard_port: int = 8765
     dashboard_allowed_ips: str = ""
     dashboard_trust_proxy: bool = False
 
@@ -147,6 +161,16 @@ class Settings(BaseSettings):
     weather_cache_minutes: int = 180
     openweather_api_token: str | None = None
     openweather_api_key: str | None = None
+    telegram_api_id: int | None = None
+    telegram_api_hash: str | None = None
+    telegram_phone: str | None = None
+    mtproto_session_string: str | None = None
+    mtproto_session: str = "mtproto_sync"
+    mtproto_answer_mode: str = "off"
+
+    weather_city: str = "Петропавловск-Камчатский"
+    weather_lat: float = 53.0446
+    weather_lon: float = 158.6507
     redis_socket_timeout: int = 5
 
     channel_username: str | None = None
@@ -157,13 +181,7 @@ class Settings(BaseSettings):
 
     merch_admin_id: int | None = None
 
-    telegram_api_id: int | None = None
-    telegram_api_hash: str | None = None
-    telegram_phone: str | None = None
     telegram_password: str | None = None
-    mtproto_session_string: str | None = None
-    mtproto_session: str = "mtproto_sync"
-    mtproto_answer_mode: str = "off"
     mtproto_autosync: bool = True
     mtproto_sync_minutes: int = 60
     mtproto_full_scan_hours: int = 6

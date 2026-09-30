@@ -6,8 +6,25 @@ from pathlib import Path
 
 from app.config import _ENV_ENCODINGS, Settings
 
+try:  # русские подсказки для вкладки «Настройки»
+    from app.console.settings_help import HELP_RU
+except ImportError:  # pragma: no cover
+    HELP_RU: dict[str, str] = {}
+
 SECRET_KEYS = {"BOT_TOKEN", "TELEGRAM_PASSWORD", "API_HASH",
-               "TELEGRAM_API_HASH", "MTPROTO_SESSION_STRING"}
+               "TELEGRAM_API_HASH", "MTPROTO_SESSION_STRING",
+               "OPENWEATHER_API_KEY", "OPENWEATHER_API_TOKEN"}
+
+# ключи без поля в Settings (или с длинным именем-полем), которые движок читает
+# напрямую/через алиасы из os.getenv — показываем их на вкладке «Настройки»
+DIRECT_ENV_KEYS = {"OPENWEATHER_API_KEY": "str", "OPENWEATHER_API_TOKEN": "str"}
+
+# псевдонимы: короткое имя в UI -> значение берём из связанного поля Settings
+ALIAS_VIEW = {"API_ID": "TELEGRAM_API_ID", "API_HASH": "TELEGRAM_API_HASH",
+              "PHONE": "TELEGRAM_PHONE", "SESSION_STRING": "MTPROTO_SESSION_STRING",
+              "SESSION_FILE": "MTPROTO_SESSION", "ANSWER_MODE": "MTPROTO_ANSWER_MODE"}
+ALIAS_TYPES = {"API_ID": "int", "API_HASH": "str", "PHONE": "str",
+               "SESSION_STRING": "str", "SESSION_FILE": "str", "ANSWER_MODE": "str"}
 
 _KEY_RE = re.compile(r"^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$")
 
@@ -114,22 +131,47 @@ def _coerce(key: str, value: str):
     return s
 
 ALLOWED_ALIASES = {"API_ID", "API_HASH", "PHONE", "SESSION_STRING",
-                   "ANSWER_MODE", "CHANNEL_USERNAME"}
+                   "ANSWER_MODE", "CHANNEL_USERNAME", "SESSION_FILE"}
 
 def validate_updates(updates: dict[str, str]) -> tuple[dict[str, str], list[str]]:
     clean: dict[str, str] = {}
     warns: list[str] = []
     fields = set(getattr(Settings, "model_fields", {}))
+    # UI может слать длинные имена полей Settings — приводим к каноничным именам .env
+    to_env_name = {"TELEGRAM_API_ID": "API_ID", "TELEGRAM_API_HASH": "API_HASH",
+                   "TELEGRAM_PHONE": "PHONE", "MTPROTO_SESSION_STRING": "SESSION_STRING",
+                   "MTPROTO_SESSION": "SESSION_FILE", "MTPROTO_ANSWER_MODE": "ANSWER_MODE"}
+    normalized: dict[str, str] = {}
+    for k, v in updates.items():
+        ku = k.strip().upper()
+        env_key = to_env_name.get(ku)
+        if env_key and ku.lower() not in fields:
+            normalized[env_key] = v
+        elif env_key and ku.lower() in fields:
+            normalized[env_key] = v  # поле есть, но в .env принято короткое имя
+        else:
+            normalized[k] = v
+    updates = normalized
     for key, val in updates.items():
         key = key.strip().upper()
         if not key:
             continue
         if key.lower() not in fields:
-            if key in ALLOWED_ALIASES:
+            if key in ALLOWED_ALIASES or key in DIRECT_ENV_KEYS \
+                    or key.startswith("OPENWEATHER_"):
                 clean[key] = str(val).strip()
                 continue
             raise ValueError(f"ключ {key!r} не поддерживается")
-        clean[key] = _coerce(key, "" if val is None else str(val))
+        elif key in DIRECT_ENV_KEYS:
+            v = str(val).strip()
+            if DIRECT_ENV_KEYS[key] == "int" and v:
+                try:
+                    int(v)
+                except ValueError:
+                    raise ValueError(f"{key}: ожидается целое число")
+            clean[key] = v
+        else:
+            clean[key] = _coerce(key, "" if val is None else str(val))
     tok = clean.get("BOT_TOKEN")
     if tok is not None and tok and ":" not in tok:
         warns.append("BOT_TOKEN похож на неполный: формат «123456:ABC...» (от @BotFather)")
@@ -147,13 +189,20 @@ def validate_updates(updates: dict[str, str]) -> tuple[dict[str, str], list[str]
 def settings_view() -> dict:
     raw = parse_env()
     fields = Settings.model_fields
+    # длинные имена полей, для которых в .env принято короткое имя — не показываем дублями
+    to_env_name = {"TELEGRAM_API_ID": "API_ID", "TELEGRAM_API_HASH": "API_HASH",
+                   "TELEGRAM_PHONE": "PHONE", "MTPROTO_SESSION_STRING": "SESSION_STRING",
+                   "MTPROTO_SESSION": "SESSION_FILE", "MTPROTO_ANSWER_MODE": "ANSWER_MODE"}
     items = []
     for name, f in fields.items():
         key = name.upper()
+        if key in to_env_name:
+            continue
         default = f.default if f.default is not None else f.default_factory() \
             if callable(f.default_factory) else None
         cur = raw.get(key, "")
-        is_secret = key in SECRET_KEYS
+        is_secret = key in SECRET_KEYS or key == "TELEGRAM_PASSWORD" or key == "TELEGRAM_PASSWORD"
+        comment = HELP_RU.get(key) or _line_comment(key)
         items.append({
             "key": key,
             "field": name,
@@ -163,7 +212,29 @@ def settings_view() -> dict:
             "value": ("•" * 12 if is_secret and cur else cur),
             "isSecret": is_secret,
             "isSet": bool(cur),
-            "comment": _line_comment(key),
+            "comment": comment,
+        })
+    by_key = {i["key"]: i for i in items}
+    for short, long_key in ALIAS_VIEW.items():
+        base = by_key.get(long_key) or raw.get(short, "")
+        cur = raw.get(short, "") or (base if isinstance(base, str) else "")
+        is_secret = short in SECRET_KEYS or short == "SESSION_STRING"
+        items.append({
+            "key": short, "field": short.lower(), "title": short,
+            "type": ALIAS_TYPES[short], "default": "",
+            "value": ("•" * 12 if is_secret and cur else cur),
+            "isSecret": is_secret, "isSet": bool(cur),
+            "comment": HELP_RU.get(short) or _line_comment(short),
+        })
+    for key, typ in DIRECT_ENV_KEYS.items():
+        cur = raw.get(key, "")
+        secret = key in SECRET_KEYS
+        items.append({
+            "key": key, "field": key.lower(), "title": key,
+            "type": typ, "default": "",
+            "value": ("•" * 12 if secret and cur else cur),
+            "isSecret": secret, "isSet": bool(cur),
+            "comment": HELP_RU.get(key) or _line_comment(key),
         })
     return {
         "path": str(env_path()),

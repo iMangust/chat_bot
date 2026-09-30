@@ -16,14 +16,13 @@ WEB_DIR = Path(__file__).resolve().parent
 app = FastAPI(title="TamaBot Control Panel", docs_url=None, redoc_url=None)
 
 LOCALHOST_IPS = {"127.0.0.1", "::1"}
-DEFAULT_ALLOWED_IPS = "195.88.178.178,195.88.178.179,195.88.178.222"
+# Пустой DASHBOARD_ALLOWED_IPS = доступ только с localhost (см. _parse_allowed)
 
 def _parse_allowed(raw: str | None) -> tuple[set[str], list]:
     ips: set[str] = set(LOCALHOST_IPS)
     networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
     tokens = [t for t in re.split(r"[,\s;]+", (raw or "").strip()) if t]
-    if not tokens:
-        tokens = DEFAULT_ALLOWED_IPS.split(",")
+    # пустой список = доступ только с localhost (безопасно при DASHBOARD_HOST=0.0.0.0)
     for token in tokens:
         try:
             if "/" in token:
@@ -68,7 +67,7 @@ def _allowlist() -> tuple[set[str], list]:
     try:
         raw = get_settings_cached().dashboard_allowed_ips
     except Exception:
-        raw = DEFAULT_ALLOWED_IPS
+        raw = ""
     return _parse_allowed(raw)
 
 @app.middleware("http")
@@ -248,6 +247,11 @@ async def save_settings(body: SettingsPatch) -> dict:
     except OSError as exc:
         raise HTTPException(500, f"не удалось записать .env: {exc}") from exc
     get_settings.cache_clear()
+    try:  # WEATHER_* применяются без рестарта
+        from app.services import weather as _w
+        _w.refresh_geo()
+    except Exception:
+        pass
     new = get_settings()
     changed_fields = [name for name in new.model_fields
                       if old is None or getattr(new, name) != getattr(old, name)]

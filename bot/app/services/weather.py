@@ -11,9 +11,29 @@ from loguru import logger
 from app.utils.formatting import WEATHER_SEASONS, season_for
 from app.utils.local_time import now as local_now
 
-WEATHER_CITY = os.getenv("WEATHER_CITY", "Петропавловск-Камчатский")
-LAT = float(os.getenv("WEATHER_LAT", "53.0446"))
-LON = float(os.getenv("WEATHER_LON", "158.6507"))
+def _weather_geo() -> tuple[str, float, float]:
+    """Город и координаты берутся из Settings (переменные WEATHER_* в .env),
+    с фолбэком на прямое чтение env — чтобы панель могла менять их без рестарта."""
+    try:
+        from app.config import get_settings
+        st = get_settings()
+        return (st.weather_city or "Петропавловск-Камчатский",
+                float(st.weather_lat), float(st.weather_lon))
+    except Exception:
+        return (os.getenv("WEATHER_CITY", "Петропавловск-Камчатский"),
+                float(os.getenv("WEATHER_LAT", "53.0446")),
+                float(os.getenv("WEATHER_LON", "158.6507")))
+
+LAT: float = 0.0
+LON: float = 0.0
+WEATHER_CITY: str = ""
+
+def refresh_geo() -> None:
+    """Перечитать WEATHER_* из .env/настроек (вызывается панелью после сохранения)."""
+    global WEATHER_CITY, LAT, LON
+    WEATHER_CITY, LAT, LON = _weather_geo()
+
+refresh_geo()
 CACHE_TTL_SEC = 1800
 WEATHER_REAL_ENABLED = os.getenv("WEATHER_REAL_ENABLED", "true").strip().lower() not in {"0", "false", "no", "off"}
 RETRY_AFTER_SEC = 1200
