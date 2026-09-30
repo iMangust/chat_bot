@@ -36,6 +36,36 @@ def _enum(v: Any) -> str:
     return str(v.value if hasattr(v, "value") else v)
 
 
+# ---- русские подписи enum-значений для панели ----
+SPECIES_RU = {"cat": "Котёнок", "dog": "Щенок", "fox": "Лисёнок",
+              "chinchilla": "Шиншилла", "owl": "Совёнок", "dragon": "Дракончик"}
+STAGE_RU = {"egg": "🥚 Яйцо", "baby": "🐣 Малыш", "teen": "🐱 Подросток",
+            "adult": "😼 Взрослый", "legendary": "🐲 Легендарный"}
+CATEGORY_RU = {"activity": "💬 Активность", "streak": "🔥 Серия",
+               "reactions": "👍 Реакции", "pet": "🐾 Питомец",
+               "social": "🤝 Социальные", "secret": "🙈 Секретные"}
+RARITY_RU = {"common": "Обычное", "rare": "Редкое", "epic": "Эпическое",
+             "legendary": "Легендарное"}
+COND_RU = {"pet_created": "Питомец заведён", "messages_total": "Сообщений всего",
+           "messages_day": "Сообщений за день", "streak_days": "Серия дней",
+           "reactions_given": "Реакций дано", "reactions_received": "Реакций получено",
+           "pet_feeds": "Кормлений питомца", "pet_level": "Уровень питомца",
+           "pet_walks": "Прогулок питомца", "invites": "Приглашено друзей",
+           "top1_day": "1 место в топе дня", "level": "Уровень игрока",
+           "coins_earned": "Монет заработано", "games_won": "Игр выиграно"}
+STAT_RU = {"messages_day_total": "Сообщений за день", "pet_feeds": "Кормлений",
+           "pet_walks": "Прогулок питомца", "reactions_given": "Реакций дано",
+           "reactions_received": "Реакций получено", "invites": "Приглашений",
+           "top1_day": "Побед в топе дня", "coins_earned": "Монет заработано",
+           "games_won": "Игр выиграно", "pet_level": "Макс. уровень питомца"}
+
+
+def _ru(mapping: dict[str, str], key: Any) -> str:
+    """Русская подпись enum-значения; если ключ неизвестен — как есть."""
+    k = str(key.value if hasattr(key, "value") else key)
+    return mapping.get(k, k)
+
+
 def _session():
     # async_sessionmaker сам является async-контекстным менеджером;
     # раньше здесь был "return session_factory()" + "async with await ...",
@@ -235,67 +265,101 @@ async def list_users(q: str = "", limit: int = Query(50, le=500),
 
 @router.get("/users/{tg_id}", dependencies=[Depends(_tok)])
 async def user_detail(tg_id: int) -> dict:
+    """Карточка пользователя. Все необязательные блоки считаются защищённо:
+    одна отсутствующая таблица/битая связь не должна ронять ручку в 500."""
     from app.db.models import (NotificationSetting, Pet, ReactionLog,
-                               User, UserAchievement, UserStat)
-    async with _session() as s:
-        u = (await s.execute(select(User).where(User.tg_id == tg_id))
-             ).scalar_one_or_none()
-        if u is None:
-            raise HTTPException(404, f"пользователь {tg_id} не найден")
-        pet = (await s.execute(select(Pet).where(Pet.user_id == tg_id)
-                               .order_by(Pet.is_archived, Pet.born_at.desc()))
-               ).scalars().first()
-        achs = (await s.execute(
-            select(UserAchievement).where(UserAchievement.user_id == tg_id))
-        ).scalars().all()
-        stats = (await s.execute(
-            select(UserStat).where(UserStat.user_id == tg_id))).scalars().all()
-        notif = (await s.execute(select(NotificationSetting).where(
-            NotificationSetting.user_id == tg_id))).scalars().first()
-        reacts_given = (await s.execute(select(func.count()).select_from(
-            ReactionLog).where(ReactionLog.from_user == tg_id))).scalar() or 0
-        reacts_recv = (await s.execute(select(func.count()).select_from(
-            ReactionLog).where(ReactionLog.to_user == tg_id))).scalar() or 0
-        invited = (await s.execute(select(func.count()).select_from(User).where(
-            User.referrer_id == tg_id))).scalar() or 0
+                               User, UserStat)
+    try:
+        async with _session() as s:
+            u = (await s.execute(select(User).where(User.tg_id == tg_id))
+                 ).scalar_one_or_none()
+            if u is None:
+                raise HTTPException(404, f"пользователь {tg_id} не найден")
+            user_info = {
+                "tgId": u.tg_id, "username": u.username, "firstName": u.first_name,
+                "lastName": u.last_name, "lang": u.lang, "level": u.level,
+                "xp": u.xp, "coins": u.coins, "streak": u.streak_days,
+                "bestStreak": u.best_streak, "messages": u.messages_count,
+                "reactionsGiven": u.reactions_given,
+                "reactionsReceived": u.reactions_received,
+                "onboarded": u.onboarded, "welcomeShown": u.welcome_shown,
+                "banned": u.is_banned, "referrerId": u.referrer_id,
+                "createdAt": _dt(u.created_at), "updatedAt": _dt(u.updated_at),
+                "lastActiveDate": _dt(u.last_active_date),
+            }
+            pet = (await s.execute(select(Pet).where(Pet.user_id == tg_id)
+                                   .order_by(Pet.is_archived, Pet.born_at.desc()))
+                   ).scalars().first()
+            pet_info = ({
+                "id": pet.id, "name": pet.name, "species": _enum(pet.species),
+                "speciesRu": _ru(SPECIES_RU, pet.species),
+                "stage": _enum(pet.stage), "stageRu": _ru(STAGE_RU, pet.stage),
+                "level": pet.level, "xp": pet.xp,
+                "hunger": round(float(pet.hunger), 1),
+                "happiness": round(float(pet.happiness), 1),
+                "energy": round(float(pet.energy), 1),
+                "hygiene": round(float(pet.hygiene), 1),
+                "health": round(float(pet.health), 1),
+                "strength": pet.strength, "agility": pet.agility,
+                "intellect": pet.intellect,
+                "sleeping": bool(pet.is_sleeping), "archived": bool(pet.is_archived),
+                "generation": pet.generation, "bornAt": _dt(pet.born_at),
+                "lastUpdate": _dt(pet.last_update),
+            } if pet else None)
+            notif = (await s.execute(select(NotificationSetting).where(
+                NotificationSetting.user_id == tg_id))).scalars().first()
+            notif_info = ({
+                "petReminders": notif.pet_reminders,
+                "streakReminders": notif.streak_reminders,
+                "achievementNotifications": notif.achievement_notifications,
+                "dailyReport": notif.daily_report,
+            } if notif else None)
+            counters = {
+                "reactionsGiven": (await s.execute(select(func.count()).select_from(
+                    ReactionLog).where(ReactionLog.from_user == tg_id))).scalar() or 0,
+                "reactionsReceived": (await s.execute(select(func.count()).select_from(
+                    ReactionLog).where(ReactionLog.to_user == tg_id))).scalar() or 0,
+                "invited": (await s.execute(select(func.count()).select_from(User).where(
+                    User.referrer_id == tg_id))).scalar() or 0,
+            }
+            stat_rows = (await s.execute(
+                select(UserStat).where(UserStat.user_id == tg_id))).scalars().all()
+            stats = {st.key: st.value for st in stat_rows}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("user_detail failed for %s", tg_id)
+        raise HTTPException(500, f"Ошибка карточки пользователя: {type(exc).__name__}: {exc}")
+
+    # Достижения — отдельным защищённым блоком: при проблеме с таблицей
+    # user_achievements карточка всё равно открывается.
+    achievements: list[dict] = []
+    try:
+        from app.db.models import Achievement, UserAchievement
+        async with _session() as s:
+            rows = (await s.execute(
+                select(UserAchievement, Achievement)
+                .join(Achievement, Achievement.id == UserAchievement.achievement_id)
+                .where(UserAchievement.user_id == tg_id))).all()
+            achievements = [{
+                "achievementId": ua.achievement_id, "code": a.code,
+                "title": a.title, "icon": a.icon, "description": a.description,
+                "category": _enum(a.category), "categoryRu": _ru(CATEGORY_RU, a.category),
+                "rarity": _enum(a.rarity), "rarityRu": _ru(RARITY_RU, a.rarity),
+                "progress": ua.progress, "conditionValue": a.condition_value,
+                "unlockedAt": _dt(ua.unlocked_at),
+            } for ua, a in rows]
+    except Exception:
+        logger.exception("user_detail: блок достижений недоступен для %s", tg_id)
+
     return {
-        "user": {
-            "tgId": u.tg_id, "username": u.username, "firstName": u.first_name,
-            "lastName": u.last_name, "lang": u.lang, "level": u.level,
-            "xp": u.xp, "coins": u.coins, "streak": u.streak_days,
-            "bestStreak": u.best_streak, "messages": u.messages_count,
-            "reactionsGiven": u.reactions_given,
-            "reactionsReceived": u.reactions_received,
-            "onboarded": u.onboarded, "welcomeShown": u.welcome_shown,
-            "banned": u.is_banned, "referrerId": u.referrer_id,
-            "createdAt": _dt(u.created_at), "updatedAt": _dt(u.updated_at),
-            "lastActiveDate": _dt(u.last_active_date),
-        },
-        "pet": ({
-            "id": pet.id, "name": pet.name, "species": _enum(pet.species),
-            "stage": _enum(pet.stage), "level": pet.level, "xp": pet.xp,
-            "hunger": round(pet.hunger, 1), "happiness": round(pet.happiness, 1),
-            "energy": round(pet.energy, 1), "hygiene": round(pet.hygiene, 1),
-            "health": round(pet.health, 1), "strength": pet.strength,
-            "agility": pet.agility, "intellect": pet.intellect,
-            "sleeping": pet.is_sleeping, "archived": pet.is_archived,
-            "generation": pet.generation, "bornAt": _dt(pet.born_at),
-            "lastUpdate": _dt(pet.last_update),
-        } if pet else None),
-        "achievements": [{
-            "achievementId": a.achievement_id, "code": a.achievement.code,
-            "title": a.achievement.title, "icon": a.achievement.icon,
-            "progress": a.progress, "unlockedAt": _dt(a.unlocked_at),
-        } for a in achs if a.achievement is not None],
-        "stats": {st.key: st.value for st in stats},
-        "notifications": ({
-            "petReminders": notif.pet_reminders,
-            "streakReminders": notif.streak_reminders,
-            "achievementNotifications": notif.achievement_notifications,
-            "dailyReport": notif.daily_report,
-        } if notif else None),
-        "counters": {"reactionsGiven": reacts_given,
-                     "reactionsReceived": reacts_recv, "invited": invited},
+        "user": user_info,
+        "pet": pet_info,
+        "achievements": achievements,
+        "stats": stats,
+        "statLabels": STAT_RU,
+        "notifications": notif_info,
+        "counters": counters,
     }
 
 
@@ -370,7 +434,9 @@ async def pet_detail(pet_id: int) -> dict:
         "pet": {
             "id": p.id, "userId": p.user_id,
             "owner": (owner.first_name or owner.username or str(p.user_id)) if owner else "?",
-            "name": p.name, "species": _enum(p.species), "stage": _enum(p.stage),
+            "name": p.name, "species": _enum(p.species),
+            "speciesRu": _ru(SPECIES_RU, p.species),
+            "stage": _enum(p.stage), "stageRu": _ru(STAGE_RU, p.stage),
             "level": p.level, "xp": p.xp,
             "hunger": round(float(p.hunger)), "happiness": round(float(p.happiness)),
             "energy": round(float(p.energy)), "hygiene": round(float(p.hygiene)),
@@ -406,7 +472,9 @@ async def list_pets(q: str = "", limit: int = Query(50, le=500), offset: int = 0
         items.append({
             "id": pet.id, "userId": pet.user_id,
             "owner": user.first_name or user.username or str(user.tg_id),
-            "name": pet.name, "species": _enum(pet.species), "stage": _enum(pet.stage),
+            "name": pet.name, "species": _enum(pet.species),
+            "speciesRu": _ru(SPECIES_RU, pet.species),
+            "stage": _enum(pet.stage), "stageRu": _ru(STAGE_RU, pet.stage),
             "level": pet.level, "xp": pet.xp, "hunger": round(pet.hunger, 1),
             "happiness": round(pet.happiness, 1), "energy": round(pet.energy, 1),
             "hygiene": round(pet.hygiene, 1), "health": round(pet.health, 1),
@@ -438,14 +506,39 @@ async def achievements_list(with_holders: bool = False, user_id: int = 0) -> dic
             ustate = {r.achievement_id: (r.unlocked_at is not None, r.progress) for r in rows}
     return {"items": [{
         "id": a.id, "code": a.code, "title": a.title, "description": a.description,
-        "icon": a.icon, "category": _enum(a.category), "rarity": _enum(a.rarity),
+        "icon": a.icon, "category": _enum(a.category),
+        "categoryRu": _ru(CATEGORY_RU, a.category),
+        "rarity": _enum(a.rarity), "rarityRu": _ru(RARITY_RU, a.rarity),
         "conditionType": _enum(a.condition_type),
+        "conditionRu": _ru(COND_RU, a.condition_type),
         "conditionValue": a.condition_value, "rewardXp": a.reward_xp,
         "rewardCoins": a.reward_coins, "hidden": a.is_hidden,
         "holders": counts.get(a.id, 0) if with_holders else None,
         "userHas": bool(ustate.get(a.id, (False, 0))[0]) if user_id else None,
         "userProgress": ustate.get(a.id, (False, 0))[1] if user_id else None,
     } for a in achs]}
+
+
+@router.get("/achievements/{ach_id}/holders", dependencies=[Depends(_tok)])
+async def achievement_holders(ach_id: int, limit: int = Query(100, le=500)) -> dict:
+    """Кто владеет достижением (для вкладки «Достижения»)."""
+    from app.db.models import Achievement, User, UserAchievement
+    async with _session() as s:
+        a = await s.get(Achievement, ach_id)
+        if a is None:
+            raise HTTPException(404, "достижение не найдено")
+        rows = (await s.execute(
+            select(UserAchievement, User)
+            .join(User, User.tg_id == UserAchievement.user_id)
+            .where(UserAchievement.achievement_id == ach_id,
+                   UserAchievement.unlocked_at.is_not(None))
+            .order_by(UserAchievement.unlocked_at.desc()).limit(limit))).all()
+    return {"achievement": {"id": a.id, "code": a.code, "title": a.title,
+                           "icon": a.icon},
+            "items": [{"userId": u.tg_id,
+                       "name": u.first_name or u.username or str(u.tg_id),
+                       "username": u.username, "level": u.level,
+                       "unlockedAt": _dt(ua.unlocked_at)} for ua, u in rows]}
 
 
 # ================================ мерч ================================
@@ -480,7 +573,7 @@ async def merch_list() -> dict:
 
 
 class MerchCategoryBody(BaseModel):
-    code: str
+    code: str = ""          # необязателен: сгенерируем автоматически (catN)
     title: str
     icon: str = "🧢"
     position: int = 0
@@ -510,16 +603,36 @@ class MerchVariantPatch(BaseModel):
 
 @router.post("/merch/categories", dependencies=[Depends(_tok)])
 async def merch_add_category(body: MerchCategoryBody) -> dict:
+    from app.db.models import MerchCategory
     from app.db.repositories import MerchRepository
+    title = (body.title or "").strip()
+    if not title:
+        raise HTTPException(422, "название категории обязательно")
+    code = (body.code or "").strip().lower().replace(" ", "_")
     async with _session() as s:
+        if not code:
+            # код не обязателен для админа — генерируем уникальный catN
+            max_id = (await s.execute(select(func.max(MerchCategory.id)))).scalar() or 0
+            for cand_id in range(max_id + 1, max_id + 1001):
+                cand = f"cat{cand_id}"
+                exists = (await s.execute(select(MerchCategory.id).where(
+                    MerchCategory.code == cand))).first()
+                if not exists:
+                    code = cand
+                    break
+        else:
+            exists = (await s.execute(select(MerchCategory.id).where(
+                MerchCategory.code == code))).first()
+            if exists:
+                raise HTTPException(422, f"код «{code}» уже занят")
         try:
             c = await MerchRepository(s).add_category(
-                body.code, body.title, body.icon, body.position)
+                code, title, body.icon or "🧢", body.position)
             await s.commit()
         except Exception as exc:
             await s.rollback()
             raise HTTPException(422, f"не удалось добавить категорию: {exc}") from exc
-    return {"ok": True, "id": getattr(c, "id", None)}
+    return {"ok": True, "id": getattr(c, "id", None), "code": code}
 
 
 @router.delete("/merch/categories/{code}", dependencies=[Depends(_tok)])
@@ -1125,14 +1238,32 @@ async def duels_week() -> dict:
 
 @router.get("/chats", dependencies=[Depends(_tok)])
 async def chats_settings() -> dict:
-    from app.db.models import ChatSettings
+    """Все чаты, которые вообще попадали в поле зрения бота (по логу сообщений),
+    с их настройками кулдауна/минимальной длины. Позволяет админу увидеть и
+    настроить любой чат, даже если для него ещё нет явной записи в chat_settings."""
+    from app.db.models import ChatMessageLog, ChatSettings
     async with _session() as s:
-        rows = (await s.execute(select(ChatSettings).order_by(
-            ChatSettings.chat_id))).scalars().all()
-    return {"items": [{
-        "chatId": c.chat_id, "cooldownSec": c.cooldown_sec,
-        "minLength": c.min_length, "config": c.config or {},
-    } for c in rows]}
+        settings = {c.chat_id: c for c in (await s.execute(
+            select(ChatSettings))).scalars().all()}
+        agg = (await s.execute(
+            select(ChatMessageLog.chat_id,
+                   func.count().label("msgs"),
+                   func.max(ChatMessageLog.created_at).label("last_at"))
+            .group_by(ChatMessageLog.chat_id)
+            .order_by(func.count().desc()).limit(200))).all()
+    known = {a.chat_id for a in agg}
+    items = [{"chatId": a.chat_id, "messages": a.msgs, "lastActivity": _dt(a.last_at),
+              "cooldownSec": (settings[a.chat_id].cooldown_sec if a.chat_id in settings else None),
+              "minLength": (settings[a.chat_id].min_length if a.chat_id in settings else None),
+              "config": (settings[a.chat_id].config or {} if a.chat_id in settings else None)}
+             for a in agg]
+    # чаты с явными настройками, но без сообщений — тоже показываем
+    for cid, c in settings.items():
+        if cid not in known:
+            items.append({"chatId": cid, "messages": 0, "lastActivity": None,
+                          "cooldownSec": c.cooldown_sec, "minLength": c.min_length,
+                          "config": c.config or {}})
+    return {"items": items}
 
 
 class ChatSettingsBody(BaseModel):

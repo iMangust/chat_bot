@@ -58,13 +58,13 @@ async function showUser(id){
       <span>Приглашено</span><b>${d.counters.invited}</b><span>Онбординг</span><b>${u.onboarded?"пройден":"не завершён"}</b>
       <span>Забанен</span><b>${u.banned?"да":"нет"}</b><span>Реферер</span><b>${u.referrerId||"—"}</b>
       <span>Регистрация</span><b>${u.createdAt}</b><span>Обновлён</span><b>${u.updatedAt}</b></div>`;
-    if(d.pet){const p=d.pet;html+=`<h4>🐾 Питомец: ${escapeHtml(p.name)} (${p.species}, ${p.stage}, ур.${p.level})</h4>
+    if(d.pet){const p=d.pet;html+=`<h4>🐾 Питомец: ${escapeHtml(p.name)} (${p.speciesRu||p.species}, ${p.stageRu||p.stage}, ур.${p.level})</h4>
       <div class="needs">${[["Голод",p.hunger,"#ffb347"],["Счастье",p.happiness,"#3ecf8e"],["Энергия",p.energy,"#7c5cff"],["Гигиена",p.hygiene,"#3ecfb2"],["Здоровье",p.health,"#ff5c7a"]].map(n=>`<div class="need"><span>${n[0]} ${n[1]}</span>${bar(n[1],n[2])}</div>`).join("")}</div>
       <div class="kv"><span>Характеристики</span><b>💪${p.strength} 🏃${p.agility} 🧠${p.intellect}</b><span>Поколение</span><b>${p.generation}</b><span>Спит</span><b>${p.sleeping?"да":"нет"}</b><span>Родился</span><b>${p.bornAt}</b></div>`;}
     else html+="<h4>Питомца нет</h4>";
     if(d.achievements&&d.achievements.length)html+=`<h4>Достижения (${d.achievements.filter(a=>a.unlockedAt).length} открыто)</h4><div class="achips">`+
       d.achievements.map(a=>`<span class="achip ${a.unlockedAt?"got":""}" title="${escapeHtml(a.title)}: прогресс ${a.progress}">${a.icon} ${escapeHtml(a.title)}${a.unlockedAt?"":" · "+a.progress}</span>`).join("")+"</div>";
-    if(d.stats&&Object.keys(d.stats).length)html+=`<h4>Счётчики</h4><div class="kv">`+Object.entries(d.stats).map(([k,v])=>`<span>${escapeHtml(k)}</span><b>${v}</b>`).join("")+"</div>";
+    if(d.stats&&Object.keys(d.stats).length)html+=`<h4>Счётчики</h4><div class="kv">`+Object.entries(d.stats).map(([k,v])=>`<span>${escapeHtml((d.statLabels&&d.statLabels[k])||k)}</span><b>${v}</b>`).join("")+"</div>";
     html+=`<h4>Корректировка (осторожно)</h4><div class="editrow">
       <label>XP <input type="number" id="edXp" value="${u.xp}"></label>
       <label>Монеты <input type="number" id="edCoins" value="${u.coins}"></label>
@@ -93,7 +93,7 @@ async function loadPets(){
     $("#petsTotal").textContent="всего: "+d.total;
     if(!d.items.length){$("#petsTable").innerHTML='<div class="empty">нет данных</div>';$("#petsPager").innerHTML="";return;}
     $("#petsTable").innerHTML=`<table class="tbl"><tr><th>Кличка</th><th>Вид</th><th>Стадия</th><th>Ур.</th><th>🍖</th><th>😊</th><th>⚡</th><th>❤️</th><th>Владелец</th><th>Статус</th><th>Обновлён</th></tr>`+
-      d.items.map(p=>`<tr><td>${escapeHtml(p.name)}</td><td>${p.species}</td><td>${p.stage}</td><td>${p.level}</td>
+      d.items.map(p=>`<tr><td>${escapeHtml(p.name)}</td><td>${p.speciesRu||p.species}</td><td>${p.stageRu||p.stage}</td><td>${p.level}</td>
         <td>${p.hunger}</td><td>${p.happiness}</td><td>${p.energy}</td><td>${p.health}</td>
         <td>${escapeHtml(p.owner)} <small>(${p.userId})</small></td>
         <td>${p.archived?'<span class="bad">в архиве</span>':(p.sleeping?'<span class="warn">спит</span>':'<span class="ok">бодрствует</span>')}</td>
@@ -118,11 +118,11 @@ async function showPet(id){
 }
 function petEditForm(p){
   const num=(lab,val,id)=>`<label>${lab} <input type="number" id="${id}" value="${val}"></label>`;
-  return `<div class="kv"><span>Владелец</span><b>${escapeHtml(String(p.owner||""))} (${p.userId})</b><span>Вид</span><b>${p.species}</b><span>Поколение</span><b>${p.generation}</b><span>Родился</span><b>${p.bornAt||"—"}</b></div>
+  return `<div class="kv"><span>Владелец</span><b>${escapeHtml(String(p.owner||""))} (${p.userId})</b><span>Вид</span><b>${p.speciesRu||p.species}</b><span>Поколение</span><b>${p.generation}</b><span>Родился</span><b>${p.bornAt||"—"}</b></div>
     <div class="form grid2">
       ${num("Уровень",p.level,"peLevel")}${num("Опыт",p.xp,"peXp")}
       <label>Кличка <input id="peName" value="${escapeHtml(p.name)}"></label>
-      <label>Стадия <select id="peStage">${["egg","baby","child","teen","adult"].map(s=>`<option value="${s}"${s===p.stage?" selected":""}>${s}</option>`).join("")}</select></label>
+      <label>Стадия <select id="peStage">${[["egg","🥚 Яйцо"],["baby","🐣 Малыш"],["child","🐥 Птенец"],["teen","🐱 Подросток"],["adult","😼 Взрослый"],["legendary","🐲 Легендарный"]].map(s=>`<option value="${s[0]}"${s[0]===p.stage?" selected":""}>${s[1]}</option>`).join("")}</select></label>
       ${num("Голод %",p.hunger,"peHunger")}${num("Счастье %",p.happiness,"peHappiness")}
       ${num("Энергия %",p.energy,"peEnergy")}${num("Гигиена %",p.hygiene,"peHygiene")}
       ${num("Здоровье %",p.health,"peHealth")}${num("Сила",p.strength,"peStr")}
@@ -157,12 +157,24 @@ async function loadAchSelect(){
 async function loadAch(){
   try{
     const d=await api("/api/achievements?with_holders="+($("#achHolders").checked?"true":"false"));
-    $("#achTable").innerHTML=`<table class="tbl"><tr><th></th><th>Название</th><th>Категория</th><th>Редкость</th><th>Условие</th><th>Награда</th>${$("#achHolders").checked?"<th>Владельцев</th>":""}<th>Скрыто</th></tr>`+
+    $("#achTable").innerHTML=`<table class="tbl"><tr><th></th><th>Название</th><th>Категория</th><th>Редкость</th><th>Условие</th><th>Награда</th>${$("#achHolders").checked?"<th>Владельцев</th>":""}<th>Скрыто</th><th></th></tr>`+
       d.items.map(a=>`<tr><td style="font-size:20px">${a.icon}</td><td>${escapeHtml(a.title)}<br><small>${escapeHtml(a.description||"")}</small></td>
-        <td>${a.category}</td><td>${a.rarity}</td><td>${a.conditionType} ≥ ${a.conditionValue}</td>
+        <td>${a.categoryRu||a.category}</td><td>${a.rarityRu||a.rarity}</td><td>${a.conditionRu||a.conditionType} ≥ ${a.conditionValue}</td>
         <td>${a.rewardXp?a.rewardXp+" XP ":""}${a.rewardCoins?"· 🪙"+a.rewardCoins:""}</td>
-        ${$("#achHolders").checked?`<td>${a.holders}</td>`:""}<td>${a.hidden?"🙈":""}</td></tr>`).join("")+"</table>";
+        ${$("#achHolders").checked?`<td>${a.holders}</td>`:""}<td>${a.hidden?"🙈":""}</td>
+        <td class="rowbtns"><button class="mini" data-act="ach-holders" data-id="${a.id}" title="Показать владельцев">👥</button></td></tr>`).join("")+"</table>";
   }catch(e){toast("Достижения: "+e.message,"err");}
+}
+async function showAchHolders(id){
+  try{
+    const d=await api("/api/achievements/"+id+"/holders");
+    const a=d.achievement;
+    modal(`${a.icon} Владельцы: ${escapeHtml(a.title)} (${d.items.length})`,
+      d.items.length?`<table class="tbl"><tr><th>Пользователь</th><th>ID</th><th>Ур.</th><th>Получено</th><th></th></tr>`+
+      d.items.map(h=>`<tr><td>${escapeHtml(h.name)}${h.username?" <small>@"+escapeHtml(h.username)+"</small>":""}</td><td>${h.userId}</td><td>${h.level}</td><td>${h.unlockedAt||""}</td>
+        <td class="rowbtns"><button class="mini" data-act="goto-user" data-id="${h.userId}">Открыть 👤</button></td></tr>`).join("")+"</table>"
+      :'<div class="empty">пока никто не получил это достижение</div>');
+  }catch(e){toast("Ошибка: "+e.message,"err");}
 }
 let merchCache=null;
 async function loadMerch(){
@@ -189,7 +201,7 @@ function addVarModal(pid,pname){modal("Новый вариант для «"+pnam
   <label>Цвет <input id="fv_color" placeholder="чёрный"></label><label>Цена, ₽ <input type="number" id="fv_price" value="0"></label>
   <label>Остаток <input type="number" id="fv_stock" value="1"></label>
   <button class="btn primary" id="btnSubmitVar" data-pid="${pid}">Добавить</button></div>`);}
-function addCatModal(){modal("Новая категория мерча",`<div class="form"><label>Код (латиницей) <input id="fc_code" placeholder="clothes"></label>
+function addCatModal(){modal("Новая категория мерча",`<div class="form"><label>Код (необязательно, латиницей — иначе сгенерируем автоматически) <input id="fc_code" placeholder="оставьте пустым"></label>
   <label>Название <input id="fc_title" placeholder="Одежда"></label><label>Иконка <input id="fc_icon" value="🧢"></label>
   <label>Позиция <input type="number" id="fc_pos" value="0"></label><button class="btn primary" id="btnSubmitCat">Создать</button></div>`);}
 async function addProdModal(){
@@ -277,6 +289,8 @@ document.body.addEventListener("click",async e=>{
     else if(act==="save-inv"){await api(`/api/pets/${b.dataset.pet}/inventory/${id}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({quantity:+$("#iq_"+id).value})});toast("Количество обновлено ✔");showPet(b.dataset.pet);}
     else if(act==="del-inv"){if(confirm("Удалить предмет из инвентаря?")){await api(`/api/pets/${b.dataset.pet}/inventory/${id}`,{method:"DELETE"});toast("Предмет удалён");showPet(b.dataset.pet);}}
     else if(act==="grant-pet"){grantModal(+b.dataset.user||+id);}
+    else if(act==="ach-holders")await showAchHolders(id);
+    else if(act==="goto-user"){closeModal();await showUser(id);}
   }catch(err){toast(err.message,"err");}
 });
 document.body.addEventListener("click",async e=>{
@@ -330,9 +344,9 @@ document.body.addEventListener("click",async e=>{
     if(b.id==="btnSubmitVar"){await api("/api/merch/variants",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({product_id:+b.dataset.pid,size:$("#fv_size").value.trim(),color:$("#fv_color").value.trim(),price_rub:+$("#fv_price").value,stock:+$("#fv_stock").value})});
       closeModal();toast("Вариант добавлен");loadMerch();}
-    else if(b.id==="btnSubmitCat"){await api("/api/merch/categories",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({code:$("#fc_code").value.trim(),title:$("#fc_title").value.trim(),icon:$("#fc_icon").value.trim()||"🧢",position:+$("#fc_pos").value})});
-      closeModal();toast("Категория создана");loadMerch();}
+    else if(b.id==="btnSubmitCat"){const titleVal=$("#fc_title").value.trim();if(!titleVal){toast("Укажите название категории","warn");return;}await api("/api/merch/categories",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({code:$("#fc_code").value.trim(),title:titleVal,icon:$("#fc_icon").value.trim()||"🧢",position:+$("#fc_pos").value})});
+      closeModal();toast("Категория создана ✔");loadMerch();}
     else if(b.id==="btnSubmitProd"){await api("/api/merch/products",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({category_id:+$("#fp_cat").value,name:$("#fp_name").value.trim(),description:$("#fp_desc").value.trim(),image_url:$("#fp_img").value.trim()||null})});
       closeModal();toast("Товар создан");loadMerch();}
@@ -395,14 +409,17 @@ async function loadBoards(){
 async function loadChats(){
   try{
     const d=await api("/api/chats");
-    $("#chatsCount").textContent="настроено: "+d.items.length;
-    $("#chatsTable").innerHTML=d.items.length?`<table class="tbl"><tr><th>Chat ID</th><th>Кулдаун, сек</th><th>Мин. длина</th><th>Доп. конфиг (JSON)</th><th></th></tr>`+
+    const configured=d.items.filter(c=>c.cooldownSec!=null).length;
+    $("#chatsCount").textContent=`всего: ${d.items.length}, с настройками: ${configured}`;
+    $("#chatsTable").innerHTML=d.items.length?`<div class="hint">Здесь все чаты, которые видит бот. Кулдаун — мин. интервал между засчитываемыми сообщениями одного пользователя; «по умолчанию» = глобальная настройка. Пустой JSON = {}.</div>
+      <table class="tbl"><tr><th>Chat ID</th><th>Сообщений</th><th>Последняя активность</th><th>Кулдаун, сек</th><th>Мин. длина</th><th>Доп. конфиг (JSON)</th><th></th></tr>`+
       d.items.map(c=>`<tr><td>${c.chatId}</td>
-        <td><input type="number" class="cellnum" id="ch_cd_${c.chatId}" value="${c.cooldownSec}"></td>
-        <td><input type="number" class="cellnum" id="ch_ml_${c.chatId}" value="${c.minLength}"></td>
+        <td>${c.messages??0}</td><td>${c.lastActivity||"—"}</td>
+        <td><input type="number" class="cellnum" id="ch_cd_${c.chatId}" value="${c.cooldownSec??""}" placeholder="по умолчанию"></td>
+        <td><input type="number" class="cellnum" id="ch_ml_${c.chatId}" value="${c.minLength??""}" placeholder="по умолчанию"></td>
         <td><textarea class="celltxt" id="ch_cfg_${c.chatId}" rows="2">${escapeHtml(JSON.stringify(c.config||{}))}</textarea></td>
-        <td class="rowbtns"><button class="mini" data-act="save-chat" data-id="${c.chatId}">💾</button></td></tr>`).join("")+"</table>"
-      :'<div class="empty">нет настроек — добавьте чат кнопкой выше</div>';
+        <td class="rowbtns"><button class="mini" data-act="save-chat" data-id="${c.chatId}" title="Сохранить настройки чата">💾</button></td></tr>`).join("")+"</table>"
+      :'<div class="empty">бот ещё не видел ни одного чата — дождитесь сообщений или добавьте чат кнопкой выше</div>';
   }catch(e){toast("Чаты: "+e.message,"err");}
 }
 function addChatModal(){
@@ -426,8 +443,12 @@ document.body.addEventListener("click",async e=>{
     const id=b.dataset.id;let cfg=null;
     const ta=$("#ch_cfg_"+id);
     if(ta&&ta.value.trim()){try{cfg=JSON.parse(ta.value);}catch(_){toast("Некорректный JSON в конфиге","err");return;}}
+    const cdEl=$("#ch_cd_"+id), mlEl=$("#ch_ml_"+id);
+    const body={config:cfg};
+    if(cdEl.value!=="")body.cooldown_sec=+cdEl.value;
+    if(mlEl.value!=="")body.min_length=+mlEl.value;
     await api("/api/chats/"+id,{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({cooldown_sec:+$("#ch_cd_"+id).value,min_length:+$("#ch_ml_"+id).value,config:cfg})});
-    toast("Сохранено ✔");
+      body:JSON.stringify(body)});
+    toast("Сохранено ✔");state.loadedViews.chats=false;loadChats();
   }catch(err){toast(err.message,"err");}
 });

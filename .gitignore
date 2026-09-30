@@ -1,16 +1,27 @@
-__pycache__/
+# Compiled/Binary files
 *.pyc
-*.pyo
-.venv/
+__pycache__/
+
+# Dependency directories
 venv/
+.venv/
+
+# Editor/IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# System/Environment files
+.DS_Store
+Thumbs.db
+.env
+.env.local
+*.env.*
+
+# Logs and temp files
+*.log
+*.tmp
+# Databases
 *.db
 *.sqlite3
-.env
-*.log
-logs/
-.pytest_cache/
-.idea/
-.vscode/
-media/
-*.session
-uploads/
