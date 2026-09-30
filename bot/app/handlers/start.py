@@ -118,6 +118,10 @@ def _menu_is_admin(user_id: int) -> bool:
 async def cmd_start(message: Message, state: FSMContext, session: AsyncSession,
                     command: CommandObject | None = None,
                     sub_granted: bool = False) -> None:
+    # Повторный /start всегда сбрасывает застрявшее FSM-состояние (например,
+    # «подтверждение усыновления» или половину онбординга) — иначе меню не
+    # открывается, а все кнопки уходят в зависший стейт и «не работают».
+    await state.clear()
     if not sub_granted and not await is_channel_subscribed(
             message.bot, message.from_user.id):
         ch, visual = channel_link()
@@ -395,7 +399,7 @@ async def cb_main_menu(cb: CallbackQuery, session: AsyncSession,
                        state: FSMContext) -> None:
     if await state.get_state() is not None:
         await state.clear()
-    await _render_main_menu(cb, session, page=0)
+    await _render_main_menu(cb, session, state, page=0)
 
 @router.callback_query(F.data.startswith("menu:page:"))
 async def cb_main_menu_page(cb: CallbackQuery, session: AsyncSession,
@@ -406,14 +410,14 @@ async def cb_main_menu_page(cb: CallbackQuery, session: AsyncSession,
         page = int(cb.data.split(":")[-1])
     except ValueError:
         page = 0
-    await _render_main_menu(cb, session, page=page)
+    await _render_main_menu(cb, session, state, page=page)
 
 @router.callback_query(F.data == "menu:noop")
 async def cb_main_menu_noop(cb: CallbackQuery) -> None:
     await cb.answer()
 
 async def _render_main_menu(cb: CallbackQuery, session: AsyncSession,
-                            page: int = 0) -> None:
+                            state: FSMContext, page: int = 0) -> None:
     if cb.message is None:
         await cb.answer("Открой бота командой /start 🙂", show_alert=True)
         return
@@ -422,6 +426,15 @@ async def _render_main_menu(cb: CallbackQuery, session: AsyncSession,
                                      cb.from_user.username)
     link = invite_link_for(user.tg_id)
     reward = get_settings().invite_reward_coins
+    # Если у пользователя нет питомца и он ещё не завершал онбординг —
+    # показываем экран выбора вида питомца прямо из меню, чтобы кнопка
+    # «Усыновить» была рабочей (раньше она уходила в мёртвый коллбэк).
+    if not user.onboarded:
+        has_pet = await PetRepository(session).has_pet(user.tg_id)
+        if not has_pet:
+            await _picker_screen(state, cb=cb)
+            await cb.answer()
+            return
     page %= len(MENU_PAGES) + (1 if _menu_is_admin(cb.from_user.id) else 0)
     await safe_edit_or_answer(cb.message, _main_menu_text(user, min(page, len(MENU_PAGES) - 1)),
                               reply_markup=main_menu(link=link, reward=reward,

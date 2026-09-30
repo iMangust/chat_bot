@@ -41,7 +41,7 @@ ADMIN_TOOLS_PAGE = ("🛠 Инструменты админа", [
     ("🧢 Управление мерчем", "madmin:home"),
     ("📅 Управление мероприятиями", "evadmin:home"),
     ("⚙️ Мои уведомления", "menu:settings"),
-    ("☀️ Погода (/weather)", "menu:noop"),
+    ("☀️ Погода (/weather)", "menu:weather"),
 ])
 
 def main_menu(link: str | None = None, reward: int = 0,

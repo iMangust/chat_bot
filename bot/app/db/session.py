@@ -34,8 +34,16 @@ class DbMiddleware:
             data["session"] = session
             try:
                 result = await handler(event, data)
-                await session.commit()
-                return result
             except Exception:
                 await session.rollback()
                 raise
+            try:
+                await session.commit()
+            except Exception:
+                # Если commit упал (например, IntegrityError из-за гонки),
+                # обязательно откатываем транзакцию, иначе сессия остаётся в
+                # состоянии "aborted" и последующие запросы/логи дают каскад
+                # OperationalError.
+                await session.rollback()
+                raise
+            return result

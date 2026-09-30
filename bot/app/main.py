@@ -35,6 +35,31 @@ def setup_logging(level: str) -> None:
                       "<cyan>{name}</cyan> - <level>{message}</level>")
     logger.add("logs/bot_{time:YYYY-MM-DD}.log", rotation="1 day", retention="14 days",
                level="DEBUG", encoding="utf-8")
+    # Telethon пишет в стандартный logging «Telegram is having internal issues
+    # PersistentTimestampOutdatedError» пачками при каждом сбое синхронизации
+    # pts — это штатная самовосстанавливающаяся ситуация. Перехватываем логи
+    # telethon через loguru и глушим именно этот шум (остальные сообщения
+    # telethon остаются видны).
+    import logging
+
+    class _TelethonIntercept(logging.Handler):
+        def emit(self, record: logging.LogRecord) -> None:
+            try:
+                msg = record.getMessage()
+            except Exception:
+                return
+            if "PersistentTimestampOutdatedError" in msg or \
+                    "Persistent timestamp outdated" in msg:
+                logger.debug("telethon (pts): {}", msg)
+                return
+            logger.bind(telethon=True).log(
+                max(record.levelno, 10), "telethon: {}", msg)
+
+    h = logging.getLogger("telethon")
+    h.handlers = [x for x in h.handlers if not isinstance(x, _TelethonIntercept)]
+    h.addHandler(_TelethonIntercept())
+    h.setLevel(logging.INFO)
+    h.propagate = False
 
 def _make_fsm_storage(redis_url: str):
     from aiogram.fsm.storage.memory import MemoryStorage

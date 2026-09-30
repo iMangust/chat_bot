@@ -291,6 +291,10 @@ class PetRepository:
                                  Pet.is_archived.is_(False))
         return (await self.session.execute(stmt)).scalars().first()
 
+    async def has_pet(self, user_id: int) -> bool:
+        pet = await self.get_by_user(user_id)
+        return pet is not None
+
     async def create(self, pet: Pet) -> Pet:
         self.session.add(pet)
         await self.session.flush()
@@ -402,14 +406,27 @@ class SubscriberRepository:
                                 arrived: bool = True) -> bool:
         from app.db.models import ChannelSubscriber
         uid = int(user_id)
-        row = (await self.session.execute(
-            select(ChannelSubscriber)
-            .where(ChannelSubscriber.user_id == uid)
-        )).scalar_one_or_none()
-        if row is not None:
-            await self.session.refresh(row)
-        changed = False
         cid_norm = numeric_chat_id(chat_id) if chat_id is not None else None
+        try:
+            row = (await self.session.execute(
+                select(ChannelSubscriber)
+                .where(ChannelSubscriber.user_id == uid)
+            )).scalar_one_or_none()
+            if row is not None:
+                await self.session.refresh(row)
+        except Exception:
+            # Сессия могла остаться в состоянии "aborted" после сбоя другой
+            # транзакции — откатываемся и повторяем чтение, иначе любой
+            # последующий запрос даст OperationalError.
+            with contextlib.suppress(Exception):
+                await self.session.rollback()
+            row = (await self.session.execute(
+                select(ChannelSubscriber)
+                .where(ChannelSubscriber.user_id == uid)
+            )).scalar_one_or_none()
+            if row is not None:
+                await self.session.refresh(row)
+        changed = False
         if row is None:
             if not contacted and (cid_norm is None or not arrived):
                 return False
@@ -449,8 +466,35 @@ class SubscriberRepository:
                 changed = True
             row.last_contact_at = utcnow()
             changed = True
+        # Фиксируем изменения сами (commit, а не flush): иначе незакоммиченная
+        # транзакция висит в сессии и при параллельной записи того же user_id
+        # вторая транзакция падает с IntegrityError -> "current transaction is
+        # aborted" (OperationalError) для всех последующих запросов в сессии.
         if changed:
-            await self.session.commit()
+            try:
+                await self.session.commit()
+            except IntegrityError:
+                # Гонка: строку уже создал другой процесс/сессия — откатываемся
+                # и повторяем запись поверх существующей строки.
+                await self.session.rollback()
+                row = (await self.session.execute(
+                    select(ChannelSubscriber)
+                    .where(ChannelSubscriber.user_id == uid)
+                )).scalar_one_or_none()
+                if row is None:
+                    return False
+                if first_name:
+                    row.first_name = first_name
+                if username:
+                    row.username = username
+                if cid_norm is not None and arrived and real_event \
+                        and cid_norm not in [numeric_chat_id(c) for c in (row.chats or [])]:
+                    row.chats = [*(row.chats or []), cid_norm]
+                row.last_seen_at = utcnow()
+                if contacted:
+                    row.ever_contacted = True
+                    row.last_contact_at = utcnow()
+                await self.session.commit()
         return changed
 
     async def add_if_new(self, user_id: int, chat_id: int,

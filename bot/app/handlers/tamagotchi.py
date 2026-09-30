@@ -191,15 +191,14 @@ async def cmd_help(message: Message) -> None:
         for chunk in split_message(plain):
             await message.answer(chunk)
 
-@router.message(Command("weather", "погода"), F.chat.type == "private")
-async def cmd_weather(message: Message) -> None:
+async def _weather_text() -> str:
+    """Собирает текст погоды для команды /weather и кнопки меню."""
     from app.services.weather import kamchatka_weather, weather_hint_block_fresh
     try:
         w = await kamchatka_weather()
         hint = await weather_hint_block_fresh(walk=True, show_legend=True)
     except Exception as exc:
-        await message.answer(f"🌦️ Погода временно недоступна ({type(exc).__name__}).")
-        return
+        return f"🌦️ Погода временно недоступна ({type(exc).__name__})."
     text = f"🌦️ Погода на Камчатке: {w['icon']} {w['name']}\n{w['note']}"
     if hint:
         text += "\n\n📋 Как это влияет на питомца:\n" + hint
@@ -208,7 +207,20 @@ async def cmd_weather(message: Message) -> None:
                 " погодные эффекты и риски простуды отключены."
     from app.services.weather import weather_source_line
     text += "\n\n" + weather_source_line()
-    await message.answer(text)
+    return text
+
+
+@router.message(Command("weather", "погода"), F.chat.type == "private")
+async def cmd_weather(message: Message) -> None:
+    await message.answer(await _weather_text())
+
+
+@router.callback_query(F.data == "menu:weather")
+async def cb_menu_weather(cb: CallbackQuery) -> None:
+    # Кнопка «☀️ Погода» в админ-странице меню: раньше вела в мёртвый
+    # menu:noop и ничего не делала. Теперь показывает тот же экран, что /weather.
+    await safe_edit_or_answer(cb.message, await _weather_text())
+    await cb.answer()
 
 @router.message(Command("pet"), F.chat.type == "private")
 async def cmd_pet(message: Message, session: AsyncSession) -> None:
@@ -345,7 +357,6 @@ async def pet_adopt_confirm(cb: CallbackQuery, session: AsyncSession,
                             state: FSMContext) -> None:
     svc = TamagotchiService(session)
     data = await state.get_data()
-    await state.clear()
     repo = PetRepository(session)
     current = await repo.get_by_user(cb.from_user.id)
     if current and current.id == data.get("pet_id"):
@@ -353,6 +364,8 @@ async def pet_adopt_confirm(cb: CallbackQuery, session: AsyncSession,
         await session.commit()
     from app.handlers.start import Onboarding
     from app.keyboards.inline import species_picker
+    # Не сбрасываем всё состояние (state.clear() затирал pet_id/species и
+    # ломало онбординг) — просто переводим FSM на шаг выбора вида.
     await state.set_state(Onboarding.choosing_pet_species)
     await safe_edit_or_answer(
         cb.message,
@@ -376,22 +389,44 @@ async def pet_adopt_cancel(cb: CallbackQuery, session: AsyncSession,
 @router.callback_query(F.data == "pet:adopt")
 async def pet_adopt_screen(cb: CallbackQuery, session: AsyncSession,
                            state: FSMContext) -> None:
+    # ВАЖНО: этот хендлер зарегистрирован без FSM-фильтра, поэтому он ловит
+    # нажатие «Усыновить» и на экране подтверждения (AdoptConfirm.confirm),
+    # и в онбординге (Onboarding.choosing_pet_species). Без cb.answer() в этих
+    # ветках кнопка «визжала» бесконечно и казалась «не рабочей».
+    from app.handlers.start import Onboarding
+    cur_state = await state.get_state()
+    if cur_state == str(AdoptConfirm.confirm.state):
+        await cb.answer("Сначала подтверди или отмени прошлое действие 👆",
+                        show_alert=True)
+        return
+    if cur_state == str(Onboarding.choosing_pet_species.state):
+        from app.keyboards.inline import species_picker
+        await safe_edit_or_answer(
+            cb.message,
+            "🐣 Выбери питомца — у каждого свой характер и бонусы:\n\n"
+            + _species_picker_text(),
+            reply_markup=species_picker())
+        await cb.answer()
+        return
+    if cur_state == str(Onboarding.choosing_pet_name.state):
+        await cb.answer("Сначала выбери вид питомца 👆", show_alert=True)
+        return
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
-        from app.handlers.start import Onboarding
         users = UserRepository(session)
         user = await users.get_or_create(cb.from_user.id, cb.from_user.first_name or "",
                                          cb.from_user.username)
         user.onboarded = True
         await session.commit()
-        await state.clear()
         await state.set_state(Onboarding.choosing_pet_species)
         from app.keyboards.inline import species_picker
-        return await safe_edit_or_answer(
+        await safe_edit_or_answer(
             cb.message,
             "🐣 Выбери питомца — у каждого свой характер и бонусы:\n\n"
             + _species_picker_text(),
             reply_markup=species_picker())
+        await cb.answer()
+        return
     await state.set_state(AdoptConfirm.confirm)
     await state.update_data(pet_id=pet.id)
     from app.keyboards.inline import adopt_confirm_kb
