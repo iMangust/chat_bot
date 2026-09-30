@@ -66,8 +66,16 @@ class MtprotoClientHolder:
                     "https://my.telegram.org → API development tools")
             from telethon import TelegramClient
             session = st.mtproto_session_string or st.mtproto_session or "mtproto_sync"
+            # connection_retries=0: Telethon по умолчанию делает 10 внутренних
+            # повторов на каждый запрос. При рассинхронизации pts сервер
+            # отвечает PersistentTimestampOutdatedError, и эти повторы печатают
+            # пачки «Telegram is having internal issues» в лог (по записи на
+            # каждый повтор). Самовосстановление pts происходит через штатный
+            # catch-up (get_difference), а периодический delta-sync запускается
+            # планировщиком заново — внутренние повторы только плодят шум.
             client = TelegramClient(session, st.telegram_api_id,
-                                    st.telegram_api_hash)
+                                    st.telegram_api_hash,
+                                    request_retries=3, connection_retries=0)
             if st.mtproto_session_string:
                 await client.connect()
                 if not await client.is_user_authorized():

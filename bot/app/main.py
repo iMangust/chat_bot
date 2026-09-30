@@ -61,6 +61,23 @@ def setup_logging(level: str) -> None:
     h.setLevel(logging.INFO)
     h.propagate = False
 
+    # APScheduler пишет WARNING вида «Run time of job "flush_notifications
+    # (trigger: interval[0:01:00], ...)" was missed by 0:00:01.25» при любом
+    # запаздывании тика — даже на секунду, когда задача всё равно будет
+    # выполнена (у неё coalesce=True и misfire_grace_time). Это штатная
+    # саморегуляция планировщика, а не ошибка: глушим именно эти сообщения,
+    # реальные пропуски (за пределами grace) остаются видны как ERROR.
+    class _SchedulerMissedFilter(logging.Filter):
+        def filter(self, record: logging.LogRecord) -> bool:
+            try:
+                msg = record.getMessage()
+            except Exception:
+                return True
+            return "was missed by" not in msg
+
+    sched_log = logging.getLogger("apscheduler.executors.default")
+    sched_log.addFilter(_SchedulerMissedFilter())
+
 def _make_fsm_storage(redis_url: str):
     from aiogram.fsm.storage.memory import MemoryStorage
     try:

@@ -343,6 +343,14 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
     except Exception:
         tz = KAMCHATKA_TZ
     sched = AsyncIOScheduler(timezone=tz)
+    # job_defaults: coalesce+max_history — если несколько запусков пропускаются
+    # (например, тяжёлый MTProto-скан заблокировал цикл событий на минуту),
+    # APScheduler не считает каждый пропущенный тик ошибкой и не пишет
+    # «Run time of job ... was missed by ...» в консоль. misfire_grace_time —
+    # допустимое запаздывание, в пределах которого задача выполняется сразу
+    # после разблокировки вместо пропуска.
+    sched.configure(job_defaults={"coalesce": True, "max_instances": 1,
+                                  "misfire_grace_time": 300})
     sched.add_job(decay_all_pets, "interval", minutes=30, args=[bot],
                   max_instances=1, coalesce=True, id="decay")
     sched.add_job(flush_notifications, "interval", minutes=1, args=[bot],
