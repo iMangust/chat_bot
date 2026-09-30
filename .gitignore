@@ -1,24 +1,16 @@
-# Python compiled files
 __pycache__/
 *.pyc
 *.pyo
-
-# Environment variables
-.env
-
-# Virtual environments
 .venv/
 venv/
-
-# Logs
-logs/
-*.log
-
-# Test artifacts
-.pytest_cache/
-bot/test.db
 *.db
-
-# IDE
+*.sqlite3
+.env
+*.log
+logs/
+.pytest_cache/
 .idea/
 .vscode/
+media/
+*.session
+uploads/

@@ -115,6 +115,74 @@ async def main():
         r = await cl.delete(f"/api/merch/products/{prod_id}", headers=H)
         assert r.status_code in (200, 404)  # категория уже удалена каскадом — допустимо
 
+        # 8) seed + новые админ-ручки: награды, ачивки, питомцы, рассылка, чаты
+        r = await cl.post("/api/maintenance/seed", headers=H)
+        assert r.status_code == 200, r.text
+        achs = (await cl.get("/api/achievements?user_id=%d" % uid, headers=H)).json()["items"]
+        assert achs, "после seed достижений нет"
+        ach_code = achs[0]["code"]
+        r = await cl.post(f"/api/users/{uid}/grant", headers=H,
+                          json={"xp": 30, "coins": 10, "message": "приз от админа"})
+        assert r.status_code == 200, r.text
+        det = (await cl.get(f"/api/users/{uid}", headers=H)).json()
+        assert det["user"]["coins"] == 60, det["user"]  # 50 из шага 6 + 10
+        r = await cl.post(f"/api/users/{uid}/achievements", headers=H, json={"code": ach_code})
+        assert r.status_code == 200, r.text
+        lst = (await cl.get("/api/achievements?user_id=%d" % uid, headers=H)).json()["items"]
+        assert any(a["code"] == ach_code and a["userHas"] for a in lst), lst[:2]
+        r = await cl.post(f"/api/users/{uid}/achievements/revoke", headers=H, json={"code": ach_code})
+        assert r.status_code == 200, r.text
+        # редактирование сообщений/серии
+        r = await cl.post(f"/api/users/{uid}/edit", headers=H,
+                          json={"messages_count": 123, "streak_days": 9})
+        assert r.status_code == 200, r.text
+        det = (await cl.get(f"/api/users/{uid}", headers=H)).json()
+        assert det["user"]["messages"] == 123 and det["user"]["streak"] == 9, det["user"]
+        # питомец: создадим напрямую и прогоним pet_detail/edit/inventory/give/del
+        from app.db.models import Pet
+        async with session_factory() as s:
+            pet = Pet(user_id=uid, name="Тестик")
+            s.add(pet)
+            await s.commit()
+            pet_id = pet.id
+        r = await cl.get(f"/api/pets/{pet_id}", headers=H)
+        assert r.status_code == 200, r.text
+        pd = r.json()
+        assert pd["pet"]["name"] == "Тестик" and isinstance(pd["inventory"], list)
+        items = (await cl.get("/api/items", headers=H)).json()["items"]
+        assert items, "после seed предметов нет"
+        r = await cl.post(f"/api/pets/{pet_id}/give_item", headers=H,
+                          json={"item_id": items[0]["id"], "quantity": 2})
+        assert r.status_code == 200, r.text
+        inv = (await cl.get(f"/api/pets/{pet_id}/inventory", headers=H)).json()["items"]
+        assert len(inv) == 1 and inv[0]["quantity"] == 2, inv
+        r = await cl.post(f"/api/pets/{pet_id}/edit", headers=H,
+                          json={"name": "Тестик-II", "level": 5, "hunger": 55.0})
+        assert r.status_code == 200, r.text
+        pd = (await cl.get(f"/api/pets/{pet_id}", headers=H)).json()
+        assert pd["pet"]["name"] == "Тестик-II" and pd["pet"]["level"] == 5, pd["pet"]
+        r = await cl.post(f"/api/pets/{pet_id}/inventory/{inv[0]['invId']}", headers=H,
+                          json={"quantity": 0})
+        assert r.status_code == 200, r.text
+        inv = (await cl.get(f"/api/pets/{pet_id}/inventory", headers=H)).json()["items"]
+        assert inv == [], inv
+        # рассылка / лента / рейтинги / дуэли / чаты
+        r = await cl.post("/api/broadcast", headers=H,
+                          json={"text": "тест рассылки", "kind": "info", "only_active": False})
+        assert r.status_code == 200 and r.json()["queued"] >= 1, r.text
+        notifs = (await cl.get("/api/notifications", headers=H)).json()["items"]
+        assert any(n["text"] == "тест рассылки" for n in notifs), notifs[:3]
+        r = await cl.post("/api/notifications/clear", headers=H, json={"sent_only": False})
+        assert r.status_code == 200, r.text
+        for path in ["/api/activity?limit=10", "/api/leaderboards", "/api/duels", "/api/chats"]:
+            r = await cl.get(path, headers=H)
+            assert r.status_code == 200, (path, r.text[:200])
+        r = await cl.post("/api/chats/-100123", headers=H,
+                          json={"cooldown_sec": 15, "min_length": 5})
+        assert r.status_code == 200, r.text
+        chats = (await cl.get("/api/chats", headers=H)).json()["items"]
+        assert any(c["chatId"] == -100123 and c["cooldownSec"] == 15 for c in chats), chats
+
     print("ADMIN_API_ALL_OK")
 
 

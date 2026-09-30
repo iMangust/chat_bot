@@ -50,7 +50,7 @@ async function loadUsers(){
 }
 async function showUser(id){
   try{
-    const d=await api("/api/users/"+id);const u=d.user;
+    const d=await api("/api/users/"+id);const u=d.user;window.__achDefs=null;window.__curUserId=u.tgId;
     let html=`<h3>${escapeHtml(u.firstName||"")} ${u.username?"@"+escapeHtml(u.username):""} <small>ID ${u.tgId}</small></h3>
       <div class="kv"><span>Уровень</span><b>${u.level}</b><span>Опыт</span><b>${u.xp} XP</b><span>Монеты</span><b>🪙 ${u.coins}</b>
       <span>Серия / рекорд</span><b>${u.streak} / ${u.bestStreak} дн.</b><span>Сообщений</span><b>${u.messages}</b>
@@ -69,8 +69,21 @@ async function showUser(id){
       <label>XP <input type="number" id="edXp" value="${u.xp}"></label>
       <label>Монеты <input type="number" id="edCoins" value="${u.coins}"></label>
       <label>Уровень <input type="number" id="edLevel" value="${u.level}"></label>
+      <label>Сообщения <input type="number" id="edMsgs" value="${u.messages}"></label>
+      <label>Серия дней <input type="number" id="edStreak" value="${u.streak}"></label>
       <button class="btn primary" id="btnSaveUser" data-id="${u.tgId}">💾 Сохранить</button></div>`;
+    html+=`<h4>🎁 Выдать награду</h4><div class="editrow">
+      <label>XP (добавить) <input type="number" id="grXp" value="100"></label>
+      <label>Монеты (добавить) <input type="number" id="grCoins" value="50"></label>
+      <label style="flex:1">Сообщение <input type="text" id="grMsg" placeholder="текст уведомления (необязательно)" style="width:100%"></label>
+      <button class="btn primary" id="btnGrant" data-id="${u.tgId}">🎁 Выдать</button></div>`;
+    html+=`<h4>🏅 Достижения — выдача / снятие</h4><div class="editrow">
+      <label style="flex:1">Достижение <select id="achSel" style="width:100%"><option value="">загрузка…</option></select></label>
+      <button class="btn" id="btnAchGrant" data-id="${u.tgId}">✔ Вручить</button>
+      <button class="btn danger" id="btnAchRevoke" data-id="${u.tgId}">✖ Снять</button></div>`;
+    if(d.pet){html+=`<div class="editrow"><button class="btn" id="btnOpenPet" data-pet="${d.pet.id}">🐾 Инвентарь и редактор питомца «${escapeHtml(d.pet.name)}»</button></div>`;}
     modal("Карточка пользователя",html);
+    loadAchSelect();
   }catch(e){toast("Ошибка: "+e.message,"err");}
 }
 async function loadPets(){
@@ -84,9 +97,62 @@ async function loadPets(){
         <td>${p.hunger}</td><td>${p.happiness}</td><td>${p.energy}</td><td>${p.health}</td>
         <td>${escapeHtml(p.owner)} <small>(${p.userId})</small></td>
         <td>${p.archived?'<span class="bad">в архиве</span>':(p.sleeping?'<span class="warn">спит</span>':'<span class="ok">бодрствует</span>')}</td>
-        <td>${p.lastUpdate}</td></tr>`).join("")+"</table>";
+        <td>${p.lastUpdate}</td>
+        <td class="rowbtns"><button class="mini" data-act="edit-pet" data-id="${p.id}">🛠 Управление</button></td></tr>`).join("")+"</table>";
     pager($("#petsPager"),d.total,petsOff,o=>{petsOff=o;loadPets();});
   }catch(e){toast("Питомцы: "+e.message,"err");}
+}
+async function showPet(id){
+  try{
+    const d=await api("/api/pets/"+id);const p=d.pet;
+    window.__petCache=p;window.__invCache=d.inventory||[];window.__itemsCache=null;
+    modal("🐾 Питомец: "+escapeHtml(p.name),petEditForm(p)+`<div class="editrow"><button class="btn primary" id="btnSavePet" data-id="${p.id}">💾 Сохранить изменения питомца</button></div>
+      <h4>🎒 Инвентарь</h4><div id="petInv"></div>
+      <h4>➕ Выдать предмет (приз)</h4><div class="editrow">
+        <label style="flex:1">Предмет <select id="giveItemSel" style="width:100%"><option value="">загрузка…</option></select></label>
+        <label>Кол-во <input type="number" id="giveQty" value="1" min="1"></label>
+        <button class="btn primary" id="btnGiveItem" data-id="${p.id}">🎁 Выдать</button></div>`);
+    renderPetInv(window.__invCache);
+    loadItemsSelect();
+  }catch(e){toast("Ошибка: "+e.message,"err");}
+}
+function petEditForm(p){
+  const num=(lab,val,id)=>`<label>${lab} <input type="number" id="${id}" value="${val}"></label>`;
+  return `<div class="kv"><span>Владелец</span><b>${escapeHtml(String(p.owner||""))} (${p.userId})</b><span>Вид</span><b>${p.species}</b><span>Поколение</span><b>${p.generation}</b><span>Родился</span><b>${p.bornAt||"—"}</b></div>
+    <div class="form grid2">
+      ${num("Уровень",p.level,"peLevel")}${num("Опыт",p.xp,"peXp")}
+      <label>Кличка <input id="peName" value="${escapeHtml(p.name)}"></label>
+      <label>Стадия <select id="peStage">${["egg","baby","child","teen","adult"].map(s=>`<option value="${s}"${s===p.stage?" selected":""}>${s}</option>`).join("")}</select></label>
+      ${num("Голод %",p.hunger,"peHunger")}${num("Счастье %",p.happiness,"peHappiness")}
+      ${num("Энергия %",p.energy,"peEnergy")}${num("Гигиена %",p.hygiene,"peHygiene")}
+      ${num("Здоровье %",p.health,"peHealth")}${num("Сила",p.strength,"peStr")}
+      ${num("Ловкость",p.agility,"peAgi")}${num("Интеллект",p.intel,"peInt")}
+      <label class="chk"><input type="checkbox" id="peSleep"${p.sleeping?" checked":""}> спит</label>
+      <label class="chk"><input type="checkbox" id="peArch"${p.archived?" checked":""}> в архиве</label>
+    </div>`;
+}
+function renderPetInv(rows){
+  const el=$("#petInv");if(!el)return;
+  el.innerHTML=rows.length?`<table class="tbl"><tr><th></th><th>Предмет</th><th>Тип</th><th>Кол-во</th><th></th></tr>`+
+    rows.map(r=>`<tr><td style="font-size:18px">${r.icon}</td><td>${escapeHtml(r.name)}</td><td>${r.type}</td>
+    <td><input type="number" class="cellnum" id="iq_${r.invId}" value="${r.quantity}" min="0"></td>
+    <td class="rowbtns"><button class="mini" data-act="save-inv" data-pet="${window.__petCache.id}" data-id="${r.invId}">💾</button>
+    <button class="mini" data-act="del-inv" data-pet="${window.__petCache.id}" data-id="${r.invId}">🗑</button></td></tr>`).join("")+"</table>"
+    :'<div class="empty">инвентарь пуст</div>';
+}
+async function loadItemsSelect(){
+  try{
+    const d=await api("/api/items");window.__itemsCache=d.items;
+    const sel=$("#giveItemSel");if(!sel)return;
+    sel.innerHTML=d.items.length?d.items.map(i=>`<option value="${i.id}">${i.icon} ${escapeHtml(i.name)} (${i.type}, 🪙${i.price})</option>`).join(""):'<option value="">нет предметов — досейте справочник (Обзор → Восстановить данные)</option>';
+  }catch(e){const sel=$("#giveItemSel");if(sel)sel.innerHTML='<option value="">ошибка загрузки предметов</option>';}
+}
+async function loadAchSelect(){
+  try{
+    if(!window.__achDefs){const d=await api("/api/achievements?user_id="+(window.__curUserId||0));window.__achDefs=d.items;}
+    const sel=$("#achSel");if(!sel)return;
+    sel.innerHTML=window.__achDefs.map(a=>{const got=a.userHas?" ✔":a.userProgress?(" · "+a.userProgress):"";return `<option value="${escapeHtml(a.code)}">${a.icon} ${escapeHtml(a.title)} [${a.category}]${got}</option>`;}).join("");
+  }catch(e){}
 }
 async function loadAch(){
   try{
@@ -178,8 +244,8 @@ async function loadSubs(){
 async function loadNotifs(){
   try{
     const d=await api("/api/notifications");
-    $("#notifsTable").innerHTML=d.items.length?`<table class="tbl"><tr><th>#</th><th>Кому</th><th>Тип</th><th>Текст</th><th>Когда</th><th>Отправлено</th></tr>`+
-      d.items.map(n=>`<tr><td>${n.id}</td><td>${n.userId}</td><td>${escapeHtml(n.kind)}</td><td>${escapeHtml(n.text)}</td><td>${n.sendAt}</td><td>${n.sent?'<span class="ok">да</span>':'<span class="warn">в очереди</span>'}</td></tr>`).join("")+"</table>"
+    $("#notifsTable").innerHTML=d.items.length?`<table class="tbl"><tr><th>#</th><th>Кому</th><th>Тип</th><th>Текст</th><th>Когда</th><th>Отправлено</th><th></th></tr>`+
+      d.items.map(n=>`<tr><td>${n.id}</td><td>${n.userId}</td><td>${escapeHtml(n.kind)}</td><td>${escapeHtml(n.text)}</td><td>${n.sendAt}</td><td>${n.sent?'<span class="ok">да</span>':'<span class="warn">в очереди</span>'}</td><td><button class="mini" data-act="del-notif" data-id="${n.id}">✕</button></td></tr>`).join("")+"</table>"
       :'<div class="empty">очередь пуста</div>';
   }catch(e){toast("Очередь: "+e.message,"err");}
 }
@@ -206,8 +272,58 @@ document.body.addEventListener("click",async e=>{
     else if(act==="add-var")addVarModal(id,b.dataset.pname);
     else if(act==="edit-event")editEventModal(+id);
     else if(act==="del-event"){if(confirm("Удалить мероприятие?")){await api("/api/events/"+id,{method:"DELETE"});toast("Удалено");loadEvents();}}
+    else if(act==="del-notif"){await api("/api/notifications/"+id,{method:"DELETE"});toast("Уведомление удалено");loadNotifs();}
+    else if(act==="edit-pet")showPet(id);
+    else if(act==="save-inv"){await api(`/api/pets/${b.dataset.pet}/inventory/${id}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({quantity:+$("#iq_"+id).value})});toast("Количество обновлено ✔");showPet(b.dataset.pet);}
+    else if(act==="del-inv"){if(confirm("Удалить предмет из инвентаря?")){await api(`/api/pets/${b.dataset.pet}/inventory/${id}`,{method:"DELETE"});toast("Предмет удалён");showPet(b.dataset.pet);}}
+    else if(act==="grant-pet"){grantModal(+b.dataset.user||+id);}
   }catch(err){toast(err.message,"err");}
 });
+document.body.addEventListener("click",async e=>{
+  const b=e.target.closest("#btnGrant,#btnAchGrant,#btnAchRevoke,#btnSavePet,#btnGiveItem,#btnBroadcast,#notifClearSent,#notifClearAll,#btnSeed");if(!b)return;
+  try{
+    if(b.id==="btnGrant"){await api(`/api/users/${b.dataset.id}/grant`,{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({xp:+$("#grXp").value||0,coins:+$("#grCoins").value||0,message:$("#grMsg").value.trim()||null})});
+      toast("Награда выдана 🎁");closeModal();loadUsers();}
+    else if(b.id==="btnAchGrant"){const code=$("#achSel").value;if(!code){toast("Выберите достижение","warn");return;}
+      await api(`/api/users/${b.dataset.id}/achievements`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({code})});
+      toast("Достижение вручено 🏅");window.__achDefs=null;closeModal();loadUsers();}
+    else if(b.id==="btnAchRevoke"){const code=$("#achSel").value;if(!code){toast("Выберите достижение","warn");return;}
+      await api(`/api/users/${b.dataset.id}/achievements/revoke`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({code})});
+      toast("Достижение снято");window.__achDefs=null;closeModal();loadUsers();}
+    else if(b.id==="btnSavePet"){const v=id=>$(id).value;
+      const body={name:v("#peName"),level:+v("#peLevel"),xp:+v("#peXp"),stage:v("#peStage"),
+        hunger:+v("#peHunger"),happiness:+v("#peHappiness"),energy:+v("#peEnergy"),hygiene:+v("#peHygiene"),health:+v("#peHealth"),
+        strength:+v("#peStr"),agility:+v("#peAgi"),intellect:+v("#peInt"),sleeping:$("#peSleep").checked,archived:$("#peArch").checked};
+      await api("/api/pets/"+b.dataset.id+"/edit",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+      toast("Питомец обновлён ✔");showPet(b.dataset.id);}
+    else if(b.id==="btnGiveItem"){const iid=+$("#giveItemSel").value;if(!iid){toast("Выберите предмет","warn");return;}
+      await api("/api/pets/"+b.dataset.id+"/give_item",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({item_id:iid,quantity:Math.max(1,+$("#giveQty").value||1)})});
+      toast("Предмет выдан 🎁");showPet(b.dataset.id);}
+    else if(b.id==="btnBroadcast"){broadcastModal();}
+    else if(b.id==="notifClearSent"||b.id==="notifClearAll"){
+      const sentOnly=b.id==="notifClearSent";
+      if(!sentOnly&&!confirm("Удалить ВСЮ очередь уведомлений?"))return;
+      const r=await api("/api/notifications/clear",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({sent_only:sentOnly})});
+      toast("Удалено: "+r.removed);loadNotifs();}
+    else if(b.id==="btnSeed"){const r=await api("/api/maintenance/seed",{method:"POST"});
+      toast("Справочники обновлены: "+JSON.stringify(r));loadDbStats();}
+  }catch(err){toast(err.message,"err");}
+});
+function broadcastModal(){
+  modal("📣 Массовая рассылка",`<div class="form">
+    <label>Тип <select id="bcKind"><option value="info">ℹ️ info (обычное)</option><option value="event">📅 event (мероприятие)</option><option value="reward">🎁 reward (награда)</option><option value="warning">⚠️ warning</option></select></label>
+    <label class="chk"><input type="checkbox" id="bcActive" checked> только небанутые пользователи</label>
+    <label>Текст сообщения <textarea id="bcText" rows="5" placeholder="Текст увидят все получатели…"></textarea></label>
+    <button class="btn primary" id="btnSendBroadcast">Отправить в очередь</button></div>`);
+  $("#btnSendBroadcast").onclick=async()=>{
+    try{
+      const r=await api("/api/broadcast",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({text:$("#bcText").value.trim(),kind:$("#bcKind").value,only_active:$("#bcActive").checked})});
+      closeModal();toast(`В очередь поставлено: ${r.queued}${r.botRunning?" (бот исполнит)":" — запустите бота для отправки!"}`);loadNotifs();
+    }catch(err){toast(err.message,"err");}
+  };
+}
 document.body.addEventListener("click",async e=>{
   const b=e.target.closest("#btnSubmitVar,#btnSubmitCat,#btnSubmitProd,#btnSubmitEvent,#btnSaveUser");if(!b)return;
   try{
@@ -227,19 +343,91 @@ document.body.addEventListener("click",async e=>{
       if(b.dataset.id)await api("/api/events/"+b.dataset.id,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
       else await api("/api/events",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
       closeModal();toast(b.dataset.id?"Сохранено ✔":"Создано ✔");loadEvents();}
-    else if(b.id==="btnSaveUser"){await api(`/api/users/${b.dataset.id}/edit`,{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({xp:+$("#edXp").value,coins:+$("#edCoins").value,level:+$("#edLevel").value})});
+    else if(b.id==="btnSaveUser"){const patch={xp:+$("#edXp").value,coins:+$("#edCoins").value,level:+$("#edLevel").value};
+      const msgs=$("#edMsgs"),st=$("#edStreak");
+      if(msgs)patch.messages_count=+msgs.value;
+      if(st)patch.streak_days=+st.value;
+      await api(`/api/users/${b.dataset.id}/edit`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(patch)});
       toast("Сохранено ✔");closeModal();loadUsers();}
   }catch(err){toast(err.message,"err");}
 });
-const LOADERS={dash:loadDbStats,users:loadUsers,pets:loadPets,ach:loadAch,merch:loadMerch,events:loadEvents,subs:loadSubs,notifs:loadNotifs};
+const LOADERS={dash:loadDbStats,users:loadUsers,pets:loadPets,ach:loadAch,merch:loadMerch,events:loadEvents,subs:loadSubs,notifs:loadNotifs,activity:loadActivity,boards:loadBoards,chats:loadChats};
 document.querySelectorAll(".nav-item").forEach(n=>n.addEventListener("click",()=>{
   const v=n.dataset.view;if(LOADERS[v]&&!state.loadedViews[v]){state.loadedViews[v]=true;LOADERS[v]();}
 }));
 $("#usersRefresh").onclick=loadUsers;$("#petsRefresh").onclick=loadPets;$("#achRefresh").onclick=loadAch;
 $("#mcRefresh").onclick=loadMerch;$("#evRefresh").onclick=loadEvents;$("#subsRefresh").onclick=loadSubs;$("#notifsRefresh").onclick=loadNotifs;
+$("#actRefresh").onclick=loadActivity;$("#boardsRefresh").onclick=loadBoards;$("#chatsRefresh").onclick=loadChats;$("#chatAdd").onclick=addChatModal;
 $("#mcAddCat").onclick=addCatModal;$("#mcAddProd").onclick=addProdModal;$("#mcResv").onclick=reservationsModal;$("#evAdd").onclick=addEventModal;
 $("#userSearch").addEventListener("keydown",e=>{if(e.key==="Enter"){usersOff=0;loadUsers();}});
 $("#petSearch").addEventListener("keydown",e=>{if(e.key==="Enter"){petsOff=0;loadPets();}});
 $("#userSort").onchange=loadUsers;$("#userBanned").onchange=loadUsers;$("#achHolders").onchange=loadAch;
 loadDbStats();
+
+/* ==================== ДОПОЛНИТЕЛЬНЫЕ ВКЛАДКИ: активность / рейтинги / чаты ==================== */
+async function loadActivity(){
+  try{
+    const chat=$("#actChat").value.trim(),lim=$("#actLimit").value;
+    const d=await api(`/api/activity?limit=${lim}`+(chat?`&chat_id=${encodeURIComponent(chat)}`:""));
+    $("#activityTable").innerHTML=d.items.length?`<table class="tbl"><tr><th>Время</th><th>Тип</th><th>Пользователь</th><th>Чат</th><th>Детали</th><th>Зачтено</th></tr>`+
+      d.items.map(e=>`<tr><td>${e.ts||""}</td><td>${e.kind==="reaction"?'<span class="ok">реакция</span>':'💬 сообщение'}</td>
+        <td>${escapeHtml(String(e.userName))} <small>(${e.userId})</small></td><td>${e.chatId}</td>
+        <td>${e.kind==="reaction"?`${e.emoji||""} от ${e.fromUserId}`:(e.text?escapeHtml(e.text):"")+(e.length?" · длина "+e.length:"")}${e.skipReason?(" · пропуск: "+escapeHtml(e.skipReason)):""}</td>
+        <td>${e.counted?'<span class="ok">да</span>':'<span class="warn">нет</span>'}</td></tr>`).join("")+"</table>"
+      :'<div class="empty">нет записей — бот должен отслеживать чаты (userbot включён)</div>';
+  }catch(e){toast("Активность: "+e.message,"err");}
+}
+async function loadBoards(){
+  try{
+    const [lb,duels]=await Promise.all([api("/api/leaderboards"),api("/api/duels")]);
+    let html="<h4>🏆 Снимки лидербордов</h4>";
+    html+=lb.items.length?`<table class="tbl"><tr><th>ID</th><th>Период</th><th>Категория</th><th>Когда</th><th>Топ</th></tr>`+
+      lb.items.map(r=>`<tr><td>${r.id}</td><td>${r.period}</td><td>${escapeHtml(r.category)}</td><td>${r.createdAt||""}</td>
+      <td>${(r.data||[]).slice(0,5).map((x,i)=>`${i+1}. ${escapeHtml(String(x.name||x.tgId||"?"))} (${x.xp??x.coxx??x.score??x.value??""})`).join("<br>")||"—"}</td></tr>`).join("")+"</table>"
+      :'<div class="empty">снимков нет — лидерборды формируются планировщиком бота</div>';
+    html+=`<h4 style="margin-top:18px">⚔️ Дуэли питомцев (неделя ${duels.weekKey})</h4>`;
+    html+=duels.items.length?`<table class="tbl"><tr><th>#</th><th>Питомец</th><th>Вид</th><th>Побед</th><th>Поражений</th><th>Боёв</th><th>Очки</th><th>Обновлён</th></tr>`+
+      duels.items.map((d,i)=>`<tr><td>${i+1}</td><td>${escapeHtml(d.petName)}</td><td>${d.species}</td><td>${d.wins}</td><td>${d.losses}</td><td>${d.fights}</td><td><b>${d.score}</b></td><td>${d.updatedAt||""}</td></tr>`).join("")+"</table>"
+      :'<div class="empty">на этой неделе дуэлей ещё не было</div>';
+    $("#boardsTable").innerHTML=html;
+  }catch(e){toast("Рейтинги: "+e.message,"err");}
+}
+async function loadChats(){
+  try{
+    const d=await api("/api/chats");
+    $("#chatsCount").textContent="настроено: "+d.items.length;
+    $("#chatsTable").innerHTML=d.items.length?`<table class="tbl"><tr><th>Chat ID</th><th>Кулдаун, сек</th><th>Мин. длина</th><th>Доп. конфиг (JSON)</th><th></th></tr>`+
+      d.items.map(c=>`<tr><td>${c.chatId}</td>
+        <td><input type="number" class="cellnum" id="ch_cd_${c.chatId}" value="${c.cooldownSec}"></td>
+        <td><input type="number" class="cellnum" id="ch_ml_${c.chatId}" value="${c.minLength}"></td>
+        <td><textarea class="celltxt" id="ch_cfg_${c.chatId}" rows="2">${escapeHtml(JSON.stringify(c.config||{}))}</textarea></td>
+        <td class="rowbtns"><button class="mini" data-act="save-chat" data-id="${c.chatId}">💾</button></td></tr>`).join("")+"</table>"
+      :'<div class="empty">нет настроек — добавьте чат кнопкой выше</div>';
+  }catch(e){toast("Чаты: "+e.message,"err");}
+}
+function addChatModal(){
+  modal("Добавить/обновить настройки чата",`<div class="form">
+    <label>Chat ID (например -1001234567890) <input id="fch_id" placeholder="-100…"></label>
+    <label>Кулдаун засчитанных сообщений, сек <input type="number" id="fch_cd" value="30"></label>
+    <label>Минимальная длина сообщения <input type="number" id="fch_ml" value="3"></label>
+    <button class="btn primary" id="btnSaveNewChat">Сохранить</button></div>`);
+  $("#btnSaveNewChat").onclick=async()=>{
+    try{
+      const id=$("#fch_id").value.trim();if(!id||!/^-?\d+$/.test(id)){toast("Некорректный chat_id","warn");return;}
+      await api("/api/chats/"+id,{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({cooldown_sec:+$("#fch_cd").value,min_length:+$("#fch_ml").value})});
+      closeModal();toast("Настройки чата сохранены ✔");state.loadedViews.chats=false;loadChats();
+    }catch(err){toast(err.message,"err");}
+  };
+}
+document.body.addEventListener("click",async e=>{
+  const b=e.target.closest("[data-act='save-chat']");if(!b)return;
+  try{
+    const id=b.dataset.id;let cfg=null;
+    const ta=$("#ch_cfg_"+id);
+    if(ta&&ta.value.trim()){try{cfg=JSON.parse(ta.value);}catch(_){toast("Некорректный JSON в конфиге","err");return;}}
+    await api("/api/chats/"+id,{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({cooldown_sec:+$("#ch_cd_"+id).value,min_length:+$("#ch_ml_"+id).value,config:cfg})});
+    toast("Сохранено ✔");
+  }catch(err){toast(err.message,"err");}
+});

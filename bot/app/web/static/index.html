@@ -188,6 +188,7 @@ footer{padding:7px 22px;border-top:1px solid var(--border);font-size:11.5px;colo
 .form.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .form .full{grid-column:1/-1}
 </style>
+  .celltxt{width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:4px 6px;font-size:12.5px;font-family:monospace}
 </head>
 <body>
 <header>
@@ -210,6 +211,9 @@ footer{padding:7px 22px;border-top:1px solid var(--border);font-size:11.5px;colo
     <div class="nav-item" data-view="events">📅 <span class="txt">Мероприятия</span></div>
     <div class="nav-item" data-view="subs">📺 <span class="txt">Подписчики</span></div>
     <div class="nav-item" data-view="notifs">📨 <span class="txt">Очередь</span></div>
+    <div class="nav-item" data-view="activity">⚡ <span class="txt">Активность</span></div>
+    <div class="nav-item" data-view="boards">🏆 <span class="txt">Рейтинги</span></div>
+    <div class="nav-item" data-view="chats">💬 <span class="txt">Чаты</span></div>
     <div class="nav-item" data-view="logs">📜 <span class="txt">Логи</span></div>
     <div class="nav-item" data-view="settings">⚙️ <span class="txt">Настройки</span></div>
   </nav>
@@ -229,6 +233,9 @@ footer{padding:7px 22px;border-top:1px solid var(--border);font-size:11.5px;colo
       </div>
       <div class="err-box" id="errBox"></div>
       <h2 style="margin-top:22px">Сводка по базе <span>пользователи, питомцы, мерч, события</span></h2>
+      <div class="toolbar" style="margin:8px 0">
+        <button class="btn" id="btnSeed" title="Проверить/заполнить справочники: достижения, предметы магазина, каталог мерча">🌱 Проверить справочники (seed)</button>
+      </div>
       <div class="grid" id="dbStats"><div class="card"><div class="label">Загрузка…</div></div></div>
     </section>
 
@@ -304,8 +311,43 @@ footer{padding:7px 22px;border-top:1px solid var(--border);font-size:11.5px;colo
     <!-- ================= Notifications queue ================= -->
     <section class="view" id="view-notifs">
       <h2>Очередь уведомлений <span>последние 100</span></h2>
-      <div class="toolbar"><button class="btn" id="notifsRefresh">↻ Обновить</button></div>
+      <div class="toolbar">
+        <button class="btn" id="notifsRefresh">↻ Обновить</button>
+        <button class="btn" id="notifClearSent">🧹 Очистить отправленные</button>
+        <button class="btn danger" id="notifClearAll">✖ Очистить всё</button>
+        <button class="btn primary" id="btnBroadcast">📣 Рассылка…</button>
+      </div>
       <div id="notifsTable"></div>
+    </section>
+
+    <!-- ================= Activity feed ================= -->
+    <section class="view" id="view-activity">
+      <h2>Лента активности <span>сообщения и реакции в чатах</span></h2>
+      <div class="toolbar">
+        <input class="search" id="actChat" placeholder="фильтр по chat_id (пусто — все)" style="max-width:220px">
+        <select id="actLimit"><option value="80">80 записей</option><option value="200">200</option><option value="500">500</option></select>
+        <button class="btn" id="actRefresh">↻ Обновить</button>
+      </div>
+      <div id="activityTable"></div>
+    </section>
+
+    <!-- ================= Leaderboards / duels ================= -->
+    <section class="view" id="view-boards">
+      <h2>Рейтинги <span>снимки лидербордов и дуэли недели</span></h2>
+      <div class="toolbar">
+        <button class="btn" id="boardsRefresh">↻ Обновить</button>
+      </div>
+      <div id="boardsTable"></div>
+    </section>
+
+    <!-- ================= Chat settings ================= -->
+    <section class="view" id="view-chats">
+      <h2>Настройки чатов <span id="chatsCount"></span></h2>
+      <div class="toolbar">
+        <button class="btn" id="chatsRefresh">↻ Обновить</button>
+        <button class="btn primary" id="chatAdd">＋ Добавить чат</button>
+      </div>
+      <div id="chatsTable"></div>
     </section>
 
     <!-- ================= Logs ================= -->

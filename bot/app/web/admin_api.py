@@ -278,7 +278,6 @@ async def user_detail(tg_id: int) -> dict:
         "achievements": [{
             "achievementId": a.achievement_id, "code": a.achievement.code,
             "title": a.achievement.title, "icon": a.achievement.icon,
-            "rarity": _enum(a.achievement.rarity),
             "progress": a.progress, "unlockedAt": _dt(a.unlocked_at),
         } for a in achs if a.achievement is not None],
         "stats": {st.key: st.value for st in stats},
@@ -314,6 +313,8 @@ class UserEdit(BaseModel):
     coins: int | None = None
     xp: int | None = None
     level: int | None = None
+    messages_count: int | None = None
+    streak_days: int | None = None
 
 
 @router.post("/users/{tg_id}/edit", dependencies=[Depends(_tok)])
@@ -331,11 +332,54 @@ async def edit_user(tg_id: int, body: UserEdit) -> dict:
             u.xp = max(0, int(body.xp)); changed.append("xp")
         if body.level is not None:
             u.level = max(1, int(body.level)); changed.append("level")
+        if body.messages_count is not None:
+            u.messages_count = max(0, int(body.messages_count)); changed.append("messages_count")
+        if body.streak_days is not None:
+            u.streak_days = max(0, int(body.streak_days))
+            u.best_streak = max(u.best_streak, u.streak_days)
+            changed.append("streak_days")
         await s.commit()
     return {"ok": True, "changed": changed}
 
 
 # ================================ питомцы ================================
+
+@router.get("/pets/{pet_id}", dependencies=[Depends(_tok)])
+async def pet_detail(pet_id: int) -> dict:
+    """Карточка питомца + инвентарь (для редактора в web-панели)."""
+    from app.db.models import Item, Pet, PetInventory, User
+    async with _session() as s:
+        p = (await s.execute(select(Pet).where(Pet.id == pet_id))
+             ).scalar_one_or_none()
+        if p is None:
+            raise HTTPException(404, "питомец не найден")
+        owner = (await s.execute(select(User).where(User.tg_id == p.user_id))
+                 ).scalar_one_or_none()
+        rows = (await s.execute(
+            select(PetInventory, Item).join(Item, Item.id == PetInventory.item_id)
+            .where(PetInventory.pet_id == pet_id)
+            .order_by(Item.type, Item.name))).all()
+    return {
+        "pet": {
+            "id": p.id, "userId": p.user_id,
+            "owner": (owner.first_name or owner.username or str(p.user_id)) if owner else "?",
+            "name": p.name, "species": _enum(p.species), "stage": _enum(p.stage),
+            "level": p.level, "xp": p.xp,
+            "hunger": round(float(p.hunger)), "happiness": round(float(p.happiness)),
+            "energy": round(float(p.energy)), "hygiene": round(float(p.hygiene)),
+            "health": round(float(p.health)),
+            "strength": p.strength, "agility": p.agility, "intellect": p.intellect,
+            "sleeping": p.is_sleeping, "archived": bool(getattr(p, "is_archived", False)),
+            "generation": getattr(p, "generation", 1),
+            "bornAt": _dt(getattr(p, "born_at", None)),
+            "lastUpdate": _dt(p.last_update),
+        },
+        "inventory": [{
+            "invId": inv.id, "itemId": inv.item_id, "code": it.code, "name": it.name,
+            "icon": it.icon, "type": it.type, "price": it.price,
+            "quantity": inv.quantity,
+        } for inv, it in rows],
+    }
 
 @router.get("/pets", dependencies=[Depends(_tok)])
 async def list_pets(q: str = "", limit: int = Query(50, le=500), offset: int = 0) -> dict:
@@ -368,7 +412,7 @@ async def list_pets(q: str = "", limit: int = Query(50, le=500), offset: int = 0
 # ================================ достижения ================================
 
 @router.get("/achievements", dependencies=[Depends(_tok)])
-async def achievements_list(with_holders: bool = False) -> dict:
+async def achievements_list(with_holders: bool = False, user_id: int = 0) -> dict:
     from app.db.models import Achievement, UserAchievement
     async with _session() as s:
         achs = (await s.execute(select(Achievement).order_by(
@@ -380,6 +424,11 @@ async def achievements_list(with_holders: bool = False) -> dict:
                 .where(UserAchievement.unlocked_at.is_not(None))
                 .group_by(UserAchievement.achievement_id))).all()
             counts = {aid: c for aid, c in rows}
+        ustate: dict[int, tuple] = {}
+        if user_id:
+            rows = (await s.execute(select(UserAchievement).where(
+                UserAchievement.user_id == user_id))).scalars().all()
+            ustate = {r.achievement_id: (r.unlocked_at is not None, r.progress) for r in rows}
     return {"items": [{
         "id": a.id, "code": a.code, "title": a.title, "description": a.description,
         "icon": a.icon, "category": _enum(a.category), "rarity": _enum(a.rarity),
@@ -387,6 +436,8 @@ async def achievements_list(with_holders: bool = False) -> dict:
         "conditionValue": a.condition_value, "rewardXp": a.reward_xp,
         "rewardCoins": a.reward_coins, "hidden": a.is_hidden,
         "holders": counts.get(a.id, 0) if with_holders else None,
+        "userHas": bool(ustate.get(a.id, (False, 0))[0]) if user_id else None,
+        "userProgress": ustate.get(a.id, (False, 0))[1] if user_id else None,
     } for a in achs]}
 
 
@@ -667,3 +718,435 @@ async def notifications(limit: int = Query(100, le=500)) -> dict:
         "id": n.id, "userId": n.user_id, "kind": n.kind, "text": n.text[:200],
         "sendAt": _dt(n.send_at), "sent": n.sent,
     } for n in rows]}
+
+
+# ---------- служебные ручки: сиды, рассылка, очистка (до маршрутов с {id}) ----------
+
+class BroadcastBody(BaseModel):
+    text: str
+    kind: str = "info"
+    only_active: bool = True     # только небанутые
+
+
+@router.post("/broadcast", dependencies=[Depends(_tok)])
+async def broadcast(body: BroadcastBody) -> dict:
+    """Поставить массовую рассылку в очередь уведомлений (исполняет бот)."""
+    from app.db.models import User
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(422, "пустой текст рассылки")
+    if len(text) > 3500:
+        raise HTTPException(422, "текст слишком длинный (>3500 симв.)")
+    stmt = select(User.tg_id)
+    if body.only_active:
+        stmt = stmt.where(User.is_banned == False)  # noqa: E712
+    async with _session() as s:
+        ids = (await s.execute(stmt)).scalars().all()
+        from app.services.notifications import queue_notification
+        for uid in ids:
+            await queue_notification(s, uid, body.kind, text)
+        await s.commit()
+    running = False
+    try:
+        from app.console.runtime import runtime
+        running = runtime.state == "running"
+    except Exception:
+        pass
+    return {"ok": True, "queued": len(ids), "botRunning": running}
+
+
+@router.post("/maintenance/seed", dependencies=[Depends(_tok)])
+async def maintenance_seed() -> dict:
+    """Досеять справочники: достижения, предметы магазина, каталог мерча."""
+    out: dict[str, int] = {}
+    async with _session() as s:
+        from app.handlers.shop import seed_items
+        from app.services.achievements import seed_achievements
+        out["achievements"] = await seed_achievements(s)
+        out["items"] = await seed_items(s)
+        try:
+            from app.db.repositories import seed_merch_catalog
+            out["merchCategories"] = await seed_merch_catalog(s)
+        except Exception as exc:
+            out["merchError"] = str(exc)[:200]
+        await s.commit()
+    global _db_init_done
+    _db_init_done = True
+    return {"ok": True, **out}
+
+
+@router.post("/notifications/clear", dependencies=[Depends(_tok)])
+async def notifications_clear(body: dict | None = None) -> dict:
+    """Очистка очереди: только отправленные (по умолчанию) или все."""
+    from app.db.models import NotificationQueue
+    sent_only = bool((body or {}).get("sent_only", True))
+    async with _session() as s:
+        stmt = select(NotificationQueue)
+        if sent_only:
+            stmt = stmt.where(NotificationQueue.sent == True)  # noqa: E712
+        rows = (await s.execute(stmt)).scalars().all()
+        for n in rows:
+            await s.delete(n)
+        await s.commit()
+    return {"ok": True, "removed": len(rows)}
+
+
+@router.delete("/notifications/{notif_id}", dependencies=[Depends(_tok)])
+async def notification_delete(notif_id: int) -> dict:
+    from app.db.models import NotificationQueue
+    async with _session() as s:
+        n = (await s.execute(select(NotificationQueue).where(
+            NotificationQueue.id == notif_id))).scalar_one_or_none()
+        if n is None:
+            raise HTTPException(404, "уведомление не найдено")
+        await s.delete(n)
+        await s.commit()
+    return {"ok": True}
+
+
+# ========================= выдача наград / призов =========================
+
+class GrantRewards(BaseModel):
+    xp: int = 0
+    coins: int = 0
+    message: str | None = None   # текст уведомления-вручения
+
+
+@router.post("/users/{tg_id}/grant", dependencies=[Depends(_tok)])
+async def grant_rewards(tg_id: int, body: GrantRewards) -> dict:
+    """Выдать пользователю XP/монеты (+ текстовое уведомление в очередь)."""
+    from app.db.models import User
+    from app.utils.formatting import apply_xp
+    async with _session() as s:
+        u = (await s.execute(select(User).where(User.tg_id == tg_id))
+             ).scalar_one_or_none()
+        if u is None:
+            raise HTTPException(404, f"пользователь {tg_id} не найден")
+        new_levels: list[int] = []
+        if body.xp or body.coins:
+            u.level, u.xp, new_levels = apply_xp(u.level, u.xp, max(0, body.xp))
+            u.coins = max(0, u.coins + body.coins)
+        text = body.message or (
+            f"🎁 Администратор выдал вам награду: +{body.xp} XP, +{body.coins} 🪙")
+        try:
+            from app.services.notifications import queue_notification
+            await queue_notification(s, tg_id, "info", text)
+        except Exception:  # уведомление — приятный бонус, не блокируем выдачу
+            pass
+        await s.commit()
+    return {"ok": True, "level": u.level, "newLevels": new_levels}
+
+
+class AchievementGrant(BaseModel):
+    code: str
+
+
+@router.post("/users/{tg_id}/achievements", dependencies=[Depends(_tok)])
+async def grant_achievement(tg_id: int, body: AchievementGrant) -> dict:
+    """Вручить достижение вручную (с наградами и уведомлением)."""
+    from app.db.models import User
+    from app.services.achievements import AchievementService
+    async with _session() as s:
+        u = (await s.execute(select(User).where(User.tg_id == tg_id))
+             ).scalar_one_or_none()
+        if u is None:
+            raise HTTPException(404, f"пользователь {tg_id} не найден")
+        svc = AchievementService(s)
+        ach = await svc.unlock_by_code(tg_id, body.code.strip())
+        if ach is None:
+            # возможно, уже открыто — уточним состояние
+            from app.db.models import Achievement, UserAchievement
+            a = (await s.execute(select(Achievement).where(
+                Achievement.code == body.code.strip()))).scalar_one_or_none()
+            if a is None:
+                await s.rollback()
+                raise HTTPException(404, f"достижение «{body.code}» не найдено")
+            got = (await s.execute(select(UserAchievement).where(
+                UserAchievement.user_id == tg_id,
+                UserAchievement.achievement_id == a.id))).scalar_one_or_none()
+            await s.commit()
+            return {"ok": True, "already": True,
+                    "title": a.title, "unlocked": got is not None and got.unlocked_at is not None}
+        await s.commit()
+    return {"ok": True, "already": False, "title": ach.title}
+
+
+class AchDelete(BaseModel):
+    code: str
+
+
+@router.post("/users/{tg_id}/achievements/revoke", dependencies=[Depends(_tok)])
+async def revoke_achievement(tg_id: int, body: AchDelete) -> dict:
+    """Снять (удалить) достижение у пользователя."""
+    from app.db.models import Achievement, UserAchievement
+    async with _session() as s:
+        a = (await s.execute(select(Achievement).where(
+            Achievement.code == body.code.strip()))).scalar_one_or_none()
+        if a is None:
+            raise HTTPException(404, "достижение не найдено")
+        row = (await s.execute(select(UserAchievement).where(
+            UserAchievement.user_id == tg_id,
+            UserAchievement.achievement_id == a.id))).scalar_one_or_none()
+        if row is None:
+            raise HTTPException(404, "у пользователя нет такого достижения")
+        await s.delete(row)
+        await s.commit()
+    return {"ok": True}
+
+
+# ============================ питомцы: управление ============================
+
+class PetEdit(BaseModel):
+    name: str | None = None
+    level: int | None = None
+    xp: int | None = None
+    hunger: float | None = None
+    happiness: float | None = None
+    energy: float | None = None
+    hygiene: float | None = None
+    health: float | None = None
+    strength: int | None = None
+    agility: int | None = None
+    intellect: int | None = None
+    stage: str | None = None
+    sleeping: bool | None = None
+    archived: bool | None = None
+
+
+@router.post("/pets/{pet_id}/edit", dependencies=[Depends(_tok)])
+async def pet_edit(pet_id: int, body: PetEdit) -> dict:
+    from app.db.models import Pet, PetStage
+    async with _session() as s:
+        p = (await s.execute(select(Pet).where(Pet.id == pet_id))
+             ).scalar_one_or_none()
+        if p is None:
+            raise HTTPException(404, "питомец не найден")
+        changed = []
+        data = body.model_dump(exclude_none=True)
+        for key, val in data.items():
+            attr = {"sleeping": "is_sleeping", "archived": "is_archived"}.get(key, key)
+            cur = getattr(p, attr)
+            if attr == "stage":
+                try:
+                    p.stage = PetStage(str(val))
+                except ValueError:
+                    raise HTTPException(422, f"неизвестная стадия {val!r}")
+            elif isinstance(cur, bool):
+                setattr(p, attr, bool(val))
+            elif isinstance(cur, float):
+                setattr(p, attr, float(max(0.0, min(100.0, float(val)))))
+            elif isinstance(cur, int):
+                setattr(p, attr, max(1 if attr == "level" else 0, int(val)))
+            else:
+                setattr(p, attr, str(val))
+            changed.append(key)
+        await s.commit()
+    return {"ok": True, "changed": changed}
+
+
+@router.get("/pets/{pet_id}/inventory", dependencies=[Depends(_tok)])
+async def pet_inventory(pet_id: int) -> dict:
+    from app.db.models import Item, Pet, PetInventory
+    async with _session() as s:
+        if (await s.get(Pet, pet_id)) is None:
+            raise HTTPException(404, "питомец не найден")
+        rows = (await s.execute(
+            select(PetInventory, Item).join(Item, Item.id == PetInventory.item_id)
+            .where(PetInventory.pet_id == pet_id)
+            .order_by(Item.type, Item.name))).all()
+    return {"items": [{
+        "invId": inv.id, "itemId": inv.item_id, "code": it.code, "name": it.name,
+        "icon": it.icon, "type": it.type, "price": it.price,
+        "quantity": inv.quantity, "effect": it.effect or {},
+    } for inv, it in rows]}
+
+
+class GiveItemBody(BaseModel):
+    item_id: int
+    quantity: int = 1
+
+
+@router.post("/pets/{pet_id}/give_item", dependencies=[Depends(_tok)])
+async def pet_give_item(pet_id: int, body: GiveItemBody) -> dict:
+    """Выдать предмет питомцу (приз от админа)."""
+    from app.db.models import Item, Pet, PetInventory
+    qty = max(1, int(body.quantity))
+    async with _session() as s:
+        if (await s.get(Pet, pet_id)) is None:
+            raise HTTPException(404, "питомец не найден")
+        it = (await s.execute(select(Item).where(Item.id == body.item_id))
+              ).scalar_one_or_none()
+        if it is None:
+            raise HTTPException(404, "предмет не найден")
+        row = (await s.execute(select(PetInventory).where(
+            PetInventory.pet_id == pet_id,
+            PetInventory.item_id == body.item_id))).scalar_one_or_none()
+        if row is None:
+            s.add(PetInventory(pet_id=pet_id, item_id=body.item_id, quantity=qty))
+        else:
+            row.quantity += qty
+        await s.commit()
+    return {"ok": True, "item": it.name, "added": qty}
+
+
+class ItemQtyPatch(BaseModel):
+    quantity: int
+
+
+@router.post("/pets/{pet_id}/inventory/{inv_id}", dependencies=[Depends(_tok)])
+async def pet_set_item_qty(pet_id: int, inv_id: int, body: ItemQtyPatch) -> dict:
+    from app.db.models import PetInventory
+    async with _session() as s:
+        row = (await s.execute(select(PetInventory).where(
+            PetInventory.id == inv_id, PetInventory.pet_id == pet_id))
+        ).scalar_one_or_none()
+        if row is None:
+            raise HTTPException(404, "позиция инвентаря не найдена")
+        row.quantity = max(0, int(body.quantity))
+        if row.quantity == 0:
+            await s.delete(row)
+        await s.commit()
+    return {"ok": True}
+
+
+@router.delete("/pets/{pet_id}/inventory/{inv_id}", dependencies=[Depends(_tok)])
+async def pet_del_item(pet_id: int, inv_id: int) -> dict:
+    from app.db.models import PetInventory
+    async with _session() as s:
+        row = (await s.execute(select(PetInventory).where(
+            PetInventory.id == inv_id, PetInventory.pet_id == pet_id))
+        ).scalar_one_or_none()
+        if row is None:
+            raise HTTPException(404, "позиция инвентаря не найдена")
+        await s.delete(row)
+        await s.commit()
+    return {"ok": True}
+
+
+# ============================ справочник предметов ============================
+
+@router.get("/items", dependencies=[Depends(_tok)])
+async def items_list() -> dict:
+    from app.db.models import Item
+    async with _session() as s:
+        rows = (await s.execute(select(Item).order_by(Item.type, Item.name))
+                ).scalars().all()
+    return {"items": [{
+        "id": i.id, "code": i.code, "name": i.name, "icon": i.icon,
+        "type": i.type, "price": i.price, "description": i.description,
+        "effect": i.effect or {},
+    } for i in rows]}
+
+
+# ========================== лента активности чатов ==========================
+
+@router.get("/activity", dependencies=[Depends(_tok)])
+async def activity_feed(limit: int = Query(80, le=500), chat_id: int = 0) -> dict:
+    """Последние засчитанные сообщения + реакции (лента жизни сообщества)."""
+    from app.db.models import ChatMessageLog, ReactionLog, User
+    async with _session() as s:
+        mstmt = (select(ChatMessageLog, User.first_name, User.username)
+                 .join(User, User.tg_id == ChatMessageLog.user_id)
+                 .order_by(ChatMessageLog.created_at.desc()).limit(limit))
+        if chat_id:
+            mstmt = mstmt.where(ChatMessageLog.chat_id == chat_id)
+        msgs = (await s.execute(mstmt)).all()
+        rstmt = (select(ReactionLog, User.first_name, User.username)
+                 .join(User, User.tg_id == ReactionLog.to_user)
+                 .order_by(ReactionLog.created_at.desc()).limit(limit))
+        reacts = (await s.execute(rstmt)).all()
+    events = []
+    for m, fn, un in msgs:
+        events.append({
+            "ts": m.created_at, "kind": "message", "chatId": m.chat_id,
+            "userId": m.user_id, "userName": fn or un or str(m.user_id),
+            "text": ("медиа: " + (m.media_type or "?")) if m.has_media else "",
+            "length": m.length, "counted": m.is_counted,
+            "skipReason": m.skip_reason,
+        })
+    for r, fn, un in reacts:
+        events.append({
+            "ts": r.created_at, "kind": "reaction", "chatId": r.chat_id,
+            "userId": r.to_user, "userName": fn or un or str(r.to_user),
+            "emoji": r.emoji, "fromUserId": r.from_user, "counted": r.is_counted,
+        })
+    events.sort(key=lambda e: e["ts"], reverse=True)
+    return {"items": [{**e, "ts": _dt(e["ts"])} for e in events[:limit]]}
+
+
+# ============================== лидерборды ==============================
+
+@router.get("/leaderboards", dependencies=[Depends(_tok)])
+async def leaderboards_latest() -> dict:
+    from app.db.models import LeaderboardSnapshot
+    async with _session() as s:
+        rows = (await s.execute(select(LeaderboardSnapshot).order_by(
+            LeaderboardSnapshot.created_at.desc()).limit(30))).scalars().all()
+    return {"items": [{
+        "id": r.id, "period": r.period, "category": r.category,
+        "createdAt": _dt(r.created_at), "data": r.data or [],
+    } for r in rows]}
+
+
+# ============================== дуэли питомцев ==============================
+
+@router.get("/duels", dependencies=[Depends(_tok)])
+async def duels_week() -> dict:
+    from app.db.models import PetDuel
+    from app.utils.local_time import now as local_now
+    week_key = local_now().strftime("%G-W%V")
+    async with _session() as s:
+        rows = (await s.execute(
+            select(PetDuel).where(PetDuel.week_key == week_key)
+            .order_by(PetDuel.score.desc()).limit(100))).scalars().all()
+        pet_ids = [d.pet_id for d in rows]
+        names: dict[int, tuple[str, str]] = {}
+        if pet_ids:
+            from app.db.models import Pet
+            pets = (await s.execute(select(Pet).where(Pet.id.in_(pet_ids)))
+                    ).scalars().all()
+            names = {p.id: (p.name, _enum(p.species)) for p in pets}
+    return {"weekKey": week_key, "items": [{
+        "petId": d.pet_id, "petName": names.get(d.pet_id, ("?", ""))[0],
+        "species": names.get(d.pet_id, ("", "?"))[1],
+        "wins": d.wins, "losses": d.losses, "fights": d.fights, "score": d.score,
+        "updatedAt": _dt(d.updated_at),
+    } for d in rows]}
+
+
+# ============================== настройки чатов ==============================
+
+@router.get("/chats", dependencies=[Depends(_tok)])
+async def chats_settings() -> dict:
+    from app.db.models import ChatSettings
+    async with _session() as s:
+        rows = (await s.execute(select(ChatSettings).order_by(
+            ChatSettings.chat_id))).scalars().all()
+    return {"items": [{
+        "chatId": c.chat_id, "cooldownSec": c.cooldown_sec,
+        "minLength": c.min_length, "config": c.config or {},
+    } for c in rows]}
+
+
+class ChatSettingsBody(BaseModel):
+    cooldown_sec: int | None = None
+    min_length: int | None = None
+    config: dict | None = None
+
+
+@router.post("/chats/{chat_id}", dependencies=[Depends(_tok)])
+async def chat_settings_edit(chat_id: int, body: ChatSettingsBody) -> dict:
+    from app.db.models import ChatSettings
+    async with _session() as s:
+        c = await s.get(ChatSettings, chat_id)
+        if c is None:
+            c = ChatSettings(chat_id=chat_id)
+            s.add(c)
+        if body.cooldown_sec is not None:
+            c.cooldown_sec = max(0, int(body.cooldown_sec))
+        if body.min_length is not None:
+            c.min_length = max(0, int(body.min_length))
+        if body.config is not None:
+            c.config = body.config
+        await s.commit()
+    return {"ok": True}
