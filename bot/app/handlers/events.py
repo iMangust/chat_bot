@@ -5,7 +5,7 @@ import html
 import re
 
 from aiogram import Bot, F, Router
-from aiogram.enums import ChatType
+from aiogram.enums import ChatType, ParseMode
 from aiogram.filters import BaseFilter, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -131,9 +131,19 @@ def _parse_date(raw: str) -> str | None:
     return None
 
 
-async def _render_list(cb: CallbackQuery, session) -> None:
+async def _render_list(cb: CallbackQuery, session, bot: Bot | None = None) -> None:
+    # Дебаг-логирование входа и результата запроса. Если хендлер не вызывается,
+    # в логах не будет строк «menu:events handler» — это сразу отделяет проблему
+    # диспетчера (роутинг/фильтры) от проблем рендера (БД/Telegram API).
+    logger.info("menu:events handler entered (user={}, data={!r})",
+                cb.from_user.id if cb.from_user else "?", cb.data)
     repo = EventRepository(session)
-    all_ev = await repo.all()
+    try:
+        all_ev = await repo.all()
+    except Exception as exc:
+        logger.exception("menu:events DB query failed: {}", exc)
+        raise
+    logger.info("menu:events loaded {} events from DB", len(all_ev))
     today = local_now().date().isoformat()
     events = [e for e in all_ev if (e.date or "9999") >= today]
     past = [e for e in all_ev if (e.date or "9999") < today][-5:]
@@ -162,6 +172,27 @@ async def _render_list(cb: CallbackQuery, session) -> None:
         b.button(text="🛠 Управление мероприятиями", callback_data="evadmin:home")
         _vrow(b)
     b.button(text="🏠 Меню", callback_data="menu:main")
+    # Дефолтный Message в aiogram 3.x не «смонтирован» на конкретный Bot,
+    # поэтому target.edit_text()/answer() без явного монтирования падает с
+    # RuntimeError («This method is not mounted to a any bot instance») — и
+    # пользователь видит «ничего не происходит». Монтируем методы явно на bot
+    # из контекста хендлера. Дополнительно: если у исходного сообщения нет
+    # текста, Telegram отклоняет EditMessageText — шлём новое сообщение.
+    async def _render_on(msg: Message) -> None:
+        from aiogram.methods import EditMessageText, SendMessage
+        if msg.text or msg.caption:
+            await bot(EditMessageText(
+                chat_id=msg.chat.id, message_id=msg.message_id,
+                text=text, parse_mode=ParseMode.HTML, reply_markup=b.as_markup()))
+        else:
+            logger.warning("menu:events source message has no text; sending new instead")
+            await bot(SendMessage(
+                chat_id=msg.chat.id, text=text,
+                parse_mode=ParseMode.HTML, reply_markup=b.as_markup()))
+
+    if cb.message is not None and bot is not None:
+        await _render_on(cb.message)
+        return
     await safe_edit_or_answer(cb.message, text, reply_markup=b.as_markup())
 
 
@@ -180,14 +211,22 @@ class _MenuFallback(BaseFilter):
 
 
 @router.callback_query(F.data == "menu:events")
-async def menu_events(cb: CallbackQuery, session) -> None:
+async def menu_events(cb: CallbackQuery, session, bot: Bot) -> None:
+    from aiogram.methods import AnswerCallbackQuery
     try:
-        await _render_list(cb, session)
-        await cb.answer()
+        await _render_list(cb, session, bot=bot)
     except Exception as exc:
         logger.exception("menu:events render failed: {}", exc)
+        # Явная обратная связь вместо «тихого» ничего-не-происходит: если
+        # сообщение отредактировать не удалось (или упал БД/Telegram),
+        # показываем alert — пользователь всегда видит реакцию на нажатие.
         with contextlib.suppress(Exception):
-            await cb.answer("Не удалось загрузить мероприятия 😅", show_alert=True)
+            await bot(AnswerCallbackQuery(
+                callback_query_id=cb.id,
+                text="Не удалось загрузить мероприятия 😅", show_alert=True))
+        return
+    with contextlib.suppress(Exception):
+        await bot(AnswerCallbackQuery(callback_query_id=cb.id))
 
 
 # ВАЖНО: этот обработчик должен оставаться последним в файле/роутере —
