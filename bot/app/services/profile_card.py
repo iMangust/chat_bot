@@ -299,14 +299,19 @@ class ProfileCardRenderer:
     def _player_panel(self, data: dict, y: int, draw: bool = True) -> int:
         d, put, fit = self.d, self.put, self.fit
         user = data["user"]
-        stats = data.get("stats", {})
+        # Счётчик в таблице users обновляется при каждом засчитанном сообщении —
+        # надёжнее, чем COUNT по лог-таблице (в карточку данные могут не успеть).
+        total_msgs = int(getattr(user, "messages_count", 0) or 0)
+        if not total_msgs:
+            total_msgs = int((data.get("stats") or {}).get("total", 0) or 0)
+        week_msgs = int((data.get("stats") or {}).get("week", 0) or 0)
         unlocked, total_ach = data.get("achievements", (0, 0))
         x0, x1 = M, W - M
         tiles = [
             ("Монеты", f"{user.coins:,}".replace(",", " "), ""),
             ("Стрик", f"{user.streak_days} дн.", f"рекорд {user.best_streak}"),
-            ("Сообщения", f"{stats.get('total', 0):,}".replace(",", " "),
-             f"+{stats.get('week', 0)} за 7 дн."),
+            ("Сообщения", f"{total_msgs:,}".replace(",", " "),
+             f"+{week_msgs} за 7 дн."),
             ("Реакции", f"{user.reactions_given} / {user.reactions_received}",
              "поставил / получил"),
             ("Игры", f"{data.get('games_won', 0)} побед",
