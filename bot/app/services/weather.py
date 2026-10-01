@@ -44,7 +44,8 @@ FORCE_FALLBACK = os.getenv("WEATHER_FORCE_FALLBACK", "").strip().lower() in {"1"
 
 WEATHER_SOURCE = "openweather"
 OWM_BASE = "https://api.openweathermap.org/data"
-OWM_ONECALL_URL = f"{OWM_BASE}/3.0/onecall"
+# One Call 3.0 убран: на бесплатном тарифе он недоступен (401), а /2.5-эндпоинты
+# (weather + forecast) дают те же данные без отдельного подписочного тарифа.
 OWM_CURRENT_URL = f"{OWM_BASE}/2.5/weather"
 OWM_FORECAST_URL = f"{OWM_BASE}/2.5/forecast"
 OPENWEATHER_KEY_ENV = "OPENWEATHER_API_KEY"
@@ -220,68 +221,6 @@ def _parse_owm_current(js: dict) -> dict | None:
         "hourly": {},
     }
 
-def _parse_owm_onecall(js: dict) -> dict | None:
-    cur = js.get("current") or {}
-    t = cur.get("temp")
-    if t is None:
-        return None
-    off = js.get("timezone_offset") or 0
-    w0 = (cur.get("weather") or [{}])[0]
-    code = _owm_to_wmo(w0.get("id"), float(t))
-    wind_ms = cur.get("wind_speed")
-    gust_ms = cur.get("wind_gust")
-    sr, ss = cur.get("sunrise"), cur.get("sunset")
-    is_day = True
-    try:
-        if isinstance(sr, (int, float)) and isinstance(ss, (int, float)):
-            is_day = sr <= (cur.get("dt") or 0) < ss
-    except (TypeError, ValueError):
-        pass
-    rain = float(cur.get("rain") or cur.get("rain_1h") or 0.0)
-    snow = float(cur.get("snow") or cur.get("snow_1h") or 0.0)
-    hours = []
-    for h in (js.get("hourly") or [])[:24]:
-        hw = (h.get("weather") or [{}])[0]
-        hcloud = h.get("clouds")
-        htemp = h.get("temp")
-        hcode = _owm_to_wmo(hw.get("id"), htemp)
-        if hcode in SUNNY_CODES | {3}:
-            by_pct = _cloud_code_by_pct(hcloud)
-            if by_pct is not None:
-                hcode = by_pct
-        hours.append({
-            "time": _owm_utc_hour(int(h.get("dt") or 0) + int(off)),
-            "temp": float(htemp or 0.0),
-            "code": hcode,
-            "precip": float(h.get("rain") or h.get("snow") or 0.0),
-            "gust": round(float(h.get("wind_gust") or 0.0) * 3.6, 1),
-            "cloud": hcloud,
-        })
-    snap = _parse_owm_current({
-        "main": {"temp": t, "feels_like": cur.get("feels_like"),
-                 "humidity": cur.get("humidity"), "pressure": cur.get("pressure")},
-        "weather": cur.get("weather") or [],
-        "wind": {"speed": wind_ms},
-        "clouds": {"all": cur.get("clouds")},
-        "dt": cur.get("dt"), "timezone": off,
-        "rain": {"1h": rain} if rain else None,
-        "snow": {"1h": snow} if snow else None,
-    })
-    if snap is None:
-        return None
-    snap["gust"] = round(float(gust_ms or 0) * 3.6, 1)
-    snap["source"] = "openweather-onecall"
-    if hours:
-        snap["hourly"] = {
-            "time": [h["time"] for h in hours],
-            "temp": [h["temp"] for h in hours],
-            "code": [h["code"] for h in hours],
-            "precip": [h["precip"] for h in hours],
-            "gust": [h["gust"] for h in hours],
-            "cloud": [h.get("cloud") for h in hours],
-        }
-    return snap
-
 def _owm_utc_hour(ts: int) -> str:
     from datetime import datetime as _dt, timezone as _tz
     try:
@@ -331,23 +270,8 @@ async def fetch_openweather() -> dict | None:
         async with httpx.AsyncClient(timeout=_timeout(), http2=False,
                                      transport=_transport(),
                                      follow_redirects=True) as client:
-            try:
-                resp = await client.get(OWM_ONECALL_URL,
-                                        params={**params,
-                                                "exclude": "minutely,daily,alerts"})
-                if resp.status_code == 200:
-                    snap = _parse_owm_onecall(resp.json())
-                    if snap:
-                        return snap
-                elif resp.status_code in (401, 403):
-                    logger.info(
-                        "openweather onecall: HTTP {} — ключ без доступа к One Call "
-                        "(бесплатный тариф), перехожу на /2.5/weather",
-                        resp.status_code)
-                else:
-                    logger.warning("openweather onecall: HTTP {}", resp.status_code)
-            except Exception as exc:
-                logger.debug("openweather onecall недоступен: {}", str(exc)[:120])
+            # Только /2.5-эндпоинты (One Call 3.0 убран — недоступен на
+            # бесплатном тарифе и только тормозил каждый тик лишним запросом).
             resp = await client.get(OWM_CURRENT_URL, params=params)
             resp.raise_for_status()
             snap = _parse_owm_current(resp.json())
@@ -420,7 +344,7 @@ def _ttl() -> float:
 async def fetch_forecast_hours() -> list[dict]:
     """Почасовые точки /2.5/forecast (до ~4 дней, шаг 3 ч) независимо от
     основного снимка. Нужны, когда основной источник — Open-Meteo или
-    One Call без часовых данных: иначе недельный экран нечем заполнять."""
+    снимок /2.5 без часовых данных: иначе недельный экран нечем заполнять."""
     key = openweather_key()
     if not key or FORCE_FALLBACK or not WEATHER_REAL_ENABLED:
         return []
@@ -515,7 +439,7 @@ _cache: dict = {"ts": 0.0, "info": None, "next_try_mono": 0.0}
 _decay_cache: dict = {"ts": 0.0, "mods": {}}
 # Сырые почасовые точки последнего успешного запроса прогноза
 # ([{"time": "YYYY-MM-DDTHH", "temp", "code", "precip", "gust", "cloud"}]).
-# Нужны для недельного экрана погоды: One Call отдаёт 24 ч, /2.5/forecast —
+# Нужны для недельного экрана погоды: /2.5/forecast отдаёт ~4 дн.
 # до 5 дней (3 ч шаг). Кэш живёт столько же, сколько основной кэш погоды.
 _hours_cache: dict = {"ts": 0.0, "points": []}
 
@@ -554,9 +478,8 @@ async def _do_fetch() -> dict | None:
              "cloud": (hd.get("cloud") or [None] * len(hp))[i]}
             for i, t in enumerate(hp)]
     elif real is not None:
-        # Успешный снимок БЕЗ почасовых точек (типично для бесплатного
-        # тарифа: One Call 3.0 отдаёт 401, /2.5/weather не содержит hourly,
-        # а /2.5/forecast в этот раз упал). Раньше это ветка принудительно
+        # Успешный снимок БЕЗ почасовых точек (/2.5/weather не содержит
+        # hourly, а /2.5/forecast в этот раз упал). Раньше эта ветка принудительно
         # затирала _hours_cache — и недельный экран откатывался к сезонной
         # оценке («+0…+6°» все дни), хотя живые данные были. Теперь старые
         # часовые точки сохраняются до истечения их собственного TTL
