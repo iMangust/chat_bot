@@ -221,7 +221,8 @@ class ActivityRepository:
             .where(
                 ChatMessageLog.user_id == tg_id,
                 ChatMessageLog.is_counted.is_(True),
-                db_bound(start.replace(hour=0, minute=0, second=0, microsecond=0)),
+                ChatMessageLog.created_at >= db_bound(
+                    start.replace(hour=0, minute=0, second=0, microsecond=0)),
             )
             .group_by("d")
         )
