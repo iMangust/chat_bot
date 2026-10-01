@@ -1339,7 +1339,7 @@ def render_week(rows: list[dict]) -> str:
         city = WEATHER_CITY or "Камчатка"
         lines = [f"📅 <b>Погода · {esc(city)} на 7 дн.</b>", "",
                 "⚠️ Живые данные OpenWeather недоступны — ниже ориентировочная",
-                "сезонная оценка, а не прогноз. Нажми «🔄 Обновить», когда сеть появится.", ""]
+                "сезонная оценка, а не прогноз. Данные обновит сервер.", ""]
         dt0 = local_now()
         for i in range(7):
             d = dt0.date() + timedelta(days=i)

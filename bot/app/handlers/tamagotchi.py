@@ -202,7 +202,7 @@ def _weather_error_text(exc: BaseException) -> str:
     if isinstance(exc, NameError):
         hint = "Похоже, бот запущен из устаревшего кода — перезапусти его."
     else:
-        hint = "Попробуй «🔄 Обновить» или загляни позже."
+        hint = "Данные обновляет сервер — загляни чуть позже."
     return f"🌦️ Погода временно недоступна. {hint}"
 
 
@@ -252,11 +252,15 @@ async def cb_weather_view(cb: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("wthr:refresh:"))
 async def cb_weather_refresh(cb: CallbackQuery) -> None:
+    # Кнопка «🔄 Обновить» убрана из клавиатуры погоды: обновление выполняет
+    # серверный планировщик (job weather_updater). Этот обработчик оставлен
+    # только для «висячих» кнопок в старых сообщениях — он НЕ дергает API,
+    # а показывает актуальный кэш, чтобы клики не создавали спам запросов.
     view = cb.data.split(":")[-1]
     if view not in ("today", "week"):
         view = "today"
-    await _render_weather_screen(cb, view=view, force=True)
-    await cb.answer("Погода обновлена 🔄")
+    await _render_weather_screen(cb, view=view, force=False)
+    await cb.answer("Погоду обновляет сервер 🌦️")
 
 
 async def _render_weather_screen(cb: CallbackQuery, view: str,

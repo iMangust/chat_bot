@@ -1021,7 +1021,10 @@ def weather_kb(view: str = "today") -> _IKM:
              callback_data="wthr:today")
     b.button(text=("✅ Неделя" if view == "week" else "🗓 Неделя"),
              callback_data="wthr:week")
-    b.button(text="🔄 Обновить", callback_data=f"wthr:refresh:{view}")
+    # Кнопки «🔄 Обновить» здесь намеренно НЕТ: обновление погоды выполняет
+    # серверный планировщик (job weather_updater). Ручные refresh от каждого
+    # пользователя создавали спам запросов к OpenWeather и риск блокировки
+    # API-ключа по лимиту.
     b.adjust(2)
     # «menu:main» — единственный обработчик возврата в главное меню
     # (голого payload «menu» в боте нет — такая кнопка была мёртвой).
