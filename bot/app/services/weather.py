@@ -525,10 +525,23 @@ async def _ensure_fresh(force: bool = False) -> dict | None:
         ttl = _ttl()
         if ttl <= 0:
             return False
-        fresh = now_m < _cache["ts"] or (now_m - _cache["ts"]) < ttl
-        if not fresh:
-            return False
-        return _cache.get("info") is not None or not _storm_window_active(now_m)
+        # Кэш с УСПЕШНЫМИ живыми данными живёт полный TTL и всегда
+        # приоритетнее любого «шторм-окна» (негативного кэша ошибки).
+        # Раньше проверка next_try_mono стояла здесь же и после серии
+        # неудачных запросов (например, спам кнопкой «Обновить» до её
+        # удаления) затирала даже успешный fetch на 20 минут — недельный
+        # экран откатывался к сезонной модели. Теперь негативное окно
+        # учитывается только когда свежих успешных данных НЕТ.
+        if _cache.get("info") is not None and \
+                (now_m < _cache["ts"] or (now_m - _cache["ts"]) < ttl):
+            return True
+        # Успешных данных нет (или они протухли): шторм-окно блокирует
+        # повторные сетевые попытки; при его наличии считаем кэш
+        # «достаточно свежим», чтобы не долбить API — наружу уйдёт
+        # сезонная модель.
+        if _storm_window_active(now_m):
+            return True
+        return False
 
     def _storm_window_active(now_m: float | None = None) -> bool:
         if now_m is None:
