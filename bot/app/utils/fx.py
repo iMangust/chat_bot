@@ -67,7 +67,10 @@ async def apply_effect(cb: CallbackQuery, action: str, *,
                        stat: str | None = None,
                        toast_override: str | None = None,
                        bot=None) -> None:
-    eff = effect_for(action, stat)
+    from app import themes
+
+    eff = themes.themed_effect(effect_for(action, stat)) \
+        if effect_for(action, stat) else None
     toast = toast_override or (eff.toast if eff else "")
     if toast:
         try:

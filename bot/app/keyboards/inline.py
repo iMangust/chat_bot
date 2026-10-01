@@ -1,8 +1,56 @@
 from __future__ import annotations
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.utils.keyboard import InlineKeyboardBuilder as _RawIKB
+from aiogram.types import InlineKeyboardButton as _IKB
 
+
+def _themed(values: dict) -> dict:
+    """Подменяет text кнопки под активную тему оформления (см. app/themes.py)."""
+    cb = values.get("callback_data")
+    text = values.get("text")
+    if isinstance(cb, str) and isinstance(text, str) and cb:
+        from app import themes
+        values["text"] = themes.theme_button_label(cb, text)
+    return values
+
+
+class _ThemedInlineKeyboardButton(_IKB):
+    """InlineKeyboardButton, подменяющий текст под активную тему оформления.
+
+    aiogram 3.x создаёт модели через ``TypeBase.model_validate`` /
+    ``model_construct`` (прямой ``__init__`` у pydantic-моделей не вызывается),
+    поэтому перехватываем обе точки входа. Так тематизируются кнопки ВЕЗДЕ
+    (прямые конструкторы и ``InlineKeyboardBuilder.button(...)``) без правки
+    сотен мест — достаточно использовать этот класс в модулях клавиатур.
+    """
+
+    @classmethod
+    def model_validate(cls, obj, *args, **kwargs):
+        if isinstance(obj, dict):
+            obj = _themed(dict(obj))
+        return super().model_validate(obj, *args, **kwargs)
+
+    @classmethod
+    def model_construct(cls, _fields_set=None, **values):
+        return super().model_construct(_fields_set=_fields_set,
+                                       **_themed(values))
+
+    # Pydantic v2 при обычном вызове конструктора (Button(text=..., ...))
+    # обходит класс-методы и идёт сразу в __init__ — перехватываем и его.
+    def __init__(self, **data):
+        super().__init__(**_themed(data))
+
+
+class InlineKeyboardBuilder(_RawIKB):
+    """Билдер, собирающий тематизированные кнопки (см. app/themes.py)."""
+
+    BUTTON_TYPE = _ThemedInlineKeyboardButton
+
+
+# Дальнейший код модуля использует тематизированную кнопку вместо оригинала.
+InlineKeyboardButton = _ThemedInlineKeyboardButton
+
+from aiogram.types import InlineKeyboardMarkup
 from app.config import get_settings
 
 def _two_per_row(buttons: list[InlineKeyboardButton]) -> list[list[InlineKeyboardButton]]:
@@ -791,6 +839,20 @@ def settings_keyboard(flags: dict[str, bool],
     b.adjust(2)
     with_nav(b, "settings", chat_id)
     return b.as_markup()
+
+def theme_picker_keyboard(current_key: str) -> InlineKeyboardMarkup:
+    """Клавиатура выбора темы оформления (экран «Настройки»)."""
+    from app import themes
+
+    b = InlineKeyboardBuilder()
+    for th in themes.available_themes():
+        mark = "✅" if th.key == current_key else "▫️"
+        preview = " ".join(th.preview_emoji)
+        b.button(text=f"{mark} {preview} {th.title.split(' ', 1)[-1]}",
+                 callback_data=f"set:theme:{th.key}")
+    b.adjust(1)
+    return b.as_markup(one_time=False)
+
 
 def arena_keyboard(can_fight: bool = True, hint: str = "",
                    chat_id: int | None = None) -> InlineKeyboardMarkup:

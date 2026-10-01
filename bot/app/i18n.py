@@ -77,7 +77,10 @@ STRINGS: dict[str, str] = {
 }
 
 def tf(lang: str | None, key: str, **params: Any) -> str:
+    from app import themes
+
     text = STRINGS.get(key) or key
+    text = themes.tr(key, text)  # подмена строк/эмодзи активной темой
     try:
         return text.format(**params) if params else text
     except (KeyError, IndexError):

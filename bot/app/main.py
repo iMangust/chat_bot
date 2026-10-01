@@ -692,6 +692,8 @@ async def main() -> None:
 
     dp = Dispatcher(storage=storage)
     dp.update.outer_middleware(DbMiddleware())
+    from app.middlewares.theme import ThemeMiddleware
+    dp.update.outer_middleware(ThemeMiddleware())
     dp.update.outer_middleware(access_handlers.AccessEventsMiddleware())
     dp.update.outer_middleware(AccessGateMiddleware())
     dp.callback_query.outer_middleware(ThrottleMiddleware())

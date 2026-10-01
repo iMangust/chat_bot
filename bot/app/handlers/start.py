@@ -84,10 +84,21 @@ def invite_link_for(tg_id: int) -> str:
     return f"https://t.me/{ch}?start=invite_{tg_id}"
 
 def _main_menu_text(user, page: int = 0) -> str:
+    from app import themes
+
     need = xp_needed_for_level(user.level)
     bar = progress_bar(user.xp, need)
     ch, visual = channel_link()
     title, _actions = MENU_PAGES[page % len(MENU_PAGES)]
+    # Тема оформления (например «🦇 Готика») может полностью заменять текст меню
+    themed = themes.main_menu_renders(
+        title=title, name=_html.escape(user.first_name or ''),
+        level=user.level, bar=bar, xp=user.xp, need=need,
+        coins=user.coins, streak=user.streak_days)
+    if themed is not None:
+        if ch:
+            themed += f"\n\n🔔 Новости склепа: {visual} (t.me/{ch})"
+        return themed
     lines = [
         f"🏠 <b>Главное меню · {title}</b>\n",
         f"👤 {_html.escape(user.first_name or '')}, уровень {user.level} · {bar} {user.xp}/{need} XP",
@@ -170,10 +181,11 @@ async def cmd_start(message: Message, state: FSMContext, session: AsyncSession,
                 parse_mode="HTML",
             )
     if not user.welcome_shown:
+        from app import themes as _themes
         await message.answer(
-            WELCOME_DM.format(name=_html.escape(user.first_name or "друг"),
-                              channel_name=_html.escape(_channel_title()),
-                              channel_line=_channel_line()),
+            _themes.welcome_text(_html.escape(user.first_name or "друг"),
+                                 _html.escape(_channel_title()),
+                                 _channel_line()),
             parse_mode="HTML",
         )
         user.welcome_shown = True

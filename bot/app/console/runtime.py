@@ -114,6 +114,8 @@ class BotRuntime:
 
             dp = Dispatcher(storage=storage)
             dp.update.outer_middleware(DbMiddleware())
+            from app.middlewares.theme import ThemeMiddleware
+            dp.update.outer_middleware(ThemeMiddleware())
             dp.update.outer_middleware(access_handlers.AccessEventsMiddleware())
             from app.middlewares.gate import AccessGateMiddleware
             dp.update.outer_middleware(AccessGateMiddleware())

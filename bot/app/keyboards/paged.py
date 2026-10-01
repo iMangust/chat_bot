@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardMarkup
+
+# Тематизированная кнопка (см. app/themes.py): подписи кнопок пагинации и
+# навигации тоже подстраиваются под активную тему оформления.
+from app.keyboards.inline import InlineKeyboardButton
 
 PAGE_SIZE = 6
 NAV_ROW = "◀️"
