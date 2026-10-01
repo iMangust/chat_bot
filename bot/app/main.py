@@ -442,17 +442,23 @@ async def _backfill_subscriber_chats_v202(engine) -> None:
         by_user: dict[int, list[int]] = {}
         for uid, cid in rows:
             by_user.setdefault(int(uid), []).append(int(cid))
+        # Dialect-aware upsert: «INSERT OR IGNORE» — синтаксис SQLite и на
+        # MySQL/MariaDB даёт синтаксическую ошибку (1064). Для MySQL-диалекта
+        # используем INSERT IGNORE.
+        insert_verb = ("INSERT IGNORE INTO"
+                       if conn.dialect.name in ("mysql", "mariadb")
+                       else "INSERT OR IGNORE INTO")
         for uid, chats in by_user.items():
             if uid in have_by_user:
                 continue
-            res = await conn.execute(text(
-                """INSERT OR IGNORE INTO channel_subscribers
-                       (user_id, username, first_name, first_seen, last_seen_at,
-                        chats, ever_contacted, last_contact_at)
-                   SELECT :uid, NULL, '', :ts, :ts,
-:chats, 0, NULL
-                   WHERE NOT EXISTS (SELECT 1 FROM channel_subscribers
-                                     WHERE user_id =:uid)"""),
+            res = await conn.execute(text(f"""
+                {insert_verb} channel_subscribers
+                    (user_id, username, first_name, first_seen, last_seen_at,
+                     chats, ever_contacted, last_contact_at)
+                SELECT :uid, NULL, '', :ts, :ts,
+                       :chats, 0, NULL
+                WHERE NOT EXISTS (SELECT 1 FROM channel_subscribers
+                                  WHERE user_id = :uid)"""),
                 {"uid": uid, "chats": _json.dumps(sorted(set(chats))),
                  "ts": utcnow().strftime("%Y-%m-%d %H:%M:%S")})
             fixed += res.rowcount or 0
