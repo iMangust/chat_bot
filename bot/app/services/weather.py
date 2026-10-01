@@ -366,8 +366,29 @@ async def fetch_openweather() -> dict | None:
                             "precip": [h["precip"] for h in hours],
                             "gust": [h["gust"] for h in hours],
                         }
+                else:
+                    logger.warning("openweather forecast: HTTP {}",
+                                   rf.status_code)
             except Exception as exc:
-                logger.debug("openweather forecast unavailable: {}", str(exc)[:120])
+                logger.debug("openweather forecast unavailable: {}",
+                             str(exc)[:120])
+            # Если /2.5/forecast не отдал часовых точек, а снимок пришёл из
+            # /2.5/weather (там hourly пуст по определению), недельный экран
+            # остался бы без данных до следующего тика. Достаём точки из
+            # кэша прошлых запросов — это честнее сезонной заглушки, т.к.
+            # данные всё равно живые (просто чуть старше).
+            if not ((snap.get("hourly") or {}).get("time")):
+                cached_pts = _hours_cache.get("points") or []
+                if cached_pts and (_mono.monotonic() - _hours_cache["ts"]) \
+                        <= max(_ttl(), 6 * 3600):
+                    snap["hourly"] = {
+                        "time": [p.get("time") for p in cached_pts],
+                        "temp": [p.get("temp") for p in cached_pts],
+                        "code": [p.get("code") for p in cached_pts],
+                        "precip": [p.get("precip") for p in cached_pts],
+                        "gust": [p.get("gust") for p in cached_pts],
+                        "cloud": [p.get("cloud") for p in cached_pts],
+                    }
             return snap
     except Exception as exc:
         es = str(exc)
@@ -394,6 +415,31 @@ def _ttl() -> float:
         return max(60.0, float(getattr(s, "weather_cache_minutes", 180)) * 60)
     except Exception:
         return float(REFRESH_INTERVAL_SEC)
+
+
+async def fetch_forecast_hours() -> list[dict]:
+    """Почасовые точки /2.5/forecast (до ~4 дней, шаг 3 ч) независимо от
+    основного снимка. Нужны, когда основной источник — Open-Meteo или
+    One Call без часовых данных: иначе недельный экран нечем заполнять."""
+    key = openweather_key()
+    if not key or FORCE_FALLBACK or not WEATHER_REAL_ENABLED:
+        return []
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=_timeout(), transport=_transport(),
+                                     follow_redirects=True) as client:
+            rf = await client.get(OWM_FORECAST_URL, params={
+                "lat": LAT, "lon": LON, "units": "metric", "lang": "ru",
+                "appid": key})
+            if rf.status_code != 200:
+                logger.warning("openweather forecast(standalone): HTTP {}",
+                               rf.status_code)
+                return []
+            return _parse_owm_forecast_hours(rf.json())
+    except Exception as exc:
+        logger.debug("openweather forecast(standalone) unavailable: {}",
+                     str(exc)[:120])
+        return []
 
 async def background_refresh() -> dict | None:
     try:
@@ -507,6 +553,16 @@ async def _do_fetch() -> dict | None:
              "gust": (hd.get("gust") or [0.0] * len(hp))[i],
              "cloud": (hd.get("cloud") or [None] * len(hp))[i]}
             for i, t in enumerate(hp)]
+    elif real is not None:
+        # Успешный снимок БЕЗ почасовых точек (типично для бесплатного
+        # тарифа: One Call 3.0 отдаёт 401, /2.5/weather не содержит hourly,
+        # а /2.5/forecast в этот раз упал). Раньше это ветка принудительно
+        # затирала _hours_cache — и недельный экран откатывался к сезонной
+        # оценке («+0…+6°» все дни), хотя живые данные были. Теперь старые
+        # часовые точки сохраняются до истечения их собственного TTL
+        # (проверка в hourly_points); затираем их только при полном
+        # недоступии источника (real is None) — см. else ниже.
+        pass
     else:
         _hours_cache["ts"], _hours_cache["points"] = 0.0, []
     if real is None:
@@ -1241,10 +1297,31 @@ def cached_weather_button_label(max_age_sec: float = REFRESH_INTERVAL_SEC) -> st
 
 
 async def hourly_points() -> list[dict]:
-    """Почасовые точки прогноза (UTC-ключи) из кэша последнего запроса."""
-    fresh = (_mono.monotonic() - _hours_cache["ts"]) < _ttl()
+    """Почасовые точки прогноза (UTC-ключи) из кэша последнего запроса.
+
+    Если часового кэша нет вовсе (ts==0 — например, процесс перезапустили,
+    а первый успешный снимок пришёл без hourly на бесплатном тарифе),
+    принудительно обновляем данные один раз и собираем точки заново.
+    Это закрывает случай «неделя пуста до первого серверного тика».
+    """
+    ttl = _ttl()
+    fresh = _hours_cache["ts"] > 0 and \
+        (_mono.monotonic() - _hours_cache["ts"]) < ttl
     if not fresh:
         await _ensure_fresh()
+    if not _hours_cache["points"] and ttl > 0:
+        # Часовых точек так и нет (снимок приходит из источника без hourly).
+        # Достаём прогноз /2.5/forecast отдельным запросом (раз в TTL, не
+        # чаще) — иначе недельный экран навсегда остаётся сезонной заглушкой.
+        try:
+            hours = await fetch_forecast_hours()
+        except Exception as exc:  # noqa: BLE001 — экран не должен падать
+            logger.debug("hourly_points: standalone forecast failed: {}", exc)
+            hours = []
+        if hours:
+            ts = _mono.monotonic()
+            _hours_cache["ts"] = ts
+            _hours_cache["points"] = hours
     pts = [_hours_cache["points"] and p for p in _hours_cache["points"]]
     return [p for p in pts if p]
 

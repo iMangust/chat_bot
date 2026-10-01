@@ -52,3 +52,75 @@ async def _main():
         W.fetch_real_weather = orig
     print("ALL WEATHER CACHE ASSERTS PASSED")
 
+
+
+class TestWeekHoursSurviveNoHourlySnapshot:
+    """Регресс: «неделя» откатывалась к сезонной оценке, хотя живые данные были.
+
+    Причины (все закрыты):
+    1) успешный снимок без hourly (One Call 401 на бесплатном тарифе,
+       /2.5/forecast упал) принудительно затирал _hours_cache;
+    2) если основной источник отдаёт снимок без почасовых точек вообще,
+       часовые точки теперь дотягиваются отдельным запросом
+       fetch_forecast_hours() (раз в TTL, не чаще).
+    """
+
+    def test_no_hourly_snapshot_keeps_cached_points(self):
+        import asyncio
+        from app.services import weather as W
+
+        async def scenario():
+            W._reset_state_for_tests()
+            os.environ["OPENWEATHER_API_KEY"] = "test-key"
+
+            async def with_hours():
+                return {"temperature": 3.0, "hourly": {
+                    "time": ["2026-10-02T06"], "temp": [2.0],
+                    "code": [61], "precip": [0.4], "gust": [18.0]}}
+
+            async def without_hours():
+                return {"temperature": 3.0, "hourly": {}}
+
+            W.fetch_real_weather = with_hours
+            await W._ensure_fresh(force=True)
+            assert len(W._hours_cache["points"]) == 1
+            W.fetch_real_weather = without_hours
+            await W._ensure_fresh(force=True)
+            assert len(W._hours_cache["points"]) == 1, \
+                "снимок без hourly не должен затирать живые часовые точки"
+            rows = W._day_rows(W._hours_cache["points"])
+            assert "сезонная оценка" not in W.render_week(rows)
+            W._reset_state_for_tests()
+
+        asyncio.run(scenario())
+
+    def test_standalone_forecast_backfills_week(self):
+        import asyncio
+        from app.services import weather as W
+
+        async def scenario():
+            W._reset_state_for_tests()
+            os.environ["OPENWEATHER_API_KEY"] = "test-key"
+
+            async def snap_no_hr():
+                return {"temperature": 3.0, "hourly": {}}
+
+            calls = []
+
+            async def fake_fc():
+                calls.append(1)
+                return [{"time": f"2026-10-{d:02d}T06", "temp": 2.0,
+                         "code": 61, "precip": 0.4, "gust": 18.0,
+                         "cloud": 90} for d in range(2, 8)]
+
+            W.fetch_real_weather = snap_no_hr
+            W.fetch_forecast_hours = fake_fc
+            pts = await W.hourly_points()
+            assert len(pts) == 6 and len(calls) == 1
+            await W.hourly_points()  # из кэша — без нового запроса
+            assert len(calls) == 1
+            txt = W.render_week(W._day_rows(pts))
+            assert "сезонная оценка" not in txt
+            W._reset_state_for_tests()
+
+        asyncio.run(scenario())
