@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
     Achievement,
-    ChatMessageLog,
     Pet,
     PetActionLog,
     PetDuel,
@@ -16,7 +15,6 @@ from app.db.models import (
 )
 from app.services.tamagotchi import (
     SPECIES_DATA,
-    TamagotchiService,
     compute_mood,
     pet_xp_needed,
     _aware,
@@ -46,6 +44,22 @@ def vitals(pet: Pet) -> list[tuple[str, float]]:
         ("Гигиена", pet.hygiene),
         ("Здоровье", pet.health),
     ]
+
+def mood_label(mood: str) -> tuple[str, str]:
+    """(метка настроения, цвет hex) для карточки."""
+    if mood == "great":
+        return "Отличное настроение", "#7CE38B"
+    if mood == "good":
+        return "Хорошее настроение", "#7CE38B"
+    if mood == "ok":
+        return "Нормально", "#F5D76E"
+    if mood == "sleeping":
+        return "Спит", "#8AA6FF"
+    if mood == "hungry":
+        return "Голодный", "#FF9E6B"
+    if mood == "sick":
+        return "Болеет", "#FF6B6B"
+    return "Грустит", "#FFA8C0"
 
 def vital_advice(pet: Pet) -> list[str]:
     tips = []
@@ -142,14 +156,12 @@ async def collect(session: AsyncSession, tg_id: int) -> dict | None:
 
     if pet is not None:
         sp = SPECIES_DATA.get(_species_key(pet), SPECIES_DATA["cat"])
-        color_key, worn = TamagotchiService(None).customization(pet)
         stage_titles = {"egg": "яичко", "baby": "малыш", "teen": "подросток",
                         "adult": "взрослый", "legendary": "легенда"}
         data["pet_info"] = {
             "species_title": sp["title"],
+            "species_emoji": sp["emoji"],
             "stage_title": stage_titles.get(getattr(pet.stage, "value", ""), ""),
-            "color_title": TamagotchiService.PET_COLORS[color_key][0] if color_key else "Классический",
-            "accessories": worn,
             "xp_need": pet_xp_needed(pet.level),
             "age": _fmt_age(pet.born_at),
             "mood": compute_mood(pet),
@@ -175,53 +187,18 @@ async def collect(session: AsyncSession, tg_id: int) -> dict | None:
                 .where(PetActionLog.pet_id == pet.id)
                 .group_by(PetActionLog.action)
             )).all()
-            data["care"] = {a: int(c) for a, c in rows}
+            care = {a: int(c) for a, c in rows}
+            feed_n = care.get("feed", 0)
+            play_n = (care.get("play", 0) + care.get("rps", 0) + care.get("guess", 0)
+                      + care.get("blackjack", 0) + care.get("quiz", 0) + care.get("coin", 0))
+            data["care_summary"] = f"Уход: кормлений {feed_n} · игр {play_n}"
         except Exception as exc:
             logger.warning("card: care log skipped: {}", exc)
-            data["care"] = {}
-        try:
-            avg_len = (await session.execute(
-                select(func.avg(ChatMessageLog.length))
-                .join(User, User.tg_id == ChatMessageLog.user_id)
-                .where(ChatMessageLog.user_id == tg_id, ChatMessageLog.is_counted == True)
-            )).scalar()
-            data["avg_len"] = round(float(avg_len or 0))
-        except Exception as exc:
-            logger.warning("card: avg length skipped: {}", exc)
-            data["avg_len"] = 0
+            data["care_summary"] = ""
     else:
         data["pet_info"] = None
         data["duel"] = (0, 0, 0)
-        data["care"] = {}
-        data["avg_len"] = 0
-
-    try:
-        from app.services.weather import kamchatka_weather, weather_effect
-        info = await kamchatka_weather()
-        data["weather"] = f"{info.get('icon', '')} {info.get('name', '')}".strip()
-        eff = weather_effect()
-        if eff and data.get("pet_info") is not None:
-            try:
-                from app.services.weather import weather_effects_lines, weather_window_end
-                wlines = weather_effects_lines(
-                    eff, window_end=weather_window_end(pet) if pet is not None else None)
-                if wlines:
-                    body = wlines[0].strip()
-                    if body.startswith("↳"):
-                        body = body[1:].strip()
-                    wt = f"погода ({info.get('name', '')}): {body}"
-                    data["pet_info"]["advice"] = list(data["pet_info"].get("advice") or []) + [wt]
-            except Exception as exc2:
-                logger.warning("card: weather advice skipped: {}", exc2)
-    except Exception as exc:
-        logger.warning("card: weather skipped: {}", exc)
-        data["weather"] = ""
-    try:
-        from app.utils.formatting import HOLIDAYS
-        hol = HOLIDAYS.get((local_now().month, local_now().day))
-        data["holiday"] = f"{hol[0]} {hol[1]}" if hol else ""
-    except Exception:
-        data["holiday"] = ""
+        data["care_summary"] = ""
 
     try:
         from app.db.repositories import UserRepository

@@ -126,6 +126,14 @@ class ProfileCardRenderer:
             text = text[:-1]
         return text.rstrip() + "…"
 
+    @staticmethod
+    def _rgb(hex_color: str) -> tuple[int, int, int]:
+        h = hex_color.lstrip("#")
+        return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+    def _section_title(self, x: int, y: int, text: str) -> None:
+        self.put((x, y), text.upper(), fill=DIM, font=self.f_tiny)
+
     def _header(self, data: dict, y: int, draw: bool = True) -> int:
         d, put, fit = self.d, self.put, self.fit
         user = data["user"]
@@ -180,7 +188,7 @@ class ProfileCardRenderer:
             h = 120
             if draw:
                 d.rounded_rectangle([x0, y, x1, y + h], radius=16, fill=CARD_BG)
-                put((x0 + PAD, y + PAD), "Питомец", fill=DIM, font=self.f_mid)
+                self._section_title(x0 + PAD, y + 12, "Питомец")
                 put((x0 + PAD, y + 52), "Питомца пока нет — нажми /start и заведи друга!",
                     fill=TEXT, font=self.f_val)
             return y + h + 12
@@ -190,29 +198,25 @@ class ProfileCardRenderer:
         statuses = pi.get("statuses") or []
         advice = pi.get("advice") or []
 
-        ax, ay = x0 + PAD, y + PAD
-        bar_y = ay + 92
-        vy = bar_y + 34
+        # Макет: заголовок (28) + аватар (84) + XP-строка (36) + виталы + отступ.
+        header_h = 28 + 84 + 36
         vitals_h = len(vitals_list) * 26
-        left_bottom = vy + vitals_h
         rx = x1 - PAD - 250
-        ry0 = y + PAD + 118
-        arena_block = 64
-        care_block = 64
-        right_bottom = ry0 + 22 + len(contribs) * 24 + 34 \
-            + arena_block + 8 + care_block
-        h = max(300, int(max(left_bottom, right_bottom) - y)) + 14
-        if statuses:
-            h += len(statuses) * 24 + 10
-        if advice:
-            h += 24
+        right_bottom = header_h + 22 + len(contribs) * 24 + 34 + 64
+        h = max(300, header_h + max(vitals_h, right_bottom - header_h),
+                vitals_h + header_h) + 14
+        footer_lines = bool(data.get("care_summary")) + bool(advice) + len(statuses)
+        h += footer_lines * 24 + (10 if footer_lines else 0)
 
         if not draw:
             return y + h + 12
 
         d.rounded_rectangle([x0, y, x1, y + h], radius=16, fill=CARD_BG)
 
+        self._section_title(x0 + PAD, y + 12, "Питомец")
         emoji = pi.get("species_emoji") or ""
+        ay = y + 40
+        ax = x0 + PAD
         d.ellipse([ax, ay, ax + 84, ay + 84], fill=(52, 60, 92), outline=GOLD, width=2)
         put((ax + 42, ay + 42), clean(emoji) or clean(pet.name[:1]).upper(),
             fill=TEXT, font=self.f_big, anchor="mm")
@@ -220,17 +224,20 @@ class ProfileCardRenderer:
         title = f"{pet.name} · {pi['species_title']}"
         put((tx, ay - 2), fit(title, self.f_mid, x1 - tx - PAD), fill=TEXT, font=self.f_mid)
         meta = f"ур. {pet.level} · {pi['stage_title']} · возраст {pi.get('age', '?')}"
-        color_acc = pi.get("color_title", "")
-        if color_acc and color_acc != "Классический":
-            meta += f" · {color_acc}"
-        accs = "".join(pi.get("accessories") or [])
-        if accs:
-            meta += " " + clean(accs)
         put((tx, ay + 30), fit(meta, self.f_small, x1 - tx - PAD), fill=DIM, font=self.f_small)
-        mood_line = pi.get("mood_line", "")
-        if mood_line:
-            put((tx, ay + 54), fit(clean(mood_line), self.f_small, x1 - tx - PAD),
-                fill=GOLD, font=self.f_small)
+        try:
+            from app.services.card_data import mood_label
+            m_label, m_hex = mood_label(pi.get("mood", "ok"))
+        except Exception:
+            m_label, m_hex = "", "#F0C35A"
+        if m_label:
+            mw = int(d.textlength(clean(m_label), font=self.f_small)) + 24
+            mx = min(tx, x1 - PAD - mw)
+            d.rounded_rectangle([mx, ay + 56, mx + mw, ay + 80], radius=12,
+                                 fill=CARD_BG2, outline=m_hex, width=1)
+            put((mx + 12, ay + 58), m_label, fill=self._rgb(m_hex), font=self.f_small)
+
+        bar_y = ay + 100
 
         need = max(pi.get("xp_need", 1), 1)
         frac = max(0.0, min(1.0, pet.xp / need))
@@ -241,6 +248,7 @@ class ProfileCardRenderer:
         put((ax, bar_y + 14), fit(f"Опыт питомца {pet.xp}/{need}", self.f_tiny, x1 - ax - PAD),
             fill=DIM, font=self.f_tiny)
 
+        vy = bar_y + 36
         lab_w = 92
         val_w = 46
         track_x = x0 + PAD + lab_w
@@ -257,34 +265,27 @@ class ProfileCardRenderer:
                 d.rounded_rectangle([track_x, yy + 3, track_x + wpx, yy + 13], radius=5, fill=c)
             put((track_x + track_w + 8, yy), f"{int(v)}%", fill=TEXT, font=self.f_small)
 
-        ry = ry0
-        put((rx, ry), "ХАРАКТЕРИСТИКИ", fill=DIM, font=self.f_tiny)
+        ry = y + header_h
+        power = pi.get("power", 0)
+        put((rx, ry), f"БОЕВАЯ МОЩЬ · {power}", fill=ACCENT, font=self.f_tiny)
         ry += 22
         for name, val, hint in contribs:
             put((rx, ry), f"{name}: {val}", fill=TEXT, font=self.f_small)
             put((rx + 118, ry + 2), fit(hint, self.f_tiny, 250 - 118), fill=DIM, font=self.f_tiny)
             ry += 24
-        power = pi.get("power", 0)
-        put((rx, ry + 2), f"Боевая мощь: {power}", fill=ACCENT, font=self.f_small)
 
         wins, losses, score = data.get("duel", (0, 0, 0))
-        ry += 40
-        put((rx, ry), "АРЕНА (НЕДЕЛЯ)", fill=DIM, font=self.f_tiny)
+        ry += 14
+        put((rx, ry), "АРЕНА · НЕДЕЛЯ", fill=DIM, font=self.f_tiny)
         put((rx, ry + 20), f"{wins} побед · {losses} поражений", fill=TEXT, font=self.f_small)
         put((rx, ry + 42), f"рейтинг {score} оч.", fill=DIM, font=self.f_small)
 
-        care = data.get("care", {})
-        ry += 64
-        put((rx, ry), "УХОД ЗА ВСЮ ЖИЗНЬ", fill=DIM, font=self.f_tiny)
-        feed_n = care.get("feed", 0)
-        play_n = (care.get("play", 0) + care.get("rps", 0) + care.get("guess", 0)
-                  + care.get("blackjack", 0) + care.get("quiz", 0) + care.get("coin", 0))
-        walk_n = care.get("walk", 0)
-        wash_n = care.get("wash", 0)
-        put((rx, ry + 20), f"покормлений {feed_n} · игр {play_n}", fill=TEXT, font=self.f_small)
-        put((rx, ry + 42), f"прогулок {walk_n} · помывок {wash_n}", fill=TEXT, font=self.f_small)
-
         sy = y + h - 14
+        care_summary = data.get("care_summary") or ""
+        if care_summary:
+            sy -= 24
+            put((x0 + PAD, sy), fit(care_summary, self.f_small, x1 - x0 - PAD * 2),
+                fill=DIM, font=self.f_small)
         if advice:
             sy -= 24
             put((x0 + PAD, sy), fit("[i] " + "; ".join(advice), self.f_small, x1 - x0 - PAD * 2),
@@ -301,12 +302,6 @@ class ProfileCardRenderer:
         stats = data.get("stats", {})
         unlocked, total_ach = data.get("achievements", (0, 0))
         x0, x1 = M, W - M
-        h = 176
-        if not draw:
-            return y + h + 12
-        d.rounded_rectangle([x0, y, x1, y + h], radius=16, fill=CARD_BG)
-        put((x0 + PAD, y + 10), "ДОСТИЖЕНИЯ И ПРОГРЕСС", fill=DIM, font=self.f_tiny)
-
         tiles = [
             ("Монеты", f"{user.coins:,}".replace(",", " "), ""),
             ("Стрик", f"{user.streak_days} дн.", f"рекорд {user.best_streak}"),
@@ -314,67 +309,32 @@ class ProfileCardRenderer:
              f"+{stats.get('week', 0)} за 7 дн."),
             ("Реакции", f"{user.reactions_given} / {user.reactions_received}",
              "поставил / получил"),
-            ("Игры", f"{data.get('games_won', 0)} побед", f"приглашений {data.get('invites', 0)}"),
-            ("Ачивки", f"{unlocked}/{total_ach}", "открыто"),
+            ("Игры", f"{data.get('games_won', 0)} побед",
+             f"приглашений {data.get('invites', 0)}"),
+            ("Достижения", f"{unlocked}/{total_ach}", "открыто"),
         ]
         cols = 3
+        rows = (len(tiles) + cols - 1) // cols
         tw = (x1 - x0 - PAD * 2 - 12 * (cols - 1)) // cols
-        th = 58
+        th = 62
+        h = 40 + rows * th + (rows - 1) * 10 + 16
+        if not draw:
+            return y + h + 12
+        d.rounded_rectangle([x0, y, x1, y + h], radius=16, fill=CARD_BG)
+        self._section_title(x0 + PAD, y + 12, "Прогресс игрока")
+
         for i, (title, value, sub) in enumerate(tiles):
             cxx = x0 + PAD + (i % cols) * (tw + 12)
-            cyy = y + 34 + (i // cols) * (th + 10)
+            cyy = y + 40 + (i // cols) * (th + 10)
             d.rounded_rectangle([cxx, cyy, cxx + tw, cyy + th], radius=10, fill=CARD_BG2)
-            put((cxx + 10, cyy + 6), fit(title.upper(), self.f_tiny, tw - 20),
+            put((cxx + 12, cyy + 8), fit(title.upper(), self.f_tiny, tw - 24),
                 fill=DIM, font=self.f_tiny)
-            put((cxx + 10, cyy + 22), fit(value, self.f_val, tw - 20), fill=TEXT, font=self.f_val)
+            put((cxx + 12, cyy + 24), fit(value, self.f_val, tw - 24),
+                fill=TEXT, font=self.f_val)
             if sub:
-                put((cxx + 10, cyy + 42), fit(sub, self.f_tiny, tw - 20), fill=DIM, font=self.f_tiny)
-
-        bits = []
-        if data.get("weather"):
-            bits.append(clean(data["weather"]))
-        if data.get("holiday"):
-            bits.append(clean(data["holiday"]))
-        avg_len = data.get("avg_len", 0)
-        if avg_len:
-            bits.append(f"среднее сообщение: {avg_len} зн.")
-        if bits:
-            put((x0 + PAD, y + h - 26), fit("  ·  ".join(bits), self.f_small, x1 - x0 - PAD * 2),
-                fill=DIM, font=self.f_small)
+                put((cxx + tw - 12, cyy + 32), fit(sub, self.f_tiny, tw - 30),
+                    fill=DIM, font=self.f_tiny, anchor="ra")
         return y + h + 12
-
-    @staticmethod
-    def _draw_activity_chart(d, daily: dict[str, int], y0: int, f_small) -> None:
-        from datetime import timedelta
-        from app.utils.local_time import now as local_now
-        now = local_now()
-        days = [(now - timedelta(days=i)).date() for i in range(6, -1, -1)]
-        vals = [int((daily or {}).get(dt.isoformat(), 0)) for dt in days]
-        maxv = max(vals) if vals else 0
-        x0, x1 = M, W - M
-        ch = 130
-        d.rounded_rectangle([x0, y0, x1, y0 + ch], radius=14, fill=CARD_BG)
-        title = "Активность за 7 дней" + (f" · пик {maxv}/день" if maxv else "")
-        d.text((x0 + 14, y0 + 8), clean(title), fill=DIM, font=f_small)
-        plot_top, plot_bot = y0 + 40, y0 + ch - 26
-        n = len(vals)
-        gap = 18
-        bw = (x1 - x0 - 28 - gap * (n - 1)) // n
-        base = max(maxv, 1)
-        wd = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"]
-        for i, v in enumerate(vals):
-            bx = x0 + 14 + i * (bw + gap)
-            bh = int((plot_bot - plot_top) * (v / base))
-            col = ACCENT if v else (70, 78, 110)
-            d.rounded_rectangle([bx, plot_bot - max(bh, 3), bx + bw, plot_bot],
-                                radius=4, fill=col)
-            lab = str(v) if v else "·"
-            tw = d.textlength(clean(lab), font=f_small)
-            d.text((bx + bw / 2 - tw / 2, plot_bot - max(bh, 3) - 20), clean(lab),
-                   fill=TEXT, font=f_small)
-            dl = wd[days[i].weekday()]
-            tw2 = d.textlength(clean(dl), font=f_small)
-            d.text((bx + bw / 2 - tw2 / 2, plot_bot + 3), clean(dl), fill=DIM, font=f_small)
 
     def _chart_h(self, data: dict, y0: int, draw: bool = True) -> int:
         return max(H - y0 - M, MIN_CHART_H)
@@ -392,14 +352,12 @@ class ProfileCardRenderer:
         x0, x1 = M, W - M
         ch = self._chart_h(data, y0)
         d.rounded_rectangle([x0, y0, x1, y0 + ch], radius=16, fill=CARD_BG)
-        title = "Активность за 7 дней"
-        if total_week:
-            title += f" · всего {total_week} сообщ."
-        put((x0 + PAD, y0 + 10), title, fill=DIM, font=self.f_tiny)
+        self._section_title(x0 + PAD, y0 + 12, "Активность за 7 дней"
+                            + (f" · всего {total_week} сообщ." if total_week else ""))
         if maxv:
             best_day = max(range(len(vals)), key=lambda i: vals[i])
             wd = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"][days[best_day].weekday()]
-            put((x1 - PAD, y0 + 10), f"пик {maxv} ({wd})", fill=DIM,
+            put((x1 - PAD, y0 + 12), f"пик {maxv} ({wd})", fill=DIM,
                 font=self.f_tiny, anchor="ra")
 
         plot_top, plot_bot = y0 + 44, y0 + ch - 30
@@ -432,16 +390,9 @@ async def render_profile_card(session: AsyncSession, tg_id: int) -> bytes | None
     pet = data.get("pet")
     if pet is not None and data.get("pet_info"):
         try:
-            from app.services.tamagotchi import MOOD_TEXT, SPECIES_DATA, _species_key
             from app.services.card_data import vitals, stat_contribs
-            data["pet_info"]["mood_line"] = MOOD_TEXT.get(data["pet_info"]["mood"], "")
-            data["pet_info"]["species_emoji"] = SPECIES_DATA.get(
-                _species_key(pet), SPECIES_DATA["cat"])["emoji"]
             data["vitals"] = vitals(pet)
             data["stat_contribs"] = stat_contribs(pet)
-            if "advice" not in data["pet_info"]:
-                from app.services.card_data import vital_advice
-                data["pet_info"]["advice"] = vital_advice(pet)
         except Exception as exc:
             logger.warning("card: pet labels skipped: {}", exc)
     return _renderer.render(data)
