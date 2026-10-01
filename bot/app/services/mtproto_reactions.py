@@ -45,11 +45,21 @@ async def _resolve_author(chat_id: int, msg_id: int) -> int | None:
     from app.db.session import session_factory
     from app.services.activity import ActivityService
 
+    from app.services.access import numeric_chat_id
+
+    # Реестр сообщений ведётся в формате Bot API (-100XXXXXXXXXX), MTProto
+    # отдаёт id без префикса — ищем по обеим нормализациям.
+    variants = {int(chat_id)}
+    norm = numeric_chat_id(int(chat_id))
+    if norm is not None:
+        variants.add(int(norm))
     async with session_factory() as session:
-        to_user = await ActivityService(session).activity \
-            .get_message_author(chat_id, msg_id)
-    if to_user is None:
-        to_user = await _backfill_channel_post(chat_id, msg_id)
+        repo = ActivityService(session).activity
+        for cid in variants:
+            to_user = await repo.get_message_author(cid, msg_id)
+            if to_user is not None:
+                return int(to_user)
+    to_user = await _backfill_channel_post(chat_id, msg_id)
     return to_user
 
 

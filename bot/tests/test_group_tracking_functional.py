@@ -234,11 +234,13 @@ def test_tracker_filters_cover_all_media_attrs():
         assert attr in MEDIA_XP_BONUS, f"{attr} без XP-бонуса"
 
 
-def test_reaction_on_own_message_credits_given(tmp_path):
-    """Реакция на собственное сообщение: «поставил» растёт, «получил» — нет.
+def test_reaction_on_own_message_credits_both(tmp_path):
+    """Реакция автора на собственное сообщение: растут И «поставил», И «получил».
 
-    Раньше такой кейс молча отбрасывался целиком («ставлю реакцию своему
-    посту — статистика не обновляется»)."""
+    Раньше при from==to награда автору не начислялась вовсе — и у человека,
+    проверяющего реакции на своих сообщениях, «получил» навсегда оставался 0
+    (жалоба из продакшена). Теперь «получил» засчитывается автору всегда,
+    когда он известен."""
     sf, engine = _session_factory(tmp_path, "trk6.db")
     try:
         from app.services.activity import ActivityService
@@ -260,23 +262,27 @@ def test_reaction_on_own_message_credits_given(tmp_path):
                 return u.reactions_given, u.reactions_received
         given, received = _run(check())
         assert given == 1
-        assert received == 0
+        assert received == 1
     finally:
         _cleanup(engine)
 
 
-def test_reaction_unknown_author_still_credits_giver(tmp_path):
-    """Автор сообщения недоступен (бот/удалён) — засчитываем хотя бы
-    «поставил», без начисления «получил»."""
+def test_reaction_on_bot_message_credits_only_giver(tmp_path):
+    """Реакцию поставили на сообщение БОТА — засчитываем только «поставил».
+
+    Фолбэк трекеров при неизвестном авторе: to_user := from_uid. Здесь же
+    проверяется прямой кейс to_user=бот: награда боту не начисляется."""
     sf, engine = _session_factory(tmp_path, "trk7.db")
     try:
         from app.services.activity import ActivityService
         async def give():
             async with sf() as s:
                 svc = ActivityService(s)
+                bot_user = await svc.users.get_or_create(999)
+                bot_user.is_bot = True
                 ok = await svc.process_reaction(
-                    from_user=888, to_user=888, chat_id=CHAT,
-                    message_id=40, emoji="👍")   # to_user=from_uid — фолбэк трекера
+                    from_user=888, to_user=999, chat_id=CHAT,
+                    message_id=40, emoji="👍")
                 await s.commit()
                 return ok
         assert _run(give()) is True
@@ -284,10 +290,49 @@ def test_reaction_unknown_author_still_credits_giver(tmp_path):
         async def check():
             from app.db.repositories import UserRepository
             async with sf() as s:
-                u = await UserRepository(s).get(888)
-                return u.reactions_given, u.reactions_received
-        given, received = _run(check())
-        assert given == 1
-        assert received == 0
+                giver = await UserRepository(s).get(888)
+                bot = await UserRepository(s).get(999)
+                return (giver.reactions_given, giver.reactions_received,
+                        bot.reactions_received)
+        g_given, g_recv, b_recv = _run(check())
+        assert (g_given, g_recv, b_recv) == (1, 0, 0)
+    finally:
+        _cleanup(engine)
+
+
+def test_reaction_received_when_another_user_reacts(tmp_path):
+    """Другой пользователь ставит реакцию на моё сообщение — «получил» растёт
+    у меня, «поставил» — у него. Плюс повторная та же реакция не сдваивает."""
+    sf, engine = _session_factory(tmp_path, "trk8.db")
+    try:
+        from app.services.activity import ActivityService
+
+        async def act():
+            async with sf() as s:
+                svc = ActivityService(s)
+                await svc.users.get_or_create(1001, first_name="Автор")
+                ok1 = await svc.process_reaction(
+                    from_user=1002, to_user=1001, chat_id=CHAT,
+                    message_id=50, emoji="❤️")
+                # дубль той же реакции тем же человеком — не засчитывается
+                ok2 = await svc.process_reaction(
+                    from_user=1002, to_user=1001, chat_id=CHAT,
+                    message_id=50, emoji="❤️")
+                await s.commit()
+                return ok1, ok2
+
+        ok1, ok2 = _run(act())
+        assert ok1 is True and ok2 is False
+
+        async def check():
+            from app.db.repositories import UserRepository
+            async with sf() as s:
+                users = UserRepository(s)
+                giver = await users.get(1002)
+                author = await users.get(1001)
+                return (giver.reactions_given, giver.reactions_received,
+                        author.reactions_received)
+        g_given, g_recv, a_recv = _run(check())
+        assert (g_given, g_recv, a_recv) == (1, 0, 1)
     finally:
         _cleanup(engine)

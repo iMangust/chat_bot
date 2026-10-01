@@ -209,16 +209,34 @@ class ActivityService:
         )).scalar_one()
         counted = given_today < self.settings.reactions_cap_per_day
 
-        entry = ReactionLog(from_user=from_user, to_user=to_user, chat_id=chat_id,
+        # Нормализуем id чата к формату Bot API (-100XXXXXXXXXX). MTProto-слой
+        # кладёт chat_id как -100..., трекер Bot API — как есть; без нормализации
+        # один и тот же чат фигурировал в логе под двумя ключами.
+        try:
+            from app.services.access import numeric_chat_id
+            norm_chat = numeric_chat_id(chat_id) or chat_id
+        except Exception:  # noqa: BLE001
+            norm_chat = chat_id
+        entry = ReactionLog(from_user=from_user, to_user=to_user, chat_id=norm_chat,
                             message_id=message_id, emoji=emoji, is_counted=counted)
         is_new = await self.activity.log_reaction(entry)
-        if not is_new or not counted:
+        if not is_new:
+            return False
+        if not counted:
+            # Дневной лимит «поставил» исчерпан: факт реакции в логе остался,
+            # награду не начисляем.
             return False
 
         user.reactions_given += 1
         _, user.xp, leveled_to = self._apply_user_xp(user, 1)
+        # «Получил» начисляется автору сообщения ВСЕГДА, когда он известен и
+        # это живой пользователь — даже если реакцию поставил сам автор на своё
+        # сообщение. Раньше при from==to награда молча не начислялась, и у
+        # человека, тестирующего реакции на собственных сообщениях, счётчик
+        # «получил» навсегда оставался 0 («реакции, поставленные мне, не
+        # учитываются»).
         target = await self.users.get(to_user)
-        if (target is not None and target.tg_id != from_user
+        if (target is not None
                 and not getattr(target, "is_bot", False)):
             # На реакции «для ботов» награду автору сообщения не начисляем —
             # счётчик «поставил» при этом уже увеличен выше.
