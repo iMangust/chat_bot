@@ -611,6 +611,12 @@ def _nav_buttons(back_cb: str | None) -> list[InlineKeyboardButton]:
         back_cb = ""
     if back_cb and back_cb != "menu:main":
         out.append(InlineKeyboardButton(text=BACK_LABEL, callback_data=back_cb))
+    # ВАЖНО: «🏠 Меню» ведёт на «menu:main» — конкретный обработчик в start.py.
+    # Раньше здесь был «menu:home», который никто не обрабатывал: кнопки
+    # «Меню» и «Назад» на экранах второго уровня попадали в catch-all
+    # events.menu_any_unhandled («Кнопка устарела») — при этом перерисовка
+    # шла в НОВОМ контексте asyncio.Task (aiogram error-handler), где тема
+    # терялась: пользователь видел «тема применяется только к настройкам».
     out.append(InlineKeyboardButton(text=HOME_LABEL, callback_data="menu:main"))
     return out
 

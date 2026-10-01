@@ -692,8 +692,9 @@ async def main() -> None:
 
     dp = Dispatcher(storage=storage)
     dp.update.outer_middleware(DbMiddleware())
-    from app.middlewares.theme import ThemeMiddleware
+    from app.middlewares.theme import ThemeMiddleware, ThemeErrorMiddleware
     dp.update.outer_middleware(ThemeMiddleware())
+    dp.errors.middleware(ThemeErrorMiddleware())
     dp.update.outer_middleware(access_handlers.AccessEventsMiddleware())
     dp.update.outer_middleware(AccessGateMiddleware())
     dp.callback_query.outer_middleware(ThrottleMiddleware())
@@ -711,13 +712,18 @@ async def main() -> None:
         errors.error_router,
         admin.router,
         access_handlers.router,
+        # ВАЖНО: settings router раньше start — у неонборднутых пользователей
+        # cmd_start в start.py завершается на gate-экране и блокирует pass-
+        # хендлеры следующих роутеров. Наш /start-хук (готический шорткат)
+        # должен отработать до него; для стандартной темы он делает return и
+        # start.py обрабатывает /start как раньше.
+        settings.router,
         start.router,
         tracker.router,
         tamagotchi.router,
         games.router,
         shop.router,
         merch.router,
-        settings.router,
         social.router,
         arena.router,
         stats.router,

@@ -5,7 +5,7 @@ import html as _html
 
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramAPIError
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, Chat, Message
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -84,9 +84,34 @@ class _HistoryMsg:
 
 @router.callback_query(F.data == "menu:settings")
 async def cb_settings(cb: CallbackQuery, session: AsyncSession) -> None:
+    # Принудительно ставим тему пользователя в контекст ЭТОЙ задачи.
+    # Обычно это делает ThemeMiddleware, но если апдейт каким-то путём его
+    # обошёл (новый процесс, сбой чтения БД), экран настроек обязан быть
+    # в выбранной теме — иначе пользователь видит «тема не применяется».
+    themes.set_theme(await themes.load_theme_key(cb.from_user.id)
+                     or themes.current_theme_key())
     await _render_settings(session, cb.message, cb.from_user.id,
                            chat_id=cb.message.chat.id if cb.message else None)
     await cb.answer()
+
+
+# Совместимость со СТАРЫМИ сообщениями настроек: в них кнопка «🏠 Меню»
+# имела callback «menu:home» (навигация давно отдаёт «menu:main»). Тап по
+# старой кнопке уходил в catch-all «Кнопка устарела», чья перерисовка шла
+# в новом контексте asyncio.Task без темы — отсюда ощущение «тема работает
+# только в настройках». start.py уже обрабатывает «menu:home» как главное
+# меню; здесь дополнительно подстраховываемся: если в чате остались и
+# старые экраны настроек с такой кнопкой, нажатие вернёт именно их
+# (узнаём по соседним «set:*» в клавиатуре сообщения).
+@router.callback_query(F.data == "menu:home")
+async def cb_settings_home_alias(cb: CallbackQuery, session: AsyncSession) -> None:
+    kb = getattr(cb.message, "reply_markup", None) if cb.message else None
+    rows = getattr(kb, "inline_keyboard", None) or []
+    has_set = any((btn.callback_data or "").startswith("set:")
+                  for row in rows for btn in row)
+    if not has_set:
+        return  # обычный случай — пусть работает алиас главного меню из start.py
+    await cb_settings(cb, session)
 
 # ── Мгновенная перекраска уже показанных сообщений ────────────────────────
 # Тема применяется ко всем НОВЫМ сообщениям автоматически (ThemeMiddleware +
@@ -488,4 +513,21 @@ async def cmd_awards(message: Message, session: AsyncSession) -> None:
 
 @router.message(Command("settings"), F.chat.type == "private")
 async def cmd_settings(message: Message, session: AsyncSession) -> None:
+    await _render_settings(session, message, message.from_user.id)
+
+
+# «/start» — входная точка бота. Если у пользователя выбрана не стандартная
+# тема (например «🦇 Готика»), показываем сразу экран настроек в этой теме:
+# так выбор пользователя виден с первого сообщения, а не только после тапа
+# по кнопке «Настройки». Обычный онбординг/меню остаются в start.py для
+# всех со стандартной темой и для новых пользователей.
+@router.message(CommandStart(), F.chat.type == "private")
+async def cmd_start_gothic_shortcut(message: Message, session: AsyncSession) -> None:
+    user = await session.get(User, message.from_user.id)
+    key = ((user.settings_extra or {}).get("theme")
+           if user else None) or themes.DEFAULT_THEME_KEY
+    if key == themes.DEFAULT_THEME_KEY:
+        return  # стандартная тема — пусть обрабатывает start.py как раньше
+    themes.invalidate_theme_cache(message.from_user.id)
+    themes.set_theme(key)
     await _render_settings(session, message, message.from_user.id)

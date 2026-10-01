@@ -114,8 +114,9 @@ class BotRuntime:
 
             dp = Dispatcher(storage=storage)
             dp.update.outer_middleware(DbMiddleware())
-            from app.middlewares.theme import ThemeMiddleware
+            from app.middlewares.theme import ThemeMiddleware, ThemeErrorMiddleware
             dp.update.outer_middleware(ThemeMiddleware())
+            dp.errors.middleware(ThemeErrorMiddleware())
             dp.update.outer_middleware(access_handlers.AccessEventsMiddleware())
             from app.middlewares.gate import AccessGateMiddleware
             dp.update.outer_middleware(AccessGateMiddleware())
@@ -127,10 +128,13 @@ class BotRuntime:
                 errors.error_router,
                 admin.router,
                 access_handlers.router,
+                # settings раньше start: наш /start-хук для готической темы
+                # должен иметь шанс отработать до cmd_start из start.py
+                # (для стандартной темы он делает return — поведение не меняется).
+                settings_handlers.router,
                 start.router, tracker.router,
                 tamagotchi.router, games.router, shop.router,
                 merch.router,
-                settings_handlers.router,
                 social.router, arena.router, stats.router,
                 events.router,
             )

@@ -35,9 +35,46 @@ CURRENT_THEME: contextvars.ContextVar[str] = contextvars.ContextVar(
 # первый же /start до get_or_create заморозил бы тему как standard навсегда.
 _THEME_CACHE: dict[int, str] = {}
 
+# Последний пользователь, чья тема была установлена middleware'ом.
+# Нужен для подстраховки: aiogram 3.x запускает обработчики ошибок
+# (ошибка/необработанный callback) в НОВОМ контексте asyncio.Task, где
+# contextvar темы НЕ наследуется из задачи апдейта. Без этого фолбэк
+# перерисовывал экраны стандартной темой — пользователь видел «тема
+# применяется только к настройкам».
+_LAST_ACTIVE_TG_ID: int | None = None
+
 
 def set_theme(name: str | None) -> None:
     CURRENT_THEME.set(THEMES.get(name or "", STANDARD).key)
+
+
+def remember_theme_owner(tg_id: int | None) -> None:
+    """Middleware отмечает, чью тему он только что поставил в контекст."""
+    global _LAST_ACTIVE_TG_ID
+    _LAST_ACTIVE_TG_ID = int(tg_id) if tg_id is not None else None
+
+
+def active_theme_owner() -> int | None:
+    return _LAST_ACTIVE_TG_ID
+
+
+def ensure_theme_for(tg_id: int | None) -> None:
+    """Гарантирует корректную тему в текущем контексте для пользователя.
+
+    Если контекст уже показывает ту же тему, что и в кэше — ничего не делаем.
+    Иначе (например, мы в новом контексте error-handler'а) переключает
+    CURRENT_THEME на сохранённое значение. Вызывается из ThemeErrorMiddleware
+    и напрямую из хендлеров, которым важен точный стиль ответа.
+    """
+    if tg_id is None:
+        return
+    key = _THEME_CACHE.get(int(tg_id))
+    if key is None:
+        # В кэша нет — не гадаем: оставляем как есть (для неизвестных юзеров
+        # это standard, а свой выбор пользователь всегда в кэше имеет).
+        return
+    if CURRENT_THEME.get() != key:
+        set_theme(key)
 
 
 def current_theme_key() -> str:
@@ -304,6 +341,20 @@ def _map_emoji(text: str, table: dict[str, str]) -> str:
     return text
 
 
+def _active_theme() -> "Theme | None":
+    """Тема текущего контекста с подстраховкой против «потерянного» contextvar.
+
+    aiogram 3.x может вызвать рендер вне задачи апдейта (error-handler'ы,
+    фолбэки, таски планировщика) — там CURRENT_THEME == default(standard),
+    хотя пользователь выбрал другую тему. Если контекст пустой, а у
+    последнего активного пользователя в кэше лежит выбор — восстанавливаем его.
+    """
+    if (current_theme_key() == STANDARD.key
+            and _LAST_ACTIVE_TG_ID is not None):
+        ensure_theme_for(_LAST_ACTIVE_TG_ID)
+    return THEMES.get(current_theme_key())
+
+
 def gothic(text: str) -> str:
     """Замена стандартных эмодзи на готические (для активной темы)."""
     if current_theme_key() == GOTHIC.key:
@@ -313,7 +364,7 @@ def gothic(text: str) -> str:
 
 def tr(key: str, text: str) -> str:
     """Перевод строки на язык активной темы: override по ключу + эмодзи-маппинг."""
-    theme = THEMES.get(current_theme_key())
+    theme = _active_theme()
     if theme is None or theme is STANDARD:
         return text
     if key and key in theme.string_overrides:
@@ -322,7 +373,7 @@ def tr(key: str, text: str) -> str:
 
 
 def theme_button_label(cb: str, label: str) -> str:
-    theme = THEMES.get(current_theme_key())
+    theme = _active_theme()
     if theme is None or theme is STANDARD:
         return label
     # 1) Полное совпадение callback_data — самый сильный приоритет.
@@ -344,7 +395,7 @@ def theme_button_label(cb: str, label: str) -> str:
 
 
 def theme_string_value(key: str, value: str) -> str:
-    theme = THEMES.get(current_theme_key())
+    theme = _active_theme()
     if theme is None or theme is STANDARD:
         return value
     return _map_emoji(value, theme.emoji_map)
@@ -352,14 +403,14 @@ def theme_string_value(key: str, value: str) -> str:
 
 def welcome_text(user_first_name: str, channel_name: str, channel_line: str) -> str:
     from app.handlers.start import WELCOME_DM  # локальный импорт против цикла
-    theme = THEMES.get(current_theme_key())
+    theme = _active_theme()
     template = (theme.welcome_text if theme and theme.welcome_text else WELCOME_DM)
     return template.format(name=user_first_name, channel_name=channel_name,
                            channel_line=channel_line)
 
 
 def main_menu_renders(**params: Any) -> str | None:
-    theme = THEMES.get(current_theme_key())
+    theme = _active_theme()
     if theme is None or theme.main_menu_text is None:
         return None
     try:
@@ -370,7 +421,7 @@ def main_menu_renders(**params: Any) -> str | None:
 
 def themed_effect(effect):
     """Копия эффекта (Effect из app.utils.fx) с готическими эмодзи и тостом."""
-    theme = THEMES.get(current_theme_key())
+    theme = _active_theme()
     if theme is None or theme is STANDARD:
         return effect
     from dataclasses import replace

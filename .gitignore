@@ -1,3 +1,7 @@
+# Compiled and build artifacts
 __pycache__/
 *.pyc
-.pytest_cache/
+
+# Environment
+.env
+.env.local

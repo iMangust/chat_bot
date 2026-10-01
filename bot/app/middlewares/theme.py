@@ -13,9 +13,41 @@ from __future__ import annotations
 from typing import Any, Awaitable, Callable
 
 from aiogram import BaseMiddleware
-from aiogram.types import TelegramObject
+from aiogram.types import CallbackQuery, Message, TelegramObject
 
 from app import themes
+
+
+def _event_tg_id(event: TelegramObject) -> int | None:
+    """tg_id пользователя, который УВИДИТ результат этого апдейта.
+
+    Для callback_query это cb.from_user; но у Message/EditedMessage поле
+    ``from_user`` — автор сообщения, а не адресат. В ГРУППАХ это привело бы
+    к тому, что ответ бота (например, на «+5 XP» за сообщение Васи)
+    собирался в теме автора, а не того, кто его прочитает.
+
+    Ключевое различие:
+      • private-чат: собеседник один — тема автора сообщения и есть тема
+        адресата (в ЛС пользователь пишет сам себе);
+      • группа/супергруппа: адресат — ВСЕ участники, индивидуальную тему
+        применить нельзя, поэтому всегда стандартная. Раньше для групп
+        брался автор (или автор reply) — из-за этого процессный кэш тем
+        постоянно перезаписывался под разных людей, и главный пользователь
+        видел свой выбор «только в настройках»: стоило кому-то написать в
+        чат, как контекст следующих экранов становился стандартным.
+    """
+    if isinstance(event, CallbackQuery):
+        return getattr(getattr(event, "from_user", None), "id", None)
+    msg = event if isinstance(event, Message) else (
+        getattr(event, "message", None) or getattr(event, "edited_message", None))
+    if not isinstance(msg, Message):
+        return getattr(getattr(event, "from_user", None), "id", None)
+    chat_type = getattr(getattr(msg, "chat", None), "type", "")
+    # Группы/каналы: ответ бота увидят все участники — индивидуальная тема
+    # неприменима, всегда стандартная (см. docstring).
+    if chat_type != "private":
+        return None
+    return getattr(getattr(msg, "from_user", None), "id", None)
 
 
 class ThemeMiddleware(BaseMiddleware):
@@ -23,8 +55,7 @@ class ThemeMiddleware(BaseMiddleware):
                                                 Awaitable[Any]],
                        event: TelegramObject,
                        data: dict) -> Any:
-        user = getattr(event, "from_user", None) or getattr(event, "chat", None)
-        tg_id = getattr(user, "id", None)
+        tg_id = _event_tg_id(event)
         if tg_id is not None:
             # Читаем тему из БД сами — НЕ полагаемся на data["session"]:
             # aiogram отдаёт kwargs хендлеру только из словаря того уровня
@@ -42,4 +73,29 @@ class ThemeMiddleware(BaseMiddleware):
                 # в контекст и БД + инвалидирует кэш).
                 theme_key = themes.current_theme_key()
             themes.set_theme(theme_key)
+            # Запоминаем владельца темы — это нужно error-handler'ам aiogram:
+            # они работают в НОВОМ контексте asyncio.Task, где contextvar
+            # не наследуется, и без этой метки фолбэк «unhandled menu
+            # callback» перерисовывал экраны стандартной темой.
+            themes.remember_theme_owner(int(tg_id))
         return await handler(event, data)
+
+
+class ThemeErrorMiddleware(BaseMiddleware):
+    """Восстанавливает тему пользователя в контексте обработчика ошибок.
+
+    aiogram вызывает error-handler'ы в отдельной задаче — CURRENT_THEME там
+    всегда default(standard). Читаем tg_id из события и возвращаем выбранную
+    пользователем тему из процессного кэша, чтобы любые ответные экраны
+    (в т.ч. перерисовка меню фолбэком) были в стиле пользователя.
+    """
+
+    async def __call__(self, handler: Callable[[Any, dict], Awaitable[Any]],
+                       exception: Any, data: dict) -> Any:
+        event = data.get("event_update")
+        if event is not None:
+            tg_id = _event_tg_id(event)
+            if tg_id is not None:
+                themes.ensure_theme_for(int(tg_id))
+                themes.remember_theme_owner(int(tg_id))
+        return await handler(exception, data)
