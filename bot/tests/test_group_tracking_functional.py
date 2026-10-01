@@ -232,3 +232,62 @@ def test_tracker_filters_cover_all_media_attrs():
     assert required <= set(MEDIA_ATTRS), required - set(MEDIA_ATTRS)
     for attr in required:
         assert attr in MEDIA_XP_BONUS, f"{attr} без XP-бонуса"
+
+
+def test_reaction_on_own_message_credits_given(tmp_path):
+    """Реакция на собственное сообщение: «поставил» растёт, «получил» — нет.
+
+    Раньше такой кейс молча отбрасывался целиком («ставлю реакцию своему
+    посту — статистика не обновляется»)."""
+    sf, engine = _session_factory(tmp_path, "trk6.db")
+    try:
+        from app.services.activity import ActivityService
+        async def give():
+            async with sf() as s:
+                svc = ActivityService(s)
+                await svc.users.get_or_create(777, first_name="Сам")
+                ok = await svc.process_reaction(
+                    from_user=777, to_user=777, chat_id=CHAT,
+                    message_id=30, emoji="🔥")
+                await s.commit()
+                return ok
+        assert _run(give()) is True
+
+        async def check():
+            from app.db.repositories import UserRepository
+            async with sf() as s:
+                u = await UserRepository(s).get(777)
+                return u.reactions_given, u.reactions_received
+        given, received = _run(check())
+        assert given == 1
+        assert received == 0
+    finally:
+        _cleanup(engine)
+
+
+def test_reaction_unknown_author_still_credits_giver(tmp_path):
+    """Автор сообщения недоступен (бот/удалён) — засчитываем хотя бы
+    «поставил», без начисления «получил»."""
+    sf, engine = _session_factory(tmp_path, "trk7.db")
+    try:
+        from app.services.activity import ActivityService
+        async def give():
+            async with sf() as s:
+                svc = ActivityService(s)
+                ok = await svc.process_reaction(
+                    from_user=888, to_user=888, chat_id=CHAT,
+                    message_id=40, emoji="👍")   # to_user=from_uid — фолбэк трекера
+                await s.commit()
+                return ok
+        assert _run(give()) is True
+
+        async def check():
+            from app.db.repositories import UserRepository
+            async with sf() as s:
+                u = await UserRepository(s).get(888)
+                return u.reactions_given, u.reactions_received
+        given, received = _run(check())
+        assert given == 1
+        assert received == 0
+    finally:
+        _cleanup(engine)

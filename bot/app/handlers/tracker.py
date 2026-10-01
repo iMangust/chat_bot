@@ -147,16 +147,23 @@ def _reaction_emoji(rt) -> str | None:
     return None
 
 async def _fetch_author_via_forward(bot: Bot, chat_id: int, message_id: int) -> int | None:
+    """Автор сообщения через пересылку (Bot API не отдаёт автора чужих msg).
+
+    Автор — бот: пересылать нельзя («can't send messages to the bot»), и на
+    ботов реакции не засчитываем — выходим молча, без ошибки API.
+    """
     me = await bot.get_me()
     try:
         fwd = await bot.forward_message(chat_id=me.id, from_chat_id=chat_id, message_id=message_id)
     except TelegramAPIError as exc:
         logger.debug("reaction fetch failed (forward): {}", exc)
         return None
-    author = fwd.sender_chat or None
-    uid: int | None = fwd.from_user.id if (fwd.from_user and not fwd.from_user.is_bot) else None
-    if uid is None and author is not None and author.type in ("private", "channel"):
-        uid = None
+    uid: int | None = None
+    if fwd.from_user is not None and not fwd.from_user.is_bot:
+        uid = fwd.from_user.id
+    elif getattr(fwd.sender_chat, "type", "") == "channel":
+        # Сообщение написано от имени канала — автор в формате Bot API.
+        uid = fwd.sender_chat.id
     with contextlib.suppress(Exception):
         await bot.delete_message(chat_id=me.id, message_id=fwd.message_id)
     return uid
@@ -186,16 +193,20 @@ async def track_reaction_update(update: MessageReactionUpdated,
         return
     emoji = sorted(added)[0]
 
-    to_user: int | None = None
     svc = ActivityService(session, bot=update.bot)
+    to_user: int | None = None
     try:
         to_user = await svc.activity.get_message_author(update.chat.id, update.message_id)
     except Exception as exc:
         logger.debug("reaction author lookup failed (db): {}", exc)
     if to_user is None:
         to_user = await _fetch_author_via_forward(update.bot, update.chat.id, update.message_id)
-    if to_user is None or to_user == from_user_id:
-        return
+    if to_user is None:
+        # Автора сообщения установить не удалось (например, автор — бот,
+        # которому нельзя переслать сообщение). Засчитываем хотя бы сам
+        # факт реакции («поставил»), иначе «ставлю реакцию — статистика
+        # не обновляется».
+        to_user = from_user_id
 
     await svc.process_reaction(
         from_user=from_user_id, to_user=to_user,

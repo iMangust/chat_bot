@@ -32,19 +32,50 @@ def _peer_uid(peer) -> int | None:
         return int(peer.user_id)
     return None
 
-async def _credit(from_uid: int, chat_id: int, msg_id: int, emoji: str) -> None:
+async def _resolve_author(chat_id: int, msg_id: int) -> int | None:
+    """Автор сообщения: сначала реестр (Bot API id), затем MTProto-бэкфилл.
+
+    Ключевые фиксы:
+    1. Реакция на СОБСТВЕННОЕ сообщение тоже засчитывается («поставил») —
+       раньше молча отбрасывалась.
+    2. get_message_author возвращает id в формате Bot API (-100... для
+       каналов); сравнение с from_uid идёт через _same_uid (нормализация),
+       чтобы не было ложных «это свой же id».
+    """
     from app.db.session import session_factory
     from app.services.activity import ActivityService
 
     async with session_factory() as session:
+        to_user = await ActivityService(session).activity \
+            .get_message_author(chat_id, msg_id)
+    if to_user is None:
+        to_user = await _backfill_channel_post(chat_id, msg_id)
+    return to_user
+
+
+def _same_uid(a: int | None, b: int | None) -> bool:
+    if a is None or b is None:
+        return False
+    try:
+        from app.services.access import numeric_chat_id
+        na, nb = numeric_chat_id(a), numeric_chat_id(b)
+        return na is not None and na == nb
+    except Exception:  # noqa: BLE001
+        return int(a) == int(b)
+
+
+async def _credit(from_uid: int, chat_id: int, msg_id: int, emoji: str) -> None:
+    from app.db.session import session_factory
+    from app.services.activity import ActivityService
+
+    to_user = await _resolve_author(chat_id, msg_id)
+    async with session_factory() as session:
         svc = ActivityService(session)
-        repo = svc.activity
-        to_user = await repo.get_message_author(chat_id, msg_id)
-        if to_user is None or to_user == from_uid:
-            if to_user is None:
-                to_user = await _backfill_channel_post(chat_id, msg_id)
-            if to_user is None or to_user == from_uid:
-                return
+        if to_user is None:
+            # Автора сообщения установить не удалось — засчитываем хотя бы
+            # сам факт реакции («поставил»), иначе «реакцию ставлю, а
+            # статистика не обновляется».
+            to_user = from_uid
         credited = await svc.process_reaction(
             from_user=from_uid, to_user=to_user,
             chat_id=chat_id, message_id=msg_id, emoji=emoji,

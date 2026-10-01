@@ -218,7 +218,10 @@ class ActivityService:
         user.reactions_given += 1
         _, user.xp, leveled_to = self._apply_user_xp(user, 1)
         target = await self.users.get(to_user)
-        if target is not None and target.tg_id != from_user:
+        if (target is not None and target.tg_id != from_user
+                and not getattr(target, "is_bot", False)):
+            # На реакции «для ботов» награду автору сообщения не начисляем —
+            # счётчик «поставил» при этом уже увеличен выше.
             target.reactions_received += 1
             _, target.xp, _ = self._apply_user_xp(target, 2)
             t_counters = {"reactions_received": target.reactions_received}
