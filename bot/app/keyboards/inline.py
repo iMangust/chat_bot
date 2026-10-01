@@ -78,7 +78,9 @@ MENU_PAGES: list[tuple[str, list[tuple[str, str]]]] = [
         ("🏆 Награды", "menu:ach"),
         ("🏅 Топы", "menu:top"),
         ("🖼 Карточка", "menu:card"),
-        ("⚙️ Уведомления", "menu:settings"),
+        # Экран «Настройки» теперь объединяет уведомления и выбор темы
+        # оформления — кнопка переименована, чтобы не вводить в заблуждение.
+        ("⚙️ Настройки", "menu:settings"),
     ]),
 ]
 
@@ -88,7 +90,7 @@ def menu_page_count() -> int:
 ADMIN_TOOLS_PAGE = ("🛠 Инструменты админа", [
     ("🧢 Управление мерчем", "madmin:home"),
     ("📅 Управление мероприятиями", "evadmin:home"),
-    ("⚙️ Мои уведомления", "menu:settings"),
+    ("⚙️ Мои настройки", "menu:settings"),
     ("☀️ Погода (/weather)", "menu:weather"),
 ])
 
@@ -573,7 +575,7 @@ SECTION_ROOTS: dict[str, str] = {
     "ach": "menu:ach",            # 🏆 Достижения
     "top": "menu:top",            # 🏅 Топы
     "card": "menu:card",          # 🖼 Карточка профиля
-    "settings": "menu:settings",  # ⚙️ Уведомления
+    "settings": "menu:settings",  # ⚙️ Настройки (уведомления + тема)
 }
 
 BACK_LABEL = "⬅️ Назад"

@@ -28,7 +28,7 @@ def _theme_intro() -> str:
     theme = themes.THEMES.get(themes.current_theme_key())
     if theme and theme.settings_intro:
         return theme.settings_intro
-    return ("⚙️ <b>Настройки уведомлений</b>\n\n"
+    return ("⚙️ <b>Настройки</b>\n\n"
             "Я пишу в ЛС только когда это действительно нужно.\n"
             "Здесь можно всё отключить — нажми на тумблер:\n\n")
 
