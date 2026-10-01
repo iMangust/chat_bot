@@ -59,3 +59,51 @@ def test_discussion_group_merged_without_dup(monkeypatch):
         assert s2.tracked_chat_ids.count(-1004467842206) == 1
     finally:
         cfg.get_settings.cache_clear()
+
+
+def test_numeric_chat_id_keeps_bot_api_form():
+    """Регрессия: id вида -100... НЕ должен превращаться в положительный.
+
+    Старая реализация срезала "-100" и watched-множество содержало 4467842206,
+    тогда как message.chat.id = -1004467842206 — учёт статистики молча не
+    работал («чат НЕ в списке отслеживаемых» при корректном .env).
+    """
+    from app.services.access import numeric_chat_id
+    assert numeric_chat_id(-1004467842206) == -1004467842206
+    assert numeric_chat_id("-1004467842206") == -1004467842206
+    # «сырой» MTProto id -> каноническая Bot API форма
+    assert numeric_chat_id(4467842206) == -1004467842206
+    assert numeric_chat_id("4467842206") == -1004467842206
+    # username -> None, ЛС-id остаётся как есть
+    assert numeric_chat_id("@some_channel") is None
+    assert numeric_chat_id(-456) == -456
+
+
+def test_is_watched_matches_message_chat_ids(monkeypatch):
+    monkeypatch.setenv("TRACKED_CHAT_IDS",
+                       "[-1004335857237,-1004467842206]")
+    monkeypatch.setenv("CHANNEL_CHAT_ID", "-1004335857237")
+    monkeypatch.setenv("CHAT_DISCUSSION_GROUP", "-1004467842206")
+    from app import config as cfg
+    cfg.get_settings.cache_clear()
+    try:
+        from app.services.access import is_watched, watched_chat_ids
+        assert watched_chat_ids() == {-1004335857237, -1004467842206}
+        assert is_watched(-1004467842206) is True   # группа обсуждений
+        assert is_watched(-1004335857237) is True   # канал
+        assert is_watched(-1009999999999) is False  # посторонний чат
+    finally:
+        cfg.get_settings.cache_clear()
+
+
+def test_bot_api_forms_no_bogus_concatenations():
+    from app.services.access import _bot_api_forms
+    forms = _bot_api_forms(-1004467842206)
+    assert "-1004467842206" in forms
+    assert "-1001004467842206" not in forms  # мусорная склейка исключена
+    assert all(f.lstrip("-").isdigit() for f in forms)
+    # короткие id (ЛС) не должны порождать обрезки/склейки
+    assert _bot_api_forms(-456) == ["-456"]
+    # положительный «сырой» MTProto id -> обе формы
+    raw_forms = _bot_api_forms(4467842206)
+    assert "4467842206" in raw_forms and "-1004467842206" in raw_forms

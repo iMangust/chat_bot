@@ -66,10 +66,12 @@ async def register_member(user_id: int, chat_id: int | str | None = None, *,
             if raw not in targets:
                 targets.append(raw)
             cn = access_service.numeric_chat_id(cid)
-            if cn is not None and f"-100{cn}" not in targets:
-                targets.append(f"-100{cn}")
+            if cn is not None:
+                for cand in access_service._bot_api_forms(cn):
+                    if cand not in targets:
+                        targets.append(cand)
         if n is not None:
-            for cand in (n, f"-100{n}"):
+            for cand in reversed(access_service._bot_api_forms(n)):
                 if cand not in targets:
                     targets.insert(0, cand)
         confirmed_status = None

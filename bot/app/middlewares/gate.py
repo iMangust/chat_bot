@@ -38,7 +38,7 @@ def required_chats() -> list[tuple[str, str]]:
     for cid, uname in _svc_required_chats():
         n = numeric_chat_id(cid) if (cid and not uname) else None
         if n is not None:
-            cid = f"-100{n}"
+            cid = str(n)
         chats.append((cid, uname))
     return chats
 
@@ -50,7 +50,7 @@ def serviceable_chats() -> list[tuple[str, str]]:
     for cid, uname in _all_serviceable_chats():
         n = numeric_chat_id(cid) if (cid and not uname) else None
         if n is not None:
-            cid = f"-100{n}"
+            cid = str(n)
         chats.append((cid, uname))
     return chats
 
@@ -152,9 +152,10 @@ async def verify_membership(bot, user_id: int) -> bool | None:
                 targets.append(raw)
             n = numeric_chat_id(cid)
             if n is not None:
-                full = f"-100{n}"
-                if full not in targets:
-                    targets.append(full)
+                from app.services.access import _bot_api_forms
+                for cand in _bot_api_forms(n):
+                    if cand not in targets:
+                        targets.append(cand)
         for target in targets:
             try:
                 member = await bot.get_chat_member(target, user_id)
@@ -187,9 +188,10 @@ async def _api_membership_verdict(bot, user_id: int):
                 targets.append(raw)
             n = numeric_chat_id(cid)
             if n is not None:
-                full = f"-100{n}"
-                if full not in targets:
-                    targets.append(full)
+                from app.services.access import _bot_api_forms
+                for cand in _bot_api_forms(n):
+                    if cand not in targets:
+                        targets.append(cand)
         for target in targets:
             try:
                 member = await bot.get_chat_member(target, user_id)
@@ -395,9 +397,10 @@ async def is_channel_subscribed(bot, user_id: int) -> bool:
                 targets.append(raw)
             n = numeric_chat_id(cid)
             if n is not None:
-                full = f"-100{n}"
-                if full not in targets:
-                    targets.append(full)
+                from app.services.access import _bot_api_forms
+                for cand in _bot_api_forms(n):
+                    if cand not in targets:
+                        targets.append(cand)
         for target in targets:
             uid_key = uname or target
             try:

@@ -126,13 +126,53 @@ def _all_serviceable_chats() -> list[tuple[str, str]]:
 
 
 def numeric_chat_id(target: str | int) -> int | None:
-    s = str(target).lstrip("@")
-    if s.startswith("-100"):
-        s = s[4:]
-    try:
-        return int(s)
-    except ValueError:
+    """Нормализует id чата к формату Bot API (отрицательный, с префиксом -100).
+
+    Каналы/группы в Bot API имеют id вида -100XXXXXXXXXX. Урезание "-100"
+    давало положительное число, из-за чего сравнение с message.chat.id
+    (-100...) никогда не совпадало — статистика в группах не засчитывалась.
+    Теперь: "@name" -> None; "123" -> -100123; "-100123" -> -100123;
+    "-456" (id ЛС/устаревший формат) -> -456 как есть.
+    """
+    s = str(target).strip().lstrip("@")
+    if not s.lstrip("-").isdigit():
         return None
+    n = int(s)
+    if n > 0:
+        return -int(f"100{n}")  # 4335857237 -> -1004335857237
+    if not str(n).startswith("-100"):
+        # отрицательный без канального префикса (ЛС/старые id) — оставляем как есть
+        return n
+    return n
+
+
+def _bot_api_forms(target: str | int) -> list[str]:
+    """Все варианты записи id чата, которые могут встречаться в данных/реестрах.
+
+    Нужен для сравнения «число из .env (-100…)» ↔ «число из MTProto-линейки
+    (положительное/без префикса)» и наоборот. Возвращает строки без дублей;
+    мусорные склейки ("-100" + обрезок) не порождаются.
+    """
+    forms: list[str] = []
+
+    def _add(v: object) -> None:
+        s = str(v).strip().lstrip("@")
+        if s.lstrip("-").isdigit() and s not in forms:
+            forms.append(s)
+
+    # каноническая Bot API форма (отрицательная, с -100)
+    n = numeric_chat_id(target)
+    if n is not None:
+        _add(n)
+    # «сырой» MTProto id (без префикса) — только если target сам выглядит
+    # как положительный id канала; иначе не выдумываем лишние формы
+    raw = str(target).strip().lstrip("@")
+    if raw.isdigit():
+        _add(raw)
+        _add(f"-100{raw}")
+    else:
+        _add(raw)
+    return forms
 
 async def record_membership(user_id: int, chat_id: int | str | None = None, *,
                             first_name: str = "", username: str | None = None,
