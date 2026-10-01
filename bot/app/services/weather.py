@@ -1127,6 +1127,15 @@ async def kamchatka_weather() -> dict:
 # ============================================================================
 
 _WEEKDAY_RU = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
+_WEEKDAY_FULL_RU = ("понедельник", "вторник", "среда", "четверг",
+                    "пятница", "суббота", "воскресенье")
+_MONTHS_RU = ("января", "февраля", "марта", "апреля", "мая", "июня",
+              "июля", "августа", "сентября", "октября", "ноября", "декабря")
+# Ключевые слова classify_weather → «человеческое» описание со своего экрана
+_TYPE_WORD_RU = {"clear": "ясно", "sunny": "ясно", "cloudy": "переменная облачность",
+                 "overcast": "облачно", "rainy": "дождь", "drizzle": "морось",
+                 "thunderstorm": "гроза", "snowy": "снег", "sleet": "мокрый снег",
+                 "foggy": "туман", "windy": "ветрено", "stormy": "шторм"}
 _DAY_ICON = {0: "☀️", 1: "🌤️", 2: "⛅", 3: "☁️", 45: "🌫️", 48: "🧊",
              51: "🌦️", 53: "🌦️", 55: "🌧️", 61: "🌧️", 63: "🌧️", 65: "🌧️",
              66: "🌧️", 71: "🌨️", 73: "❄️", 75: "❄️", 77: "🌨️", 80: "🌦️",
@@ -1141,6 +1150,27 @@ def _fmt_temp(t) -> str:
         return f"{float(t):+.0f}°"
     except (TypeError, ValueError):
         return "··°"
+
+
+def _day_head(d, today_: date) -> str:
+    """Заголовок дня недели: «Сегодня», «Завтра» или полное название.
+
+    Никаких сокращений «пн/вт» — человек читает «Понедельник», а не календарь
+    из терминала.
+    """
+    if d == today_:
+        return "Сегодня"
+    if d == today_ + timedelta(days=1):
+        return "Завтра"
+    return _WEEKDAY_FULL_RU[d.weekday()].capitalize()
+
+
+def _date_label(d: date) -> str:
+    return f"{d.day} {_MONTHS_RU[d.month - 1]}"
+
+
+def _type_word(wtype: str) -> str:
+    return _TYPE_WORD_RU.get((wtype or "").strip().lower(), "")
 
 
 def _parse_hour_key(s: str) -> datetime | None:
@@ -1298,8 +1328,8 @@ def render_today(w: dict, hours: list[dict]) -> str:
     """Экран «сегодня»: крупный снимок + почасовая лента до конца суток."""
     city = WEATHER_CITY or "Камчатка"
     dt = local_now()
-    wd = _WEEKDAY_RU[dt.weekday()]
-    lines = [f"🌍 <b>{esc(city)} · {wd}, {dt.day}.{dt.month:02d}</b>", ""]
+    wd = _WEEKDAY_FULL_RU[dt.weekday()].capitalize()
+    lines = [f"🌍 <b>{esc(city)} · {wd}, {_date_label(dt.date())}</b>", ""]
     temp = w.get("temp")
     if temp is None and not w.get("live"):
         temp = _season_temp_c(dt)
@@ -1345,44 +1375,52 @@ def render_today(w: dict, hours: list[dict]) -> str:
 
 
 def render_week(rows: list[dict]) -> str:
-    """Экран «на неделю вперёд»: по дню — min/max, иконка, осадки,оценку прогулки."""
+    """Экран «на неделю вперёд»: один день — одна аккуратная строка.
+
+    Формат строки: «Понедельник, 5 октября · ⛅ −2…+3° · дождь · 🚶 хорошо».
+    Полные названия дней (никаких «пн/вт»), «Сегодня»/«Завтра» для первых двух.
+    """
+    city = WEATHER_CITY or "Камчатка"
+    dt0 = local_now()
+    today_ = dt0.date()
     if not rows:
         # Фолбэк без живых данных: честная сезонная «оценка по дням»
         # (не прогноз) — чтобы экран не был пустым.
-        city = WEATHER_CITY or "Камчатка"
-        lines = [f"📅 <b>Погода · {esc(city)} на 7 дн.</b>", "",
-                "⚠️ Живые данные OpenWeather недоступны — ниже ориентировочная",
-                "сезонная оценка, а не прогноз. Данные обновит сервер.", ""]
-        dt0 = local_now()
+        lines = [f"📅 <b>Погода · {esc(city)} на неделю</b>",
+                 f"<i>{_date_label(today_).capitalize()}</i>", "",
+                 "⚠️ Живые данные OpenWeather недоступны — ниже ориентировочная",
+                 "сезонная оценка, а не прогноз. Данные обновит сервер.", ""]
+        icon = WEATHER_SEASONS.get(season_for(dt0), {}).get("icon", "🌡️")
         for i in range(7):
-            d = dt0.date() + timedelta(days=i)
-            wd = _WEEKDAY_RU[d.weekday()]
+            d = today_ + timedelta(days=i)
             mid = _season_temp_c(datetime(d.year, d.month, d.day))
             lo, hi = mid - 3, mid + 3
-            icon = WEATHER_SEASONS.get(season_for(dt0), {}).get("icon", "🌡️")
-            tag = "сегодня" if i == 0 else ("завтра" if i == 1 else "")
-            head = f"<b>{wd.capitalize()}</b>" + (f" <i>({tag})</i>" if tag else "")
-            lines.append(f"{head} · {icon} {lo:+.0f}…{hi:+.0f}°")
+            head = _day_head(d, today_)
+            date_part = "" if i else f", {_date_label(d)}"
+            lines.append(f"<b>{head}</b>{date_part} · {icon} "
+                         f"{lo:+.0f}…{hi:+.0f}°")
         return "\n".join(lines)
-    city = WEATHER_CITY or "Камчатка"
-    lines = [f"📅 <b>Погода · {esc(city)} на {len(rows)} дн.</b>", ""]
-    today_ = local_now().date()
-    for r in rows:
+    lines = [f"📅 <b>Погода · {esc(city)} на неделю</b>",
+             f"<i>{_date_label(today_).capitalize()}</i>", ""]
+    for idx, r in enumerate(rows):
         d = r["date"]
-        tag = ("Сегодня" if d == today_ else
-               "Завтра" if d == today_ + timedelta(days=1)
-               else _WEEKDAY_RU[d.weekday()])
+        head = _day_head(d, today_)
+        date_part = "" if idx == 0 else f", {_date_label(d)}"
         icon = _DAY_ICON.get(int(r.get("code", 2)), "🌡️")
         span = f"{_fmt_temp(r['tmin'])}…{_fmt_temp(r['tmax'])}" \
             if r["tmin"] is not None else "··"
+        parts = [f"<b>{head}</b>{date_part}", f"{icon} {span}"]
+        word = _type_word(r.get("type", ""))
+        if word:
+            parts.append(word)
         walk_icon, walk_word = _walk_rating(r.get("type", ""))
-        line = f"<b>{tag.capitalize():<8}</b> {icon} {span:<9} 🚶 {walk_icon} {walk_word}"
-        lines.append(line)
+        parts.append(f"🚶 {walk_icon} {walk_word}")
+        lines.append(" · ".join(parts))
         det: list[str] = []
         if r.get("precip"):
             det.append(f"🌧 осадки до {r['precip']:.0f} мм")
         if r.get("gust"):
             det.append(f"💨 порывы до {r['gust'] / 3.6:.0f} м/с")
         if det:
-            lines.append("          " + " · ".join(det))
+            lines.append("   └ " + " · ".join(det))
     return "\n".join(lines)
