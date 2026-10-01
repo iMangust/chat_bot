@@ -191,6 +191,21 @@ async def cmd_help(message: Message) -> None:
         for chunk in split_message(plain):
             await message.answer(chunk)
 
+def _weather_error_text(exc: BaseException) -> str:
+    """Человекочитаемое сообщение об ошибке погоды + лог полного трейсбека.
+
+    Раньше наружу уходило только имя класса исключения (например «NameError»),
+    по которому невозможно было понять, что сломалось. Теперь стек-трейс
+    пишется в лог, а пользователю показывается короткая подсказка.
+    """
+    logger.exception("weather screen failed: {}", exc)
+    if isinstance(exc, NameError):
+        hint = "Похоже, бот запущен из устаревшего кода — перезапусти его."
+    else:
+        hint = "Попробуй «🔄 Обновить» или загляни позже."
+    return f"🌦️ Погода временно недоступна. {hint}"
+
+
 async def _weather_text() -> str:
     """Собирает текст погоды для команды /weather и кнопки меню."""
     from app.services.weather import kamchatka_weather, weather_hint_block_fresh
@@ -198,7 +213,7 @@ async def _weather_text() -> str:
         w = await kamchatka_weather()
         hint = await weather_hint_block_fresh(walk=True, show_legend=True)
     except Exception as exc:
-        return f"🌦️ Погода временно недоступна ({type(exc).__name__})."
+        return _weather_error_text(exc)
     text = f"🌦️ Погода на Камчатке: {w['icon']} {w['name']}\n{w['note']}"
     if hint:
         text += "\n\n📋 Как это влияет на питомца:\n" + hint
@@ -256,7 +271,7 @@ async def _render_weather_screen(cb: CallbackQuery, view: str,
             body = render_today(w, await hourly_points())
         text = body + footer
     except Exception as exc:
-        text = f"🌦️ Погода временно недоступна ({type(exc).__name__})."
+        text = _weather_error_text(exc)
     await safe_edit_or_answer(cb.message, text, reply_markup=weather_kb(view))
 
 @router.message(Command("pet"), F.chat.type == "private")
