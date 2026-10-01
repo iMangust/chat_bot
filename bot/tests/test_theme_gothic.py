@@ -350,3 +350,34 @@ def test_main():
 
 if __name__ == "__main__":
     test_main()
+
+
+def test_theme_survives_empty_cache_and_fresh_context():
+    """Регресс на «тема работает только в настройках».
+
+    Жёстче, чем test_theme_survives_new_task_context: перед нажатием
+    menu:main мы ПОЛНОСТЬЮ сбрасываем состояние процесса — и contextvar
+    темы (новый asyncio-контекст апдейта), и процессный кэш тем (как после
+    invalidate/restart). Старый ThemeGuard в этом случае читал пустой кэш,
+    молча оставлял standard — и все экраны, кроме настроек (которые тянут
+    тему из БД явно), были стандартными. Теперь guard при любом расхождении
+    кэша с контекстом перечитывает БД и принудительно ставит тему.
+    """
+    async def run():
+        await _press("set:theme:gothic")
+        from app import themes
+        # полная имитация «свежего» состояния процесса/контекста:
+        themes.invalidate_theme_cache()          # кэш пуст
+        themes.set_theme("standard")             # contextvar = default
+        _session, texts, kb_dump = await _press("menu:main")
+        kb_norm = kb_dump.replace("\\u200d", "\u200d")
+        assert "🐈‍⬛ Кошка-демон" in kb_norm, \
+            f"после сброса кэша кнопки стали стандартными: {kb_norm[:400]}"
+        assert "🌑 Ночные службы" in kb_norm, texts
+        assert "🐾 Питомец" not in kb_dump, "кнопка осталась стандартной"
+        joined = "\n".join(texts)
+        assert "Капли крови" in joined, f"текст меню не готический: {joined[:300]}"
+    asyncio.run(run())
+    # возврат состояния процесса для остальных тестов
+    asyncio.run(_press("set:theme:standard"))
+    _gs.cache_clear()

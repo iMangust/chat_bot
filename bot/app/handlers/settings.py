@@ -524,18 +524,4 @@ async def cmd_settings(message: Message, session: AsyncSession) -> None:
     await _render_settings(session, message, message.from_user.id)
 
 
-# «/start» — входная точка бота. Если у пользователя выбрана не стандартная
-# тема (например «🦇 Готика»), показываем сразу экран настроек в этой теме:
-# так выбор пользователя виден с первого сообщения, а не только после тапа
-# по кнопке «Настройки». Обычный онбординг/меню остаются в start.py для
-# всех со стандартной темой и для новых пользователей.
-@router.message(CommandStart(), F.chat.type == "private")
-async def cmd_start_gothic_shortcut(message: Message, session: AsyncSession) -> None:
-    user = await session.get(User, message.from_user.id)
-    key = ((user.settings_extra or {}).get("theme")
-           if user else None) or themes.DEFAULT_THEME_KEY
-    if key == themes.DEFAULT_THEME_KEY:
-        return  # стандартная тема — пусть обрабатывает start.py как раньше
-    themes.invalidate_theme_cache(message.from_user.id)
-    themes.set_theme(key)
-    await _render_settings(session, message, message.from_user.id)
+

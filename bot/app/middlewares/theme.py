@@ -125,4 +125,21 @@ class ThemeGuardMiddleware(BaseMiddleware):
         if tg_id is not None:
             themes.ensure_theme_for(int(tg_id))
             themes.remember_theme_owner(int(tg_id))
+            # ЖЁСТКАЯ ГАРАНТИЯ. Если outer-слой не поставил тему в контекст
+            # (аппдейт исполняется в новом asyncio-контексте, где contextvar
+            # = default standard), ensure_theme_for восстанавливает её из
+            # кэша. Но если контекст всё ещё расходится с тем, что реально
+            # лежит в БД для этого пользователя, читаем БД один раз и
+            # ставим тему принудительно. Кэш при этом прогревается, так что
+            # повторных чтений на следующие апдейты не будет.
+            cached = themes._THEME_CACHE.get(int(tg_id))
+            current = themes.current_theme_key()
+            if cached is None or cached != current:
+                db_key = await themes.load_theme_key(int(tg_id))
+                themes.set_theme(db_key if db_key is not None else current)
+                themes.remember_theme_owner(int(tg_id))
+        elif themes.active_theme_owner() is not None:
+            # событие без явного адресата (например, системное) — оставляем
+            # тему последнего активного пользователя, а не сбрасываем на standard
+            themes.ensure_theme_for(themes.active_theme_owner())
         return await handler(event, data)
