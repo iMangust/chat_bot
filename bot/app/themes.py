@@ -54,6 +54,25 @@ def remember_theme_owner(tg_id: int | None) -> None:
     _LAST_ACTIVE_TG_ID = int(tg_id) if tg_id is not None else None
 
 
+def forget_and_remember(tg_id: int, theme_key: str) -> None:
+    """Прогрев процессного кэша сразу после смены темы.
+
+    Вызывается из обработчика ``set:theme:*`` ПОСЛЕ коммита в БД:
+      1) сбрасывает старое значение кэша для пользователя;
+      2) кладёт новый выбор;
+      3) запоминает владельца активной темы (для error-handler'ов).
+
+    Это закрывает гонку: aiogram исполняет каждый апдейт в НОВОМ asyncio
+    -контексте (contextvar темы там = default standard), и ThemeGuard перед
+    хендлером восстанавливает тему только из кэша. Если кэш пуст — guard
+    молча оставляет standard, и пользователь видит «тема работает только в
+    настройках».
+    """
+    invalidate_theme_cache(tg_id)
+    _THEME_CACHE[int(tg_id)] = theme_key
+    remember_theme_owner(tg_id)
+
+
 def active_theme_owner() -> int | None:
     return _LAST_ACTIVE_TG_ID
 
@@ -117,8 +136,14 @@ async def load_theme_key(tg_id: int) -> str | None:
         logger.exception("theme: не удалось прочитать тему пользователя %s",
                          tg_id)
         return None
-    if theme_key is not None:
-        _THEME_CACHE[tg_id] = theme_key
+    # ВАЖНО: кэшируем и standard (theme_key=None). Раньше в кэш клались
+    # только непустые значения — из-за этого каждый апдейт пользователя без
+    # выбранной темы шёл в БД, а любой сбой чтения (например, временная
+    # недоступность пула) молча откатывал контекст на standard. Теперь
+    # состояние «тема не выбрана» тоже закэшировано; при выборе темы
+    # обработчик set:theme:* инвалидирует кэш (invalidate_theme_cache),
+    # поэтому устаревание исключено.
+    _THEME_CACHE[tg_id] = theme_key or STANDARD.key
     return theme_key
 
 
@@ -335,10 +360,51 @@ def theme_for_key(key: str | None) -> Theme:
 # --- применение темы -------------------------------------------------------
 
 def _map_emoji(text: str, table: dict[str, str]) -> str:
-    for src, dst in table.items():
+    # Сортировка по убыванию длины ключа обязательна: иначе короткий ключ
+    # съедает длинный раньше времени. Например «🏋» подменялся внутри
+    # «🏋️ Тренировки», и оставшийся вариант-селектор превращал подпись в
+    # битый эмодзи «⚔️‍».
+    for src in sorted(table, key=len, reverse=True):
+        dst = table[src]
         if src in text:
             text = text.replace(src, dst)
     return text
+
+
+def standard_main_menu_std() -> str:
+    """Канонический СТАНДАРТНЫЙ текст главного меню с маркерами {title}/{stats}.
+
+    Единственный источник правды для готического шаблона и для перекраски
+    старых сообщений — раньше они были скопированы друг из друга в двух
+    местах и устаревали при изменении меню (пользователь видел «тема не
+    применяется»: подсказки в готике расходились со стандартом).
+    """
+    from app.keyboards.inline import MENU_PAGES  # noqa: F401 (синхронность с меню)
+    lines = [
+        "• 🐾 Зайди к питомцу — покорми его (голод никуда не делся!)",
+        "• 🌦️ Загляни в /weather — от живой погоды Камчатки зависят прогулки:",
+        "   солнце = +находки и 😊 Счастье, дождь/мороз = риск простуды",
+        "• 💬 Напиши в чат — засчитывается текст, фото, голос, кружок, стикер",
+        "• ❤️ Ставь реакции — за них тоже капает XP",
+        "• 🛒 Копи монеты — магазин (в «🐾 Питомец» → «🎒 Вещи») и мерч уже ждут",
+        "• ⚔️ Попробуй Арену — еженедельные дуэли питомцев за призы",
+    ]
+    body = "\n".join(lines)
+    ch_line = ""
+    try:
+        from app.middlewares.gate import channel_link
+        ch, visual = channel_link()
+        if ch:
+            ch_line = f"\n\n📢 Новости канала: {visual} (t.me/{ch})"
+    except Exception:  # noqa: BLE001
+        pass
+    return (f"🏠 <b>Главное меню · {{title}}</b>\n\n"
+            "{{stats}}\n\n📌 Что делать:\n" + body + ch_line)
+
+
+def _build_main_menu_template() -> str:
+    """Готический шаблон текста главного меню — из канонического стандартного."""
+    return _map_emoji(standard_main_menu_std(), GOTHIC.emoji_map)
 
 
 def _active_theme() -> "Theme | None":

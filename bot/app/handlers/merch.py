@@ -7,9 +7,9 @@ from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.enums import ChatType
-from aiogram.types import (CallbackQuery, InlineKeyboardButton,
+from aiogram.types import (CallbackQuery,
                           InputMediaPhoto, Message)
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from app.keyboards.inline import InlineKeyboardButton, InlineKeyboardBuilder
 from loguru import logger
 
 from app.config import get_settings

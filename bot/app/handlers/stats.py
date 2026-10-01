@@ -64,7 +64,7 @@ async def stats_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     breakdown = _breakdown_text(st.get("breakdown") or {})
     if breakdown:
         text += f"\n\n🧩 Из чего состоят сообщения:\n{breakdown}"
-    from aiogram.utils.keyboard import InlineKeyboardBuilder
+    from app.keyboards.inline import InlineKeyboardBuilder
     _b = InlineKeyboardBuilder()
     _b.button(text="🏆 Достижения", callback_data="menu:ach")
     _b.button(text="🏅 Топы", callback_data="menu:top")

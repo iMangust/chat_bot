@@ -99,3 +99,30 @@ class ThemeErrorMiddleware(BaseMiddleware):
                 themes.ensure_theme_for(int(tg_id))
                 themes.remember_theme_owner(int(tg_id))
         return await handler(exception, data)
+
+
+class ThemeGuardMiddleware(BaseMiddleware):
+    """Гарант темы непосредственно перед каждым хендлером (inner-middleware).
+
+    История багов: тема «применялась только к настройкам». Причина — outer
+    ThemeMiddleware ставит contextvar в задаче апдейта, но между ним и
+    конкретным хендлером стоят другие слои (AccessGate, Throttle, FSM),
+    некоторые из которых могут переключить контекст или вернуть standard
+    для неизвестного пользователя. Плюс у Message-хендлеров адресат и автор
+    различаются. Поэтому прямо перед исполнением хендлера мы ещё раз
+    убеждаемся, что в контексте стоит тема именно того пользователя, чей
+    это апдейт (по процессному кэшу — без обращения к БД).
+    """
+
+    async def __call__(self, handler: Callable[[Any, dict], Awaitable[Any]],
+                       event: TelegramObject, data: dict) -> Any:
+        tg_id = _event_tg_id(event)
+        if tg_id is None:
+            # из data может быть доступен пользователь, смонтированный
+            # более внешними middleware (например, DbMiddleware)
+            user = getattr(event, "from_user", None)
+            tg_id = getattr(user, "id", None)
+        if tg_id is not None:
+            themes.ensure_theme_for(int(tg_id))
+            themes.remember_theme_owner(int(tg_id))
+        return await handler(event, data)

@@ -4,12 +4,12 @@ import html
 
 from aiogram import F, Router
 from aiogram.types import CallbackQuery
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from app.keyboards.inline import InlineKeyboardBuilder
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 
-from aiogram.types import InlineKeyboardButton
+from app.keyboards.inline import InlineKeyboardButton
 
 from app.db.models import Item, PetInventory, User
 from app.i18n import t

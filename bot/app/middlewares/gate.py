@@ -71,7 +71,8 @@ def channel_link() -> tuple[str, str]:
     return ch, visual
 
 def subscribe_kb() -> "Any":
-    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    from aiogram.types import InlineKeyboardMarkup
+    from app.keyboards.inline import InlineKeyboardButton
     rows = []
     ch, visual = channel_link()
     if ch:

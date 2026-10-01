@@ -461,6 +461,14 @@ async def cb_set_theme(cb: CallbackQuery, session: AsyncSession,
     flag_modified(user, "settings_extra")
     await session.commit()
     themes.invalidate_theme_cache(cb.from_user.id)  # новый выбор темы — сбрасываем кэш процесса
+    # СРАЗУ прогреваем процессный кэш новым значением. Без этого шага
+    # ThemeGuardMiddleware (inner, перед каждым хендлером) при следующем
+    # апдейте читает ПУСТОЙ кэш и оставляет контекст как есть — а aiogram
+    # запускает каждую задачу апдейта в НОВОМ asyncio-контексте, где
+    # contextvar темы = default(standard). Именно так готика «слетала» на
+    # любом экране, кроме самих настроек: outer-слой ставил тему из БД, но
+    # guard тут же ничего не находил в кэше и не переключал её обратно.
+    themes.forget_and_remember(cb.from_user.id, key)
     themes.set_theme(key)  # сразу перекрашиваем ответ и последующие экраны
     th = themes.theme_for_key(key)
     chat_id = cb.message.chat.id if cb.message else None

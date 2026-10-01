@@ -692,9 +692,14 @@ async def main() -> None:
 
     dp = Dispatcher(storage=storage)
     dp.update.outer_middleware(DbMiddleware())
-    from app.middlewares.theme import ThemeMiddleware, ThemeErrorMiddleware
+    from app.middlewares.theme import (ThemeMiddleware, ThemeErrorMiddleware,
+                                       ThemeGuardMiddleware)
     dp.update.outer_middleware(ThemeMiddleware())
     dp.errors.middleware(ThemeErrorMiddleware())
+    # Inner-гарант: прямо перед каждым хендлером убеждаемся, что в контексте
+    # стоит тема адресата апдейта (см. docstring ThemeGuardMiddleware).
+    for _obs in (dp.callback_query, dp.message, dp.edited_message):
+        _obs.middleware.register(ThemeGuardMiddleware())
     dp.update.outer_middleware(access_handlers.AccessEventsMiddleware())
     dp.update.outer_middleware(AccessGateMiddleware())
     dp.callback_query.outer_middleware(ThrottleMiddleware())

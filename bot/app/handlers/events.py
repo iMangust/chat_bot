@@ -10,7 +10,7 @@ from aiogram.filters import BaseFilter, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InputMediaPhoto, Message
-from aiogram.utils.keyboard import InlineKeyboardBuilder
+from app.keyboards.inline import InlineKeyboardBuilder
 from loguru import logger
 
 from app.config import get_settings

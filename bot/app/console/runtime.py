@@ -114,9 +114,14 @@ class BotRuntime:
 
             dp = Dispatcher(storage=storage)
             dp.update.outer_middleware(DbMiddleware())
-            from app.middlewares.theme import ThemeMiddleware, ThemeErrorMiddleware
+            from app.middlewares.theme import (ThemeMiddleware,
+                                               ThemeErrorMiddleware,
+                                               ThemeGuardMiddleware)
             dp.update.outer_middleware(ThemeMiddleware())
             dp.errors.middleware(ThemeErrorMiddleware())
+            # Inner-гарант темы перед каждым хендлером (см. main.py)
+            for _obs in (dp.callback_query, dp.message, dp.edited_message):
+                _obs.middleware.register(ThemeGuardMiddleware())
             dp.update.outer_middleware(access_handlers.AccessEventsMiddleware())
             from app.middlewares.gate import AccessGateMiddleware
             dp.update.outer_middleware(AccessGateMiddleware())

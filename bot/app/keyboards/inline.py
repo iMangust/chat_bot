@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from aiogram.utils.keyboard import InlineKeyboardBuilder as _RawIKB
 from aiogram.types import InlineKeyboardButton as _IKB
+from aiogram.types import InlineKeyboardMarkup as _IKM
 
 
 def _themed(values: dict) -> dict:
@@ -19,7 +20,7 @@ class _ThemedInlineKeyboardButton(_IKB):
 
     aiogram 3.x создаёт модели через ``TypeBase.model_validate`` /
     ``model_construct`` (прямой ``__init__`` у pydantic-моделей не вызывается),
-    поэтому перехватываем обе точки входа. Так тематизируются кнопки ВЕЗДЕ
+    поэтому перехватываем ВСЕ точки входа. Так тематизируются кнопки ВЕЗДЕ
     (прямые конструкторы и ``InlineKeyboardBuilder.button(...)``) без правки
     сотен мест — достаточно использовать этот класс в модулях клавиатур.
     """
@@ -40,6 +41,39 @@ class _ThemedInlineKeyboardButton(_IKB):
     def __init__(self, **data):
         super().__init__(**_themed(data))
 
+    # Но есть ИСКЛЮЧЕНИЕ: когда кнопка вложена в другую pydantic-модель
+    # (InlineKeyboardMarkup.inline_keyboard), pydantic v2 валидирует её
+    # напрямую через core-schema класса — model_validate/__init__ НЕ
+    # вызываются. Именно поэтому раньше тема «применялась только к
+    # настройкам»: клавиатуры, собранные вручную (main_menu, pet_hub и др.
+    # через InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(...)]])
+    # или переданные dict'ами), проходили мимо всех перехватчиков.
+    # Перехватываем и эту точку входа: after-validator получает на вход
+    # УЖЕ валидированный экземпляр кнопки (или dict из model_construct-пути)
+    # — достаточно переписать ему text под активную тему.
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source_type, handler):
+        schema = super().__get_pydantic_core_schema__(source_type, handler)
+        from pydantic_core import core_schema as cs
+
+        def _retheme(v, _info):
+            cb = getattr(v, "callback_data", None)
+            text = getattr(v, "text", None)
+            if isinstance(cb, str) and isinstance(text, str) and cb:
+                from app import themes
+                new_text = themes.theme_button_label(cb, text)
+                if new_text != text:
+                    try:
+                        object.__setattr__(v, "text", new_text)
+                        fields = getattr(v, "__pydantic_fields_set__", None)
+                        if fields is not None:
+                            fields.add("text")
+                    except Exception:  # noqa: BLE001 — не роняем рендер
+                        pass
+            return v
+
+        return cs.with_info_after_validator_function(_retheme, schema)
+
 
 class InlineKeyboardBuilder(_RawIKB):
     """Билдер, собирающий тематизированные кнопки (см. app/themes.py)."""
@@ -47,10 +81,27 @@ class InlineKeyboardBuilder(_RawIKB):
     BUTTON_TYPE = _ThemedInlineKeyboardButton
 
 
-# Дальнейший код модуля использует тематизированную кнопку вместо оригинала.
+# Тематизированный Markup: ловит кнопки даже когда их передают списком
+# dict'ов («[[{"text": ..., "callback_data": ...}]]») — в этом случае
+# pydantic вообще не видит наш класс кнопок, и без этого перехвата подписи
+# остались бы стандартными.
+class _ThemedInlineKeyboardMarkup(_IKM):
+    @classmethod
+    def model_validate(cls, obj, *args, **kwargs):
+        if isinstance(obj, dict) and isinstance(obj.get("inline_keyboard"), list):
+            obj = dict(obj)
+            obj["inline_keyboard"] = [
+                [b.model_dump(exclude_none=True) if isinstance(b, _IKB) else b
+                 for b in row] if isinstance(row, list) else row
+                for row in obj["inline_keyboard"]]
+        return super().model_validate(obj, *args, **kwargs)
+
+
+# Дальнейший код модуля (и все импортирующие его модули) используют
+# тематизированные кнопку и markup вместо оригиналов.
 InlineKeyboardButton = _ThemedInlineKeyboardButton
 
-from aiogram.types import InlineKeyboardMarkup
+InlineKeyboardMarkup = _ThemedInlineKeyboardMarkup
 from app.config import get_settings
 
 def _two_per_row(buttons: list[InlineKeyboardButton]) -> list[list[InlineKeyboardButton]]:

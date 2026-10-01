@@ -48,7 +48,8 @@ async def celebrate_subscription(bot, user_id: int, first_name: str = "") -> Non
     text += "Нажми «Начать», чтобы завести питомца 👇"
     kb = None
     with contextlib.suppress(Exception):
-        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+        from aiogram.types import InlineKeyboardMarkup
+        from app.keyboards.inline import InlineKeyboardButton
         kb = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="▶️ Начать", callback_data="onb:start")]])
     try:

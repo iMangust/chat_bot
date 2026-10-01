@@ -230,7 +230,8 @@ async def cb_gate_check(cb: CallbackQuery, bot: Bot) -> None:
                                         for d in diag))
 
 def _start_kb():
-    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    from aiogram.types import InlineKeyboardMarkup
+    from app.keyboards.inline import InlineKeyboardButton
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="▶️ Начать", callback_data="onb:start")]])
 

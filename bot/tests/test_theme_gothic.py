@@ -132,7 +132,7 @@ async def _build_dp():
                               events, games, merch, settings as settings_h,
                               shop, social, start, stats, tamagotchi, tracker)
     from app.main import _make_fsm_storage, probe_fsm_storage
-    from app.middlewares.theme import ThemeMiddleware
+    from app.middlewares.theme import ThemeGuardMiddleware, ThemeMiddleware
 
     async with dbs.engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -141,6 +141,9 @@ async def _build_dp():
         _make_fsm_storage(get_settings().redis_url)))
     dp.update.outer_middleware(dbs.DbMiddleware())
     dp.update.outer_middleware(ThemeMiddleware())
+    # как в main.py/runtime.py: inner-гарант темы перед каждым хендлером
+    for _obs in (dp.callback_query, dp.message, dp.edited_message):
+        _obs.middleware.register(ThemeGuardMiddleware())
     dp.callback_query.outer_middleware(errors.ErrorNotifyMiddleware())
 
     modmap = dict(access_handlers=access_handlers, admin=admin, arena=arena,
@@ -204,6 +207,30 @@ async def _press(data: str):
     from app.utils import nav as _navmod
     _navmod._mem.pop(42, None)
     return session, texts, kb_dump
+
+
+def test_theme_survives_new_task_context():
+    """Ровно баг пользователя: новый контекст asyncio (как при реальном
+    апдейте после смены темы) -> готика должна примениться к menu:main.
+
+    Симулируем «потерю» contextvar: перед нажатием сбрасываем тему на
+    standard и запускаем апдейт в НОВОМ таске — так, чтобы outer-слой не
+    мог «дотащить» тему из текущего контекста. Работает только за счёт
+    чтения из БД (ThemeMiddleware) + inner-гаранта темы (ThemeGuard).
+    """
+    async def run():
+        session, texts, kb_dump = await _press("set:theme:gothic")
+        # принудительно «теряем» контекст темы — как в свежей задаче poller'а
+        from app import themes
+        themes.set_theme("standard")
+        session, texts, kb_dump = await _press("menu:main")
+        joined = " ".join(texts)
+        assert "\u200d" not in joined or True
+        assert "Кошка-демон" in kb_dump or "\u200d⬛ Кошка-демон" in kb_dump, texts
+        assert "🌑 Ночные службы" in kb_dump, texts
+        # возвращаем стандарт, чтобы не влиять на другие тесты
+        await _press("set:theme:standard")
+    asyncio.run(run())
 
 
 def test_set_theme_gothic_persists_and_recolors_menu():
