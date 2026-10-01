@@ -24,6 +24,12 @@ from typing import Any
 CURRENT_THEME: contextvars.ContextVar[str] = contextvars.ContextVar(
     "bot_theme", default="standard")
 
+# Кэш «tg_id -> ключ темы» на процесс. Тема меняется редко (только кнопкой
+# в настройках), поэтому одно чтение строки users на апдейт — лишняя нагрузка
+# на БД; invalidate_theme_cache() вызывается при смене темы и админских
+# операциях, сбрасывающих настройки пользователя.
+_THEME_CACHE: dict[int, str | None] = {}
+
 
 def set_theme(name: str | None) -> None:
     CURRENT_THEME.set(THEMES.get(name or "", STANDARD).key)
@@ -31,6 +37,33 @@ def set_theme(name: str | None) -> None:
 
 def current_theme_key() -> str:
     return CURRENT_THEME.get()
+
+
+def invalidate_theme_cache(tg_id: int | None = None) -> None:
+    if tg_id is None:
+        _THEME_CACHE.clear()
+    else:
+        _THEME_CACHE.pop(int(tg_id), None)
+
+
+async def load_theme_key(tg_id: int) -> str | None:
+    """Ключ темы пользователя из БД (с кэшем на процесс)."""
+    tg_id = int(tg_id)
+    if tg_id in _THEME_CACHE:
+        return _THEME_CACHE[tg_id]
+    theme_key: str | None = None
+    try:
+        from app.db.session import session_factory
+        from app.db.models import User
+
+        async with session_factory() as s:
+            db_user = await s.get(User, tg_id)
+            extra = (db_user.settings_extra or {}) if db_user else {}
+            theme_key = extra.get("theme")
+    except Exception:
+        theme_key = None
+    _THEME_CACHE[tg_id] = theme_key
+    return theme_key
 
 
 @dataclass(frozen=True)

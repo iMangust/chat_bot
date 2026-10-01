@@ -26,21 +26,20 @@ class ThemeMiddleware(BaseMiddleware):
         user = getattr(event, "from_user", None) or getattr(event, "chat", None)
         tg_id = getattr(user, "id", None)
         if tg_id is not None:
-            session = data.get("session")
-            theme_key: str | None = None
-            if session is not None:
-                try:
-                    from app.db.models import User
-
-                    db_user = await session.get(User, int(tg_id))
-                    extra = (db_user.settings_extra or {}) if db_user else {}
-                    theme_key = extra.get("theme")
-                except Exception:
-                    theme_key = None
+            # Читаем тему из БД сами — НЕ полагаемся на data["session"]:
+            # aiogram отдаёт kwargs хендлеру только из словаря того уровня
+            # middleware, где был вызван handler, а сессию кладёт DbMiddleware
+            # (более внешний слой). Без этого шага тема молча оставалась бы
+            # стандартной для всех экранов, кроме настроек (там она
+            # подтягивается из БД явно).
+            # load_theme_key кэширует значение на процесс (см. app/themes.py),
+            # поэтому на апдейт приходится максимум один короткий SELECT.
+            theme_key = await themes.load_theme_key(int(tg_id))
             if theme_key is None:
-                # юзера ещё нет в БД (или колонка пустая): не затираем тему,
-                # которую только что установил обработчик выбора темы
-                # («set:theme:*» пишет её сразу в контекст и в БД).
+                # юзера ещё нет в БД (первый /start до get_or_create) или
+                # колонка пустая: не затираем тему, которую только что
+                # установил обработчик «set:theme:*» (он пишет её сразу
+                # в контекст и БД + инвалидирует кэш).
                 theme_key = themes.current_theme_key()
             themes.set_theme(theme_key)
         return await handler(event, data)

@@ -378,6 +378,7 @@ async def cb_set_theme(cb: CallbackQuery, session: AsyncSession,
     user.settings_extra = extra
     flag_modified(user, "settings_extra")
     await session.commit()
+    themes.invalidate_theme_cache(cb.from_user.id)  # новый выбор темы — сбрасываем кэш процесса
     themes.set_theme(key)  # сразу перекрашиваем ответ и последующие экраны
     th = themes.theme_for_key(key)
     chat_id = cb.message.chat.id if cb.message else None

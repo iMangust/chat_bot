@@ -57,6 +57,11 @@ class DbMiddleware:
                         "edited_channel_post", "callback_query",
                         "inline_query", "chosen_inline_result"):
                 _mount(getattr(event, key, None))
+
+        # Тема оформления: кладём session-зависимое чтение в data, чтобы
+        # ThemeMiddleware (следующий слой) получил сессию через data["session"]
+        # и не открывал отдельное соединение. Чтение идемпотентно; кэш на
+        # процесс — в app/themes.py (load_theme_key).
         async with session_factory() as session:
             data["session"] = session
             try:
