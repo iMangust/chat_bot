@@ -84,7 +84,11 @@ def paged_keyboard(
     # источника) + «🏠 Меню» (главное меню). home_cb=None означает «домами
     # служит back_cb» — отдельная кнопка «Меню» тогда не нужна.
     nav_btns: list[InlineKeyboardButton] = []
-    if back_cb:
+    # «Назад» не должен вести в себя: если целевой callback совпадает с
+    # кнопкой, открывающей этот же экран (например, вход в магазин по
+    # 'pet:shop', а корень раздела тоже 'pet:shop'), возврат перерисовал бы
+    # текущий экран — Telegram показал бы «кнопка ничего не делает».
+    if back_cb and back_cb != f"pet:{prefix}":
         nav_btns.append(InlineKeyboardButton(text=BACK_LABEL, callback_data=back_cb))
     home_target = home_cb if home_cb is not None else back_cb
     if home_target and home_target != back_cb:

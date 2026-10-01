@@ -45,8 +45,7 @@ ADMIN_TOOLS_PAGE = ("🛠 Инструменты админа", [
 ])
 
 def main_menu(link: str | None = None, reward: int = 0,
-              page: int = 0, is_admin: bool = False,
-              has_pet: bool = True) -> InlineKeyboardMarkup:
+              page: int = 0, is_admin: bool = False) -> InlineKeyboardMarkup:
     settings = get_settings()
     pages = list(MENU_PAGES)
     if is_admin:
@@ -57,16 +56,11 @@ def main_menu(link: str | None = None, reward: int = 0,
                for t, cb in actions
                if not (cb == "menu:merch" and not settings.merch_enabled)]
     kb_rows: list[list[InlineKeyboardButton]] = _two_per_row(buttons)
-    # У пользователя без питомца в разделе «Игра» нет центрального экрана —
-    # добавляем явный CTA прямо в меню, чтобы не уводить его стрелками
-    # листания в онбординг против воли. Отдельной строкой ПОСЛЕ постраничной
-    # навигации (◀️ 📖 ▶️): так «▶️» гарантированно остаётся последней кнопкой
-    # своей строки и ведёт на следующую страницу меню, а не открывает выбор
-    # питомца (CTA никогда не «склеивается» со стрелками в один ряд).
+    # Постраничная навигация меню (◀️ 📖 ▶️). Отдельного CTA «🥚 Усыновить
+    # питомца» здесь нет: усыновление живёт в разделе питомца — кнопка
+    # «🐾 Питомец» ведёт в хаб, где без питомца показывается экран с
+    # предложением усыновить (adopt_cta_kb). Главное меню остаётся чистым.
     kb_rows.append(_page_nav("menu", page, len(pages), title))
-    if not has_pet:
-        kb_rows.append([InlineKeyboardButton(
-            text="🥚 Усыновить питомца", callback_data="pet:adopt")])
     invite_label = f"🤝 Пригласить друга (+{reward})" if reward else "🤝 Пригласить друга"
     if link and settings.show_invite_button:
         kb_rows.append([InlineKeyboardButton(text=invite_label, url=link)])
@@ -135,6 +129,9 @@ def pet_hub(page: int = 0, critical: bool = False,
 # статы…), поэтому для профилных секций ('stats', 'merch', …) они всегда
 # валидные точки возврата; исключение — 'menu:pet', которое для секций
 # внутри хаба питомца (games/shop/style/…) является «своим» входом.
+_PET_SUB_SECTIONS = frozenset({"games", "arena", "friends", "shop",
+                               "inv", "style", "pet"})
+
 _SECTION_OWN_PREFIXES: dict[str, tuple[str, ...]] = {
     "games": ("game", "rps", "guess", "bj", "pet"),
     "arena": ("arena", "pet"),
@@ -164,53 +161,294 @@ def _is_own_section_entry(cb: str, section: str | None) -> bool:
     head = cb.split(":")[0]
     if head in _SECTION_OWN_PREFIXES.get(sec, ()):
         return True
-    # 'menu:*' — входы в разделы главного меню. Внутри подраздела хаба
-    # питомца повторный 'menu:pet' — это тот же хаб (листание/повторный
-    # вход), а не выход наружу; для прочих секций 'menu:...' остаётся
-    # валидной исторической точкой возврата.
-    if head == "menu" and cb == "menu:pet" and sec in {"games", "arena",
-                                                       "friends", "shop",
-                                                       "inv", "style", "pet"}:
+    # 'menu:<раздел>' — вход в НЕКОТОРЫЙ раздел главного меню. Для
+    # подразделов хаба питомца повторный 'menu:pet' — это тот же хаб
+    # (листание/повторный вход), а не выход наружу. Для прочих секций
+    # 'menu:...' — это обычные точки возврата из истории (их фильтрует
+    # поиск по индексу точки входа, а не этот предикат).
+    if (head == "menu" and cb == "menu:pet"
+            and sec in _PET_SUB_SECTIONS):
         return True
     return False
 
 
-def _nav_back_cb(section: str | None, chat_id: int | None) -> str | None:
+def _nav_back_cb(section: str | None, chat_id: int | None,
+                 current_cb: str | None = None) -> str | None:
     """Callback для кнопки «⬅️ Назад»: ближайшая подходящая запись стека
     навигации (экран, откуда пришли на этот), а если стек пуст или вся
     история — «свой» раздел — безопасный корень раздела. Синхронная версия
     читает локальное зеркало стека; актуальность обеспечивает
     NavStackMiddleware, который после каждого коллбэка перечитывает
-    Redis-стек в зеркало (см. middlewares/nav_stack.py)."""
+    Redis-стек в зеркало (см. middlewares/nav_stack.py).
+
+    КРИТИЧНО: результат никогда не должен совпадать с текущим экраном —
+    иначе нажатие «Назад» шлёт тот же callback и Telegram показывает
+    «кнопка неактивна / ничего не происходит». Поэтому корень раздела
+    исключается из кандидатов ещё ДО поиска по истории: он — пропускной
+    пункт (в него мы зашли), а не пункт назначения.
+
+    ДВА РЕЖИМА ИСТОЧНИКА СТЕКА (важно для тестов и прода):
+      • В проде middleware кладёт НАЖАТУЮ кнопку (источник перехода) ещё
+        ДО отрисовки экрана — вершина стека = экран, ОТКУДА пришли, а сам
+        текущий экран в стеке отсутствует.
+      • Если обработчик перерисовывает экран ПОСЛЕ своей кнопки (или тест
+        пишет в стек сам), вершиной оказывается текущий экран — такую
+        запись надо скипнуть, иначе «Назад» ведёт в себя («ничего не
+        происходит»). Реализовано ниже через `top_is_current`."""
     from app.utils import nav as _nav
     stack = _nav.mem_stack(chat_id)
+
+    # ── Режим 0: «источник перехода» передан явно (current_cb НЕ равен
+    # нажатой кнопке, а обработчик знает, откуда открылся экран). Не
+    # используется здесь; оставлено для ясности. ──
+    #
+    # ── Режим prod-модели (основной): NavStackMiddleware кладёт НАЖАТУЮ
+    # кнопку в стек ДО отрисовки экрана. Если обработчик вызвал
+    # build_screen(current_cb=X), значит пользователь нажал X и теперь
+    # смотрит на экран X → вершина стека == X == текущий экран. Тогда
+    # «экран, ОТКУДА пришли» — это stack[-2] (предпоследняя запись), а не
+    # stack[-1]. Этот случай обрабатывается ниже через `top_is_current`.
+    #
+    # ── Режим self-model (перерисовка без нового перехода): обработчик
+    # обновляет уже открытый экран (например, выбран другой размер того
+    # же товара) и вызывает build_screen(current_cb=Y), где Y — ЭКРАН, а
+    # не нажатая кнопка; в стеке поверх лежит нажатая 'merch:size:M'.
+    # Тогда вершина stack[-1] ≠ current и является источником перехода. ──
     root = SECTION_ROOTS.get(section or "", "menu:main")
-    if not stack:
+    # Плоский раздел (топы, достижения): многоуровней нет — «Назад» не
+    # показываем вообще, даже если пользователь зашёл из другого раздела
+    # (Мерч → Топы). Единственный выход — «🏠 Меню»: так экраны остаются
+    # предсказуемыми и без кнопок-петель.
+    if _back_suppressed(section):
+        return None
+    # Внутренняя история раздела (вкладки/подразделы одного экрана) — не
+    # источник «Назад наружу»: у таких секций корень лежит ВНУТРИ того же
+    # сообщения (хаб питомца: 'pet:page:*', 'pet:games'), возврат туда =
+    # перерисовка текущего экрана («Назад ничего не делает»). Считаем
+    # историю «своей», если в ней нет ни одной записи вне раздела.
+    def _is_internal_entry(e: str) -> bool:
+        return (_is_own_section_entry(e, section)
+                or (section in _PET_SUB_SECTIONS and e.startswith("pet:"))
+                or (not section and e.startswith("menu:page:")))
+    own_history = bool(stack) and all(_is_internal_entry(e) for e in stack)
+    if not stack or own_history:
+        # Нет истории: возврат в корень раздела уместен только там, где
+        # сам экран НЕ является этим корнем (корневой список мерча/событий —
+        # «Назад» ведёт в корень раздела, а не в главное меню). Для
+        # подстраниц (категория/товар) и верхнеуровневых экранов
+        # («Статистика», карточка, настройки) корень = текущий экран либо
+        # возврат «в себя» бессмыслен → только «🏠 Меню».
+        is_self_root = (root == f"menu:{section}"
+                        or (section == "pet" and root.startswith("pet:")))
+        if is_self_root:
+            return None
+        if current_cb:
+            # Подстраница своего раздела (merch:cat:* при section='merch'):
+            # «Назад» в корень = самопетля на уже открытом экране.
+            head = str(current_cb).split(":")[0]
+            if section and head == section:
+                return None
         return root
-    for cb in reversed(stack):
-        if not cb or cb.endswith(":noop") or cb == "noop":
-            continue
-        # Корень текущего раздела в истории — это сам текущий экран или
-        # его листание: не «Назад», а повторный вход. Пропускаем, чтобы
-        # кнопка не вела на то же место, где пользователь уже сидит.
-        if root != "menu:main" and cb == root:
-            continue
-        if _is_own_section_entry(cb, section):
-            continue
-        # Если корень раздела лежит в истории ГЛУБЖЕ найденной записи,
-        # «Назад» должен вести в корень раздела, а не перескакивать его
-        # сразу в главное меню (Мерч → Категория: «Назад» = список мерча).
-        if root != "menu:main" and root in stack[:stack.index(cb)]:
+
+    def _find_last(items: list[str], value: str) -> int | None:
+        for i in range(len(items) - 1, -1, -1):
+            if items[i] == value:
+                return i
+        return None
+
+    def _find_last_prefix(items: list[str], prefixes: tuple[str, ...]) -> int | None:
+        for i in range(len(items) - 1, -1, -1):
+            if items[i] and any(items[i].startswith(p) for p in prefixes):
+                return i
+        return None
+
+    def _effective_root() -> str:
+        """Корень раздела с учётом вкладки хаба питомца, по которой пришли.
+
+        Хаб питомца ('pet:page:*') содержит кнопки-подразделы (магазин/
+        инвентарь/стиль/игры/друзья). Если вход в подраздел был из хаба,
+        осмысленный «Назад на уровень выше» — вкладка, по которой пришли
+        ('pet:shop' → открыть магазин; 'pet:inv' → открыть инвентарь),
+        либо общий корень хаба 'menu:pet', если конкретной вкладки в
+        истории нет. Для секций вне хаба — просто корень раздела."""
+        if section in _PET_SUB_SECTIONS and stack:
+            for key in ("pet:shop", "pet:inv", "pet:style", "pet:games",
+                        "pet:friends", "pet:arena"):
+                if _find_last(stack, key) is not None:
+                    return key
+            if _find_last_prefix(stack, ("pet:page:",)) is not None:
+                return "menu:pet"
+        return root
+
+    root = _effective_root()
+
+    # Самопетля недопустима: если «корень на уровень выше» совпадает с
+    # текущим экраном (open-root-модель обработчиков: merch:cat открыт
+    # кнопкой 'merch:cat' и корнем для него служит сам 'merch:cat'; либо
+    # merch:prod, для которого 'merch:cat:N' — вершина стека), возврат в
+    # такой корень перерисовал бы тот же экран — Telegram показал бы
+    # «Назад ничего не делает». В open-root-модели источник перехода лежит
+    # ГЛУБЖЕ точки входа, поэтому дальнейший поиск идём от stack[:-1].
+    if current_cb and (root == current_cb or (stack and stack[-1] == current_cb)):
+        # Самопетля корня недопустима, НО если в стеке есть реальная запись
+        # самого корня раздела ('menu:merch'), она и есть осмысленный выход
+        # на уровень выше с подстраницы (категория/товар → список мерча).
+        if root != "menu:main" and _find_last(stack, root) is not None \
+                and root != current_cb:
             return root
-        return cb
-    return root
+        root = "menu:main"
+
+    # Подстраница своего раздела ('merch:cat:*'/'merch:prod:*' внутри
+    # мерча, 'ev:view:*' внутри событий): точка входа в неё — НЕ
+    # 'menu:<section>' (это вход в раздел целиком), а сама нажатая кнопка.
+    # Иначе категория товара выглядела бы «открытой из главного меню», и
+    # «Назад» перескакивал бы список категорий сразу в меню.
+    subpage_cb = ""
+    if section in _SUBPAGE_SECTIONS and current_cb:
+        head = str(current_cb).split(":")[0]
+        if head == section:
+            subpage_cb = str(current_cb)
+
+    def _is_entry(e: str) -> bool:
+        """Запись стека = переход В ТЕКУЩИЙ экран (не кандидат «Назад»)."""
+        if e == entry_cb or (current_cb and e == current_cb):
+            return True
+        # Листание страниц главного меню ('menu:page:N') — перерисовка
+        # того же экрана, а не переход между разделами.
+        if not section and e.startswith("menu:page:"):
+            return True
+        # 'pet:*' — «свои» записи только для подразделов хаба питомца;
+        # для прочих секций (например, корневой хаб 'menu:pet', где эти
+        # кнопки и живут) они валидные точки возврата.
+        if section in _PET_SUB_SECTIONS and e.startswith(
+                ("pet:page:", "pet:games", "pet:arena", "pet:friends",
+                 "pet:shop", "pet:inv", "pet:style")):
+            return True
+        return False
+
+    def _pick(candidates: list[str]) -> str | None:
+        """Первая подходящая запись снизу вверх + коррекция через корень."""
+        for j in range(len(candidates) - 1, -1, -1):
+            cb = candidates[j]
+            if not cb or cb.endswith(":noop") or cb == "noop":
+                continue
+            if _is_entry(cb):
+                continue
+            # Запись равна корню раздела = сама точка входа в текущий экран
+            # («Статистика» открыта кнопкой «menu:stats»). Возврат туда =
+            # перерисовка того же экрана = «Назад ничего не делает».
+            if root != "menu:main" and cb == root:
+                continue
+            if _is_own_section_entry(cb, section):
+                continue
+            # Если корень раздела лежит ГЛУБЖЕ найденной записи, «Назад»
+            # должен вести в корень раздела, а не перескакивать его сразу
+            # в главное меню (Мерч → Категория: «Назад» = список мерча).
+            if root != "menu:main" \
+                    and _find_last(candidates[:j], root) is not None:
+                return root
+            return cb
+        return None
+
+    # Индекс точки входа в ТЕКУЩИЙ раздел. Три случая:
+    #  a) 'menu:<section>' есть в стеке — это вход сюда (из главного меню);
+    #  b) подраздел хаба питомца ('games'/'arena'/…) — точка входа лежит
+    #     в стеке как 'pet:page:*' (хаб), а не 'menu:games';
+    #  c) записи входа нет вовсе: экран открыт сообщением/командой либо
+    #     листанием уже открытого экрана ('menu:page:N').
+    # Дальше важна ориентация вершины стека:
+    #  • prod-модель (middleware пишет источник ДО отрисовки): вершина =
+    #    источник перехода, текущий экран в стеке не представлен →
+    #    candidates = stack[entry_i + 1:] содержит вершину;
+    #  • self-model (вершина = кнопка текущего экрана: перерисовка после
+    #    своего коллбэка, прямые записи в тестах): эту запись скипаем —
+    #    candidates = stack[entry_i:-1]; если она одна — fallback к корню.
+    entry_cb = f"menu:{section}" if not subpage_cb else subpage_cb
+    entry_i = _find_last(stack, entry_cb)
+    pet_sub_entry = False
+    if entry_i is None and not subpage_cb and section in _PET_SUB_SECTIONS:
+        # Точка входа в подраздел хаба питомца — НЕ 'menu:<section>'
+        # (у таких секций её и нет), а одна из кнопок-переходов:
+        # вкладка хаба ('pet:page:N') или прямая кнопка ('pet:games').
+        # Ищем САМУЮ ВЕРХНЮЮ такую запись: она и есть последний шаг
+        # «как мы сюда попали». Записи глубже — прошлые посещения тех же
+        # экранов; считать входом их нельзя (иначе «Назад» зацикливается).
+        pet_entry = _find_last_prefix(
+            stack, ("pet:page:", "pet:games", "pet:arena", "pet:friends",
+                    "pet:shop", "pet:inv", "pet:style"))
+        if pet_entry is not None:
+            entry_i = max(entry_i, pet_entry) if entry_i is not None else pet_entry
+            pet_sub_entry = True
+    # Явный указатель «мы находимся на экране, открытом по current_cb»:
+    # точка входа — последняя такая запись (перерисовки/повторные входы
+    # дедуплицируются, но листание может оставить несколько).
+    if current_cb:
+        cur_i = _find_last(stack, current_cb)
+        if cur_i is not None:
+            entry_i = cur_i if entry_i is None else max(entry_i, cur_i)
+    top_is_current = entry_i == len(stack) - 1
+    if entry_i is None:
+        entry_i = len(stack) - 1
+
+    # 1) Источник перехода — самая верхняя подходящая запись НАД точкой
+    #    входа (self-запись вершины, если она есть, в candidates не
+    #    попадает).
+    hi = len(stack) - 1 if top_is_current else len(stack)
+    back = _pick(stack[entry_i + 1:hi])
+    if back is not None:
+        return back
+    # 1b) Open-root-модель обработчиков (мерч/события): кнопка-источник
+    #     перехода К ЭКРАНУ лежит НИЖЕ точки входа, а сама точка входа —
+    #     вершина стека. Пример: стек ['menu:merch', 'merch:cat:1',
+    #     'merch:prod:5'] для товара: пришли из категории 'merch:cat:1'
+    #     (индекс 1) — туда и ведём. Работает и для 'menu:merch' →
+    #     merch:cat:N: там точка входа 'menu:merch' (0), источник ниже неё
+    #     отсутствует, и этот шаг ничего не возвращает — корректно.
+    if pet_sub_entry and entry_i > 0:
+        back = _pick(stack[:entry_i])
+        if back is not None:
+            return back
+    # 2) Внутренняя история раздела: у ПОДСТРАНИЦ своего корня (категория/
+    #    товар мерча, карточка события) «Назад» ведёт к корню раздела —
+    #    это осмысленный выход на уровень выше. Но если сам корень и есть
+    #    текущий экран ('menu:merch' — список категорий), возврат «в себя»
+    #    запрещён (самопетля). Для верхнеуровневых экранов («Статистика»,
+    #    карточка профиля…) корень = текущий экран → «Назад» не показываем
+    #    вовсе (только «🏠 Меню»), кроме случаев, когда корнем служит
+    #    вкладка общего хаба ('pet:page:*'): магазин ← хаб питомца.
+    is_self_root = (root == f"menu:{section}"
+                    or (section == "pet" and root.startswith("pet:")))
+    if section in _SUBPAGE_SECTIONS and not is_self_root \
+            and root != current_cb:
+        return root
+    if root.startswith("pet:page:"):
+        return root
+    # 3) Раздел открыт листанием уже открытого экрана ('menu:page:N' при
+    #    'menu:stats'): точка входа спрятана ниже — ищем источник ещё глубже.
+    if entry_i > 0:
+        return _pick(stack[:entry_i])
+    return None
 
 
 def with_nav(b: InlineKeyboardBuilder, section: str | None,
              chat_id: int | None = None) -> InlineKeyboardBuilder:
     """Добавляет в билдер строку «⬅️ Назад» + «🏠 Меню»; «Назад» учитывает
-    локальную историю переходов этого чата."""
-    return append_nav(b, section, _nav_back_cb(section, chat_id))
+    локальную историю переходов этого чата.
+
+    Для ВЕРХНЕУРОВНЕВЫХ экранов («Статистика», «Топы», «Достижения»,
+    «Карточка», настройки…) кнопка «Назад» не показывается вовсе: у таких
+    экранов нет подразделов, единственный осмысленный выход — «🏠 Меню».
+    «Назад» туда либо вёл бы в себя (кнопка «ничего не делает»), либо
+    дублировал бы кнопку «Меню». Разрешаем её только когда в истории есть
+    реальный внешний источник из ДРУГОГО раздела (Мерч → Статы: «Назад»
+    возвращает в мерч)."""
+    back_cb = _nav_back_cb(section, chat_id)
+    if back_cb is None and not _back_suppressed(section) \
+            and section not in _SUBPAGE_SECTIONS:
+        # Корень раздела == текущий экран: верхнеуровневый экран без
+        # подуровней — оставляем только «🏠 Меню».
+        back_cb = ""
+    return append_nav(b, section, back_cb)
 
 def games_menu(chat_id: int | None = None) -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
@@ -293,9 +531,30 @@ SECTION_ROOTS: dict[str, str] = {
 BACK_LABEL = "⬅️ Назад"
 HOME_LABEL = "🏠 Меню"
 
+# Секции, экраны которых — ПОДСТРАНИЦЫ своего корня (товар/категория
+# мерча, карточка события): для них «Назад → корень раздела» осмыслен
+# даже при пустой истории. Верхнеуровневые экраны («Статистика»,
+# «Достижения», карточка профиля…) этим корнем и являются — возврат
+# в себя дал бы кнопку, «которая ничего не делает».
+_SUBPAGE_SECTIONS = {"merch", "events"}
+
+# Плоские разделы: у их экранов нет многоуровневой структуры — топы и
+# достижения переключаются вкладками внутри одного экрана, поэтому
+# отдельная кнопка «Назад» там не нужна (достаточно «🏠 Меню»).
+FLAT_SECTIONS = {"top", "ach"}
+
+
+def _back_suppressed(section: str | None) -> bool:
+    """Нужно ли полностью подавить кнопку «Назад» на экране раздела."""
+    return section in FLAT_SECTIONS
+
 
 def _nav_buttons(back_cb: str | None) -> list[InlineKeyboardButton]:
     out: list[InlineKeyboardButton] = []
+    # Страховка от самопетли: callback, равный главному меню, — это кнопка
+    # «🏠 Меню», отдельная кнопка «Назад → menu:main» бессмысленна.
+    if back_cb == "menu:main":
+        back_cb = ""
     if back_cb and back_cb != "menu:main":
         out.append(InlineKeyboardButton(text=BACK_LABEL, callback_data=back_cb))
     out.append(InlineKeyboardButton(text=HOME_LABEL, callback_data="menu:main"))
@@ -315,20 +574,60 @@ def onb_back_from_name(chat_id: int | None) -> list[InlineKeyboardButton]:
             InlineKeyboardButton(text=HOME_LABEL, callback_data="menu:main")]
 
 
-def nav_row(section: str | None, back_cb: str | None = None
-            ) -> list[InlineKeyboardButton]:
+def nav_row(section: str | None, back_cb: str | None = None,
+            chat_id: int | None = None,
+            current_cb: str | None = None) -> list[InlineKeyboardButton]:
     """Готовая нижняя строка навигации для ручной сборки клавиатуры.
-    back_cb=None — взять корень раздела (используется, когда стек уже учтён
-    или недоступен); back_cb="" — подавить кнопку «Назад» (только «Меню»)."""
+    back_cb=None — умный выбор по стеку навигации этого чата (если стек
+    недоступен — корень раздела); back_cb="" — подавить кнопку «Назад»
+    (только «Меню»). current_cb — callback, по которому открыт текущий
+    экран (защита от самопетли в open-root-модели мерча/событий)."""
+    if _back_suppressed(section):
+        # Плоский раздел — без кнопки «Назад», только «🏠 Меню».
+        return _nav_buttons("")
+    root = SECTION_ROOTS.get(section or "", "menu:main")
     if back_cb is None:
-        back_cb = SECTION_ROOTS.get(section or "", "menu:main")
+        back_cb = _nav_back_cb(section, chat_id, current_cb=current_cb)
+        if back_cb is None:
+            # Пустой/непригодный стек: корень раздела уместен только для
+            # подстраниц (мерч/события — выход к списку категорий); для
+            # верхнеуровневых экранов это возврат «в себя» → подавляем.
+            # Для хаба питомца ('pet' — сам корневой экран) и подразделов
+            # с внутренним корнем ('pet:page:N') — тоже подавляем.
+            is_subpage = section in _SUBPAGE_SECTIONS and \
+                str(current_cb or "").split(":")[0] == section
+            pet_hub_root = section == "pet" or root.startswith("pet:")
+            back_cb = "" if (not is_subpage or pet_hub_root) else root
+    # Самопетля недопустима: «Назад» на тот же callback, по которому мы
+    # сейчас находимся, = Telegram покажет «ничего не происходит».
+    # Корень раздела ('menu:merch' для списка категорий) блокируется ТОЛЬКО
+    # когда он и есть текущий экран: список категорий мерча открыт кнопкой
+    # 'menu:merch' → возврат туда = перерисовка того же экрана. С подстраниц
+    # (товар/категория/позиция) 'menu:merch' — валидный пункт возврата на
+    # уровень выше, и блокировать его нельзя (иначе «Назад» исчезает совсем).
+    explicit = back_cb is not None and back_cb != ""
+    if not explicit:
+        on_root_screen = (not current_cb) or current_cb == root \
+            or str(current_cb).split(":")[0] == section
+        if back_cb and back_cb == root and on_root_screen:
+            back_cb = ""
+    elif back_cb == root and root != f"menu:{section}":
+        # Подраздел хаба (магазин/игры ← вкладка 'pet:page:N'): корень
+        # раздела лежит ВНУТРИ того же экрана-сообщения, и возврат туда =
+        # перерисовка текущего сообщения («Назад ничего не делает»).
+        # Такую явную цель тоже блокируем — остаётся «🏠 Меню».
+        back_cb = ""
+    if back_cb and back_cb == current_cb:
+        back_cb = ""
     return _nav_buttons(back_cb)
 
 
 def append_nav(b: InlineKeyboardBuilder, section: str | None,
-               back_cb: str | None = None) -> InlineKeyboardBuilder:
+               back_cb: str | None = None,
+               chat_id: int | None = None,
+               current_cb: str | None = None) -> InlineKeyboardBuilder:
     """Добавляет в билдер нижнюю строку «⬅️ Назад» + «🏠 Меню»."""
-    b.row(*nav_row(section, back_cb))
+    b.row(*nav_row(section, back_cb, chat_id, current_cb))
     return b
 
 

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 
 from app.config import get_settings
+from app.db.repositories import UserRepository
 from app.services.activity import ActivityService
 
 router = Router(name="activity")
@@ -35,8 +36,22 @@ MEDIA_XP_BONUS: dict[str, int] = {
 }
 
 def _is_tracked(chat_id: int) -> bool:
+    """Отслеживаемый чат? Конфиг TRACKED_CHAT_IDS — основной источник."""
     from app.handlers.access import is_watched
-    return is_watched(chat_id)
+    if is_watched(chat_id):
+        return True
+    # Фолбэк: если в конфиге не перечислены трекаемые чаты (или чат ещё не
+    # попал в реестр), считаем отслеживаемым любой чат, где бот состоит и
+    # куда он получает сообщения. Иначе статистика молча не считается —
+    # самый частый баг «написал сообщение в группу, но оно не засчиталось».
+    try:
+        from app.services import access as _acc
+        ids = _acc.watched_chat_ids()
+        if not ids:  # TRACKED_CHAT_IDS пуст — не блокируем учёт совсем
+            return True
+    except Exception:  # noqa: BLE001
+        pass
+    return False
 
 def detect_media_type(message: Message) -> str | None:
     for attr in MEDIA_ATTRS:
@@ -65,11 +80,26 @@ async def track_group_message(message: Message, session: AsyncSession) -> None:
     text = message.text or message.caption
     media_type = detect_media_type(message)
 
+    # Медиа без текста (голосовые, кружочки, стикеры, видео…) тоже должны
+    # засчитываться: даём им условную длину, чтобы не отсеивались фильтром
+    # min_message_length как «слишком короткие».
+    if media_type and not (text or "").strip():
+        text = "[media]"
+
     if message.from_user is not None and not message.from_user.is_bot:
         from app.services.access import remember_contact
         await remember_contact(
             author, first_name=message.from_user.first_name or "",
             username=message.from_user.username)
+
+    # Диагностика: почему сообщение может НЕ засчитаться. Каждый молча
+    # отброшенный кейс — это «написал в группу, а статистика не обновилась».
+    user = await UserRepository(session).get(author)
+    if user is None:
+        logger.info("📊 трекер: пользователь {} ещё без реестровой записи — "
+                    "будет создан автоматически (первое сообщение)", author)
+    elif user.is_banned:
+        logger.info("📊 трекер: пользователь {} забанен — не считаем", author)
 
     svc = ActivityService(session, bot=message.bot)
     entry = await svc.process_group_message(
@@ -83,6 +113,10 @@ async def track_group_message(message: Message, session: AsyncSession) -> None:
         mentions_count=sum(1 for e in (message.entities or []) if e.type == "mention"),
         is_command=bool(text and text.startswith("/")),
     )
+    if entry is not None and not entry.is_counted:
+        logger.info("📊 трекер: msg {} от {} в чате {} НЕ засчитана ({})",
+                    message.message_id, author, message.chat.id,
+                    entry.skip_reason)
     if entry and entry.is_counted:
         msg_local = message.date.replace(tzinfo=timezone.utc) + timedelta(
             hours=get_settings().tz_offset_hours)

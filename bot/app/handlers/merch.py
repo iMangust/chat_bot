@@ -24,6 +24,10 @@ from app.utils.safe_edit import safe_edit_or_answer
 
 
 
+def _chat_of(cb) -> int | None:
+    return cb.message.chat.id if cb.message else None
+
+
 def _vsplit(b):
     if b.buttons:
         b.adjust(1)
@@ -109,9 +113,14 @@ async def merch_screen(cb: CallbackQuery, session) -> None:
         _vbtn(b, "🛠 Управление мерчем", "madmin:home")
     # «Назад» — туда, откуда зашли в мерч (обычно главное меню или хаб
     # питомца); «Меню» — сброс истории и выход в главный экран.
-    back = await nav.back_target(cb.message.chat.id if cb.message else None,
-                                 "menu:main")
-    b.row(*nav_row("merch", back_cb=back))
+    # Вершина стека здесь равна 'menu:merch' (мы сами на неё нажали) —
+    # возврат на неё перерисовал бы этот же экран («Назад ничего не
+    # делает»), поэтому такую запись пропускаем.
+    chat = cb.message.chat.id if cb.message else None
+    back = await nav.back_target(chat, "menu:main")
+    if not back or back.startswith("merch:") or back in ("menu:merch", "menu:main"):
+        back = None  # нет внешнего источника — умный выбор по стеку/подавление
+    b.row(*nav_row("merch", back_cb=back, chat_id=chat, current_cb="menu:merch"))
     await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=b.as_markup())
     await cb.answer()
 
@@ -137,9 +146,12 @@ async def merch_category(cb: CallbackQuery, session) -> None:
         b._vb(f"{cat.icon} {p.name}", f"merch:prod:{p.id}")
         _vsplit(b)
     # «Назад» — в экран мерча (список категорий), «Меню» — в главное.
-    back = await nav.back_target(cb.message.chat.id if cb.message else None,
-                                 "menu:merch")
-    b.row(*nav_row("merch", back_cb=back))
+    _chat = cb.message.chat.id if cb.message else None
+    back = await nav.back_target(_chat, "menu:merch")
+    if not back or back.startswith("merch:") or back in ("menu:merch", "menu:main"):
+        back = None  # внешнего источника нет — умный выбор по стеку
+    b.row(*nav_row("merch", back_cb=back, chat_id=_chat,
+                   current_cb=f"merch:cat:{code}"))
     await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=b.as_markup())
     await cb.answer()
 
@@ -174,7 +186,8 @@ async def merch_product(cb: CallbackQuery, session) -> None:
             b._vb(sz, f"merch:size:{pid}:{sz}")
         _vsplit(b)
         # «Назад» — в категорию товара (или туда, откуда зашли в карточку).
-        b.row(*nav_row("merch", back_cb=back_cb))
+        b.row(*nav_row("merch", back_cb=back_cb, chat_id=_chat_of(cb),
+                       current_cb=f"merch:prod:{pid}"))
         await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=b.as_markup())
         return await cb.answer()
     if colors:
@@ -221,8 +234,13 @@ async def merch_size(cb: CallbackQuery, session) -> None:
         match = next((v for v in variants if v.size == size), None)
         if match is None:
             return await cb.answer("Позиция не найдена 😅", show_alert=True)
+        # «Назад» — по истории переходов (обычно в карточку товара).
+        # Явный 'merch:prod:N' здесь недопустим: при повторном выборе того
+        # же размера обработчик перерисовывает ЭКРАН ПОЗИЦИИ, и кнопка
+        # «Назад → merch:prod:N» вела бы не на него, а обратно в карточку
+        # (визуально — «прыжок» вместо возврата на уровень выше).
         return await _render_variant_screen(cb, repo, product, size, match.color,
-                                            f"merch:prod:{pid}")
+                                            "")
     colors = [c for c in colors
               if any(x.color == c and x.stock > 0 for x in variants if x.size == size)]
     if not colors:
@@ -236,8 +254,12 @@ async def merch_size(cb: CallbackQuery, session) -> None:
             continue
         b._vb(c, f"merch:var:{v.id}")
     _vsplit(b)
-    # «Назад» — к выбору размера этой модели.
-    b.row(*nav_row("merch", back_cb=f"merch:prod:{pid}"))
+    # «Назад» — к выбору размера этой модели; если размеров нет (экран
+    # открыт сразу из карточки), цель совпадает с текущим экраном — тогда
+    # пусть работает стек навигации.
+    prod_cb = f"merch:prod:{pid}"
+    b.row(*nav_row("merch", back_cb=None if prod_cb == cb.data else prod_cb,
+                   chat_id=_chat_of(cb), current_cb=prod_cb))
     await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=b.as_markup())
     await cb.answer()
 
@@ -260,8 +282,15 @@ async def _render_variant_screen(cb: CallbackQuery, repo: MerchRepository,
     elif v.reserved_by is not None:
         text += "\n\n⏳ Эта позиция уже забронирована. Освободится после продажи или отмены брони."
     # «Назад» — на экран, с которого пришли к этой позиции (размер/цвет,
-    # выбор размера или категория товара).
-    b.row(*nav_row("merch", back_cb=back_cb))
+    # выбор размера или категория товара); берём его из стека навигации,
+    # если обработчик не задал цель явно (back_cb=""). current_cb — эта же
+    # позиция: защита от кнопки «Назад → merch:var:N», которая просто
+    # перерисовала бы текущий экран («ничего не происходит»).
+    cur_cb = f"merch:var:{v.id}"
+    if back_cb == cur_cb:
+        back_cb = ""
+    b.row(*nav_row("merch", back_cb=back_cb or None, chat_id=_chat_of(cb),
+                   current_cb=cur_cb))
     msg = cb.message
     try:
         if photo:

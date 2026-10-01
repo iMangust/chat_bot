@@ -463,15 +463,14 @@ async def _render_main_menu(cb: CallbackQuery, session: AsyncSession,
                                      cb.from_user.username)
     link = invite_link_for(user.tg_id)
     reward = get_settings().invite_reward_coins
-    has_pet = await PetRepository(session).has_pet(user.tg_id)
     # «Меню» — это всегда главное меню: раньше у неонборднутых без питомца оно
     # перескакивало на экран выбора питомца, из-за чего «Назад/Меню» из любого
-    # раздела (например, из мерча) вёл в онбординг. Теперь выбор питомца —
-    # обычная кнопка «🥚 Усыновить питомца» внутри меню (main_menu(has_pet=False)).
+    # раздела (например, из мерча) вёл в онбординг. Кнопки «Усыновить» в самом
+    # меню тоже нет: усыновление — внутри раздела питомца («🐾 Питомец» → хаб),
+    # где без питомца показывается экран с предложением завести его.
     page %= len(MENU_PAGES) + (1 if _menu_is_admin(cb.from_user.id) else 0)
     await safe_edit_or_answer(cb.message, _main_menu_text(user, min(page, len(MENU_PAGES) - 1)),
                               reply_markup=main_menu(link=link, reward=reward,
                                                      page=page,
-                                                     is_admin=_menu_is_admin(cb.from_user.id),
-                                                     has_pet=has_pet))
+                                                     is_admin=_menu_is_admin(cb.from_user.id)))
     await cb.answer()

@@ -78,8 +78,10 @@ async def _save(chat_id: int, stack: deque[str]) -> None:
 # Коллбэки-«шум»: клики внутри экрана (стрелки пагинации, действия), а не
 # переходы между экранами. В стек не кладём, чтобы «Назад» не возвращал
 # на ту же страницу, где пользователь уже сидит.
+# Переключение вкладок/периодов внутри одного экрана («День/Неделя/Всё
+# время», категории топов) — тоже клик внутри страницы, не переход.
 _IGNORED_PREFIXES = ("onb:", "pet:page:", "shop:page:", "inv:page:",
-                     "style:page:", "ach:page:", "top:page:")
+                     "style:page:", "ach:page:", "top:page:", "top:")
 _IGNORED_EXACT = {"menu:main", "menu:home", "pet:noop", "shop:noop",
                   "inv:noop", "style:noop", "ach:noop", "top:noop",
                   "arena:noop", "game:noop", "guess:noop", "rps:noop",

@@ -11,8 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Pet
 from app.db.repositories import PetRepository
-from app.keyboards.inline import (back_to_main, nav_row, with_nav,
-                                  _nav_back_cb)
+from app.keyboards.inline import (back_to_main, nav_row, with_nav)
 from app.services.achievements import AchievementService
 from app.services.pet_social import (MAX_FRIENDS, list_friends, make_friends,
                                      render_friend_list, suggest_friend)
@@ -96,9 +95,10 @@ async def cb_friend_add(cb: CallbackQuery, session: AsyncSession) -> None:
     await cb.answer(msg[:50])
 
 def _card_kb(chat_id: int | None = None) -> InlineKeyboardMarkup:
-    """Карточка профиля: «⬅️ Назад» по истории переходов, «🏠 Меню» — домой."""
+    """Карточка профиля — верхнеуровневый экран без подуровней: только
+    «🏠 Меню» (кнопка «Назад» дублировала бы её или вела в себя)."""
     b = InlineKeyboardBuilder()
-    b.row(*nav_row("card", back_cb=_nav_back_cb("card", chat_id)))
+    b.row(*nav_row("card", back_cb=""))
     return b.as_markup()
 
 
