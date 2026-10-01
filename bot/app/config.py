@@ -5,6 +5,7 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 __version__ = "1.0.1"
@@ -20,6 +21,33 @@ def _strip_inline_comment(v: str) -> str:
     if v.startswith("#"):
         return ""
     return v
+
+
+def _normalize_int_list(v: object) -> object:
+    """Приводит значение списка id к валидному JSON-массиву целых.
+
+    Поддерживает форматы .env:
+      TRACKED_CHAT_IDS=[-1004335857237,-1004467842206]   (JSON — нативно)
+      TRACKED_CHAT_IDS=-1004335857237,-1004467842206     (CSV без скобок)
+      TRACKED_CHAT_IDS="[-100..., -100...]"              (пробелы/кавычки)
+      TRACKED_CHAT_IDS=[]                                (пусто)
+    Пустые/нечисловые токены отбрасываются; если не осталось ни одного
+    числа — возвращаем [], чтобы pydantic не падал на битом значении.
+    """
+    if v is None or isinstance(v, (list, tuple)):
+        return v
+    s = str(v).replace(";", ",")
+    nums: list[int] = []
+    for tok in s.split(","):
+        # скобки/кавычки могли быть у каждого элемента: [-1001], [-1002]
+        tok = tok.strip().strip("[]'\"").strip()
+        if not tok:
+            continue
+        try:
+            nums.append(int(tok))
+        except ValueError:
+            continue
+    return nums
 
 def _read_env_values(path: str) -> dict[str, str]:
     raw = Path(path).read_bytes()
@@ -119,6 +147,14 @@ class Settings(BaseSettings):
                 file_secret_settings)
 
     bot_token: str = ""
+
+    @field_validator("tracked_chat_ids", "admin_ids", mode="before")
+    @classmethod
+    def _ids_from_env(cls, v: object) -> object:
+        # pydantic-settings умеет только JSON-массивы; пользовательский .env
+        # мог быть в CSV без скобок — нормализуем оба формата.
+        return _normalize_int_list(v)
+
     tracked_chat_ids: list[int] = []
 
     database_url: str = "mysql+aiomysql://tamabot:tamabot@127.0.0.1:3306/tamabot?charset=utf8mb4"
@@ -180,6 +216,9 @@ class Settings(BaseSettings):
     channel_username: str | None = None
     channel_username_visual: str | None = None
     channel_chat_id: int | None = None
+    # Группа обсуждений при канале. Не обязателен, если её id уже есть в
+    # TRACKED_CHAT_IDS; если задан — автоматически добавляется в отслеживаемые.
+    chat_discussion_group: int | None = None
 
     channel_scan_minutes: int = 30
 
@@ -227,6 +266,15 @@ def get_settings() -> Settings:
                 object.__setattr__(s, field, int(str(env_val)))
             except ValueError:
                 pass
+    # CHAT_DISCUSSION_GROUP — не дублирование TRACKED_CHAT_IDS, а опциональная
+    # подсказка (например, группа обсуждений при канале). Если id задан и его
+    # ещё нет в списке отслеживаемых — добавляем автоматически, чтобы учёт
+    # статистики/реакций работал без ручной синхронизации двух переменных.
+    if s.chat_discussion_group is not None:
+        merged = list(s.tracked_chat_ids or [])
+        if int(s.chat_discussion_group) not in [int(x) for x in merged]:
+            merged.append(int(s.chat_discussion_group))
+            object.__setattr__(s, "tracked_chat_ids", merged)
     return s
 
 
