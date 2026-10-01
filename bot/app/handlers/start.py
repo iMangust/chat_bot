@@ -240,6 +240,24 @@ async def _menu_markup(link: str | None = None, reward: int = 0, page: int = 0,
     return main_menu(link=link, reward=reward, page=page, is_admin=is_admin,
                      weather_label=await weather_button_label())
 
+
+def _repaint_weather_label(kb) -> None:
+    """Ставит актуальную метку погоды на кнопку «menu:weather» в уже
+    собранном меню (используется с кэшированной подписью — без сети)."""
+    try:
+        from app.services.weather import cached_weather_button_label
+        label = cached_weather_button_label()
+    except Exception:  # noqa: BLE001 — украшение кнопки не должно ломать меню
+        return
+    if not label:
+        return
+    for row in getattr(kb, "inline_keyboard", []):
+        for btn in row:
+            if btn.callback_data == "menu:weather":
+                btn.text = label[:64]
+                return
+
+
 @router.callback_query(F.data == "gate:check")
 async def cb_gate_check(cb: CallbackQuery, bot: Bot, session: AsyncSession,
                         state: FSMContext) -> None:

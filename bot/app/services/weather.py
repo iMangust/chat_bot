@@ -4,12 +4,13 @@ import asyncio
 import os
 import threading
 import time as _mono
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from loguru import logger
 
 from app.utils.formatting import WEATHER_SEASONS, season_for
-from app.utils.local_time import now as local_now
+from app.utils.html_text import esc
+from app.utils.local_time import KAMCHATKA_TZ, now as local_now
 
 def _weather_geo() -> tuple[str, float, float]:
     """Город и координаты берутся из Settings (переменные WEATHER_* в .env),
@@ -1159,6 +1160,14 @@ def _parse_hour_key(s: str) -> datetime | None:
         return None
 
 
+def _season_temp_c(dt: datetime) -> float:
+    """Сезонная оценка температуры (°C) для фолбэк-режима — чтобы кнопка меню
+    и экран не были пустыми, когда живые данные недоступны. Это не прогноз,
+    поэтому вывод помечается как ориентировочный."""
+    drift = ((dt.timetuple().tm_yday - 15) / 365.0) * 14.0 - 7.0
+    return round(drift)
+
+
 async def weather_now() -> dict:
     """Снимок текущей погоды для виджетов/экрана: live-данные или сезонная модель."""
     real = await _ensure_fresh()
@@ -1176,9 +1185,11 @@ async def weather_now() -> dict:
                 "type": wtype, "wind_ms": round(float(real.get("wind", 0.0)) / 3.6, 1),
                 "humidity": real.get("humidity"), "pressure": real.get("pressure_hpa")}
     base = _fallback(dt)
+    # temp — сезонная ОЦЕНКА (не прогноз): чтобы кнопка меню и экран
+    # «Сегодня» показывали градусы даже без живых данных OpenWeather.
     return {"live": False, "icon": base.get("icon", "🌡️"),
             "name": base.get("name", "—"), "note": base.get("note", ""),
-            "temp": None, "code": -1, "type": "",
+            "temp": _season_temp_c(dt), "est": True, "code": -1, "type": "",
             "wind_ms": None, "humidity": None, "pressure": None}
 
 
@@ -1190,11 +1201,30 @@ async def weather_button_label() -> str:
         logger.debug("weather_button_label: {}", exc)
         return "🌦️ Погода"
     if not w["live"]:
-        return "🌦️ Погода"
+        # Кнопка всё равно «живая»: показываем хотя бы сезонную оценку
+        # с градусами, а не просто слово «Погода» (пользователь просил
+        # текущую погоду прямо на кнопке).
+        season_label = f"{w['icon']} {_fmt_temp(w.get('temp'))} {w['name']}"
+        if len(season_label) > 26:
+            season_label = season_label[:26].rstrip()
+        _label_cache["text"], _label_cache["ts"] = season_label, _mono.monotonic()
+        return season_label
     label = f"{w['icon']} {_fmt_temp(w['temp'])} {w['name']}"
     if len(label) > 26:
         label = label[:26].rstrip()
+    _label_cache["text"], _label_cache["ts"] = label, _mono.monotonic()
     return label
+
+
+_label_cache: dict = {"text": "", "ts": 0.0}
+
+
+def cached_weather_button_label(max_age_sec: float = REFRESH_INTERVAL_SEC) -> str:
+    """Метка кнопки погоды из кэша (без сети). '' — если свежих данных нет."""
+    if (_label_cache["text"]
+            and (_mono.monotonic() - _label_cache["ts"]) < max_age_sec):
+        return _label_cache["text"]
+    return ""
 
 
 async def hourly_points() -> list[dict]:
@@ -1257,7 +1287,10 @@ def render_today(w: dict, hours: list[dict]) -> str:
     dt = local_now()
     wd = _WEEKDAY_RU[dt.weekday()]
     lines = [f"🌍 <b>{esc(city)} · {wd}, {dt.day}.{dt.month:02d}</b>", ""]
-    lines.append(f"{w['icon']} <b>{esc(w['name'])}</b> · {_fmt_temp(w['temp'])}")
+    temp = w.get("temp")
+    if temp is None and not w.get("live"):
+        temp = _season_temp_c(dt)
+    lines.append(f"{w['icon']} <b>{esc(w['name'])}</b> · {_fmt_temp(temp)}")
     if w["live"]:
         if w.get("note"):
             lines.append(esc(w["note"]))
@@ -1300,6 +1333,24 @@ def render_today(w: dict, hours: list[dict]) -> str:
 
 def render_week(rows: list[dict]) -> str:
     """Экран «на неделю вперёд»: по дню — min/max, иконка, осадки,оценку прогулки."""
+    if not rows:
+        # Фолбэк без живых данных: честная сезонная «оценка по дням»
+        # (не прогноз) — чтобы экран не был пустым.
+        city = WEATHER_CITY or "Камчатка"
+        lines = [f"📅 <b>Погода · {esc(city)} на 7 дн.</b>", "",
+                "⚠️ Живые данные OpenWeather недоступны — ниже ориентировочная",
+                "сезонная оценка, а не прогноз. Нажми «🔄 Обновить», когда сеть появится.", ""]
+        dt0 = local_now()
+        for i in range(7):
+            d = dt0.date() + timedelta(days=i)
+            wd = _WEEKDAY_RU[d.weekday()]
+            mid = _season_temp_c(datetime(d.year, d.month, d.day))
+            lo, hi = mid - 3, mid + 3
+            icon = WEATHER_SEASONS.get(season_for(dt0), {}).get("icon", "🌡️")
+            tag = "сегодня" if i == 0 else ("завтра" if i == 1 else "")
+            head = f"<b>{wd.capitalize()}</b>" + (f" <i>({tag})</i>" if tag else "")
+            lines.append(f"{head} · {icon} {lo:+.0f}…{hi:+.0f}°")
+        return "\n".join(lines)
     city = WEATHER_CITY or "Камчатка"
     lines = [f"📅 <b>Погода · {esc(city)} на {len(rows)} дн.</b>", ""]
     today_ = local_now().date()

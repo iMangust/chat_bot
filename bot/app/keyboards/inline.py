@@ -1023,7 +1023,9 @@ def weather_kb(view: str = "today") -> _IKM:
              callback_data="wthr:week")
     b.button(text="🔄 Обновить", callback_data=f"wthr:refresh:{view}")
     b.adjust(2)
-    b.row(_IKB(text="⬅️ В меню", callback_data="menu"))
+    # «menu:main» — единственный обработчик возврата в главное меню
+    # (голого payload «menu» в боте нет — такая кнопка была мёртвой).
+    b.row(_IKB(text="⬅️ В меню", callback_data="menu:main"))
     return b.as_markup()
 
 
@@ -1034,7 +1036,7 @@ def daily_report_kb() -> _IKM:
     ведёт в никуда — кнопка обязательна.
     """
     b = InlineKeyboardBuilder()
-    b.button(text="▶️ Продолжить день", callback_data="menu")
+    b.button(text="▶️ Продолжить день", callback_data="menu:main")
     b.button(text="🐾 Питомец", callback_data="menu:pet")
     b.adjust(1)
     return b.as_markup()
