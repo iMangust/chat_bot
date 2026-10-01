@@ -37,5 +37,10 @@ class ThemeMiddleware(BaseMiddleware):
                     theme_key = extra.get("theme")
                 except Exception:
                     theme_key = None
+            if theme_key is None:
+                # юзера ещё нет в БД (или колонка пустая): не затираем тему,
+                # которую только что установил обработчик выбора темы
+                # («set:theme:*» пишет её сразу в контекст и в БД).
+                theme_key = themes.current_theme_key()
             themes.set_theme(theme_key)
         return await handler(event, data)

@@ -121,6 +121,8 @@ class BotRuntime:
             dp.update.outer_middleware(AccessGateMiddleware())
             dp.callback_query.outer_middleware(ThrottleMiddleware())
             dp.callback_query.outer_middleware(errors.ErrorNotifyMiddleware())
+            # ВАЖНО: events.router содержит catch-all «menu:*» — конкретные
+            # menu:-колбэки (settings и др.) регистрируем ДО него.
             dp.include_routers(
                 errors.error_router,
                 admin.router,
@@ -128,9 +130,9 @@ class BotRuntime:
                 start.router, tracker.router,
                 tamagotchi.router, games.router, shop.router,
                 merch.router,
-                events.router,
-                social.router, arena.router, stats.router,
                 settings_handlers.router,
+                social.router, arena.router, stats.router,
+                events.router,
             )
             dp.errors.register(errors.on_error)
 

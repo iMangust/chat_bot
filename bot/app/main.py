@@ -703,6 +703,10 @@ async def main() -> None:
     # и Throttle (на задудоченных тапах не плодим историю).
     dp.callback_query.outer_middleware(NavStackMiddleware())
 
+    # ВАЖНО: events.router содержит catch-all «menu:*» (menu_any_unhandled),
+    # поэтому все роутеры с конкретными menu:-колбэками (в т.ч. settings с
+    # «menu:settings») должны быть зарегистрированы ДО него — иначе их
+    # перехватывает заглушка и пользователь видит «кнопка устарела».
     dp.include_routers(
         errors.error_router,
         admin.router,
@@ -713,11 +717,11 @@ async def main() -> None:
         games.router,
         shop.router,
         merch.router,
-        events.router,
+        settings.router,
         social.router,
         arena.router,
         stats.router,
-        settings.router,
+        events.router,
     )
     dp.errors.register(errors.on_error)
 

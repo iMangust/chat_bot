@@ -63,6 +63,10 @@ def _page_nav(prefix: str, page: int, total: int, title: str) -> list[InlineKeyb
     label = f"{title} 📖 {page + 1}/{total}" if total > 1 else title
     return [
         InlineKeyboardButton(text="◀️", callback_data=prev_cb),
+        # «menu:noop» — заглушка без действия; её подпись в теме НЕ должна
+        # переопределяться (см. themes.theme_button_label: точное совпадение
+        # с ключом вида «X:noop» пропускается), чтобы по ней можно было
+        # опознать страницу главного меню при перекраске старых сообщений.
         InlineKeyboardButton(text=label, callback_data=f"{prefix}:noop"),
         InlineKeyboardButton(text="▶️", callback_data=next_cb),
     ]

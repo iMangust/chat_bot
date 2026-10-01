@@ -6,7 +6,7 @@ import html as _html
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramAPIError
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Chat, Message
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
@@ -41,16 +41,18 @@ def _theme_intro() -> str:
 
 async def _render_settings(session: AsyncSession, message: Message, tg_id: int,
                            chat_id: int | None = None) -> None:
+    # на всякий случай актуализируем тему из БД (если middleware не отработал)
+    db_user0 = await session.get(User, tg_id)
+    key0 = ((db_user0.settings_extra or {}).get("theme")
+            if db_user0 else None) or themes.DEFAULT_THEME_KEY
+    themes.set_theme(key0)
     ns = await NotificationRepository(session).get_or_create(tg_id)
     flags = {k: bool(getattr(ns, k)) for k in _FLAG_LABELS}
     text = (_theme_intro()
-            + "\n".join(f"{'✅' if flags[k] else '❌'} {label}"
+            + "\n".join(f"{'✅' if flags[k] else '❌'} {themes.gothic(label)}"
                         for k, label in _FLAG_LABELS.items()))
     # Блок выбора темы оформления
-    db_user = await session.get(User, tg_id)
-    current_key = ((db_user.settings_extra or {}).get("theme")
-                   if db_user else None) or themes.DEFAULT_THEME_KEY
-    cur = themes.theme_for_key(current_key)
+    cur = themes.theme_for_key(key0)
     text += ("\n\n🎭 <b>Тема оформления</b>\n"
              f"Сейчас: <b>{cur.title}</b> — {cur.tagline}\n"
              "Выбери другую:")
@@ -58,6 +60,27 @@ async def _render_settings(session: AsyncSession, message: Message, tg_id: int,
     theme_rows = theme_picker_keyboard(cur.key).inline_keyboard
     kb.inline_keyboard = theme_rows + list(kb.inline_keyboard)
     await safe_edit_or_answer(message, text, reply_markup=kb)
+
+
+class _HistoryMsg:
+    """Адаптер Telethon-сообщения под интерфейс aiogram Message (для edit_text)."""
+
+    def __init__(self, bot: Bot, m) -> None:
+        self._bot = bot
+        self._m = m
+        self.message_id = m.id
+        self.chat = Chat(id=int(m.chat_id), type="private")
+
+    async def edit_text(self, text: str, *, reply_markup=None,
+                        parse_mode: str | None = "HTML", **_kw):
+        await self._bot.edit_message_text(chat_id=self.chat.id,
+                                          message_id=self.message_id,
+                                          text=text, parse_mode=parse_mode,
+                                          reply_markup=reply_markup)
+        return self
+
+    async def answer(self, text: str, **kwargs):  # pragma: no cover
+        return None
 
 @router.callback_query(F.data == "menu:settings")
 async def cb_settings(cb: CallbackQuery, session: AsyncSession) -> None:
@@ -70,36 +93,43 @@ async def cb_settings(cb: CallbackQuery, session: AsyncSession) -> None:
 # тематизированные кнопки), но старые сообщения в чате остаются в прежнем
 # стиле. При смене темы мы проходим по последним сообщениям бота в ЛС и
 # перерисовываем те из них, где под кнопками спрятан главный экран или
-# экран настроек (callback_data «menu:*» / «menu:settings»).
+# экран настроек (callback_data «menu:*» / «set:*»).
+#
+# Важно: Bot.get_chat_history — это метод MTProto-клиента (Pyrogram), у
+# aiogram-овского Bot его нет. Поэтому историю читаем через MTProto-клиент
+# (тот же механизм, что листенер реакций) и редактируем через обычный Bot API.
 
 _THEMEABLE_BTN_PREFIXES = ("menu:", "set:")
 
 
 def _main_menu_text_from_buttons(kb) -> str | None:
-    """Восстанавливает текст главного меню по подписям кнопок сообщения."""
+    """Восстанавливает СТАНДАРТНЫЙ текст главного меню по кнопкам сообщения.
+
+    Заголовок страницы берём из подписи «menu:noop» («🎮 Игра 📖 1/2», в
+    готике — «🃏 Игра …»), сопоставляя её с любой страницей MENU_PAGES по
+    последнему слову (эмодзи при этом не важен). Остальной текст — канонический
+    стандартный, поверх него перекраска таблицей эмодзи работает корректно и
+    идемпотентно (можно перекрашивать уже перекрашенное сообщение).
+    """
     from app.keyboards.inline import MENU_PAGES
-    from app.config import get_settings
-    pages = [p for p, _a in MENU_PAGES]
     label = ""
     for row in kb.inline_keyboard:
         for btn in row:
-            cb = btn.callback_data or ""
-            if cb.startswith("menu:page:") and "\U0001F4D6" in (btn.text or ""):
-                label = btn.text
-            elif cb == "menu:noop" and (btn.text or "").strip():
-                label = label or btn.text
+            if (btn.callback_data or "") == "menu:noop" and (btn.text or "").strip():
+                label = btn.text.strip()
     if not label:
         return None
-    title = label.split("\U0001F4D6")[0].strip()
-    if not title:
+    core = label.split("📖")[0].strip()
+    last_word = core.split()[-1] if core.split() else ""
+    title = None
+    for t, _a in MENU_PAGES:
+        if t.split()[-1] == last_word:
+            title = t
+            break
+    if title is None:
         return None
-    page = next((i for i, t in enumerate(pages) if t.strip() == title), 0)
-    s = get_settings()
-    reward = s.invite_reward_coins
-    invite_label = (f"🤝 Пригласить друга (+{reward})" if reward
-                    else "🤝 Пригласить друга")
     lines = [
-        f"• 🐾 Зайди к питомцу — покорми его (голод никуда не делся!)",
+        "• 🐾 Зайди к питомцу — покорми его (голод никуда не делся!)",
         "• 🌦️ Загляни в /weather — от живой погоды Камчатки зависят прогулки:",
         "   солнце = +находки и 😊 Счастье, дождь/мороз = риск простуды",
         "• 💬 Напиши в чат — засчитывается текст, фото, голос, кружок, стикер",
@@ -118,22 +148,73 @@ def _main_menu_text_from_buttons(kb) -> str | None:
             "{stats}\n\n📌 Что делать:\n" + body + ch_line)
 
 
+def _detect_screen(cbs: list[str]) -> str | None:
+    """Экран сообщения по callback_data его кнопок."""
+    if any(c == "menu:settings" or c.startswith("set:") for c in cbs):
+        return "settings"
+    if any(c.startswith("menu:") for c in cbs):
+        return "main"
+    if any(c.startswith("back:") or c == "home" for c in cbs):
+        return "sub"  # вложенные экраны: перекрашиваем только текст
+    return None
+
+
+async def _get_mtproto():
+    try:
+        from app.services.mtproto_client import holder
+        client = await holder.get()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("repaint: MTProto недоступен ({})", exc)
+        return None
+    if client is None or not getattr(holder, "is_connected", False):
+        return None
+    return client
+
+
+async def _fetch_history(client, chat_id: int, limit: int) -> list:
+    """Последние сообщения чата через MTProto (aiogram-бот историю не отдаёт)."""
+    peer = chat_id
+    if chat_id < 0:  # -100... — supergroup/channel
+        with contextlib.suppress(Exception):
+            peer = int(str(chat_id)[4:])
+    msgs = []
+    async for m in client.iter_messages(peer, limit=limit):
+        if m is not None:
+            msgs.append(m)
+    return msgs
+
+
+def _telethon_markup_to_aiogram(kb):
+    """Telethon ReplyKeyboardMarkup (inline) -> InlineKeyboardMarkup aiogram."""
+    from aiogram.types import InlineKeyboardMarkup
+    from app.keyboards.inline import InlineKeyboardButton
+    rows = []
+    for row in kb.rows:
+        r = []
+        for b in row:
+            text = getattr(b, "text", "") or ""
+            url = getattr(b, "url", None) or getattr(b, "button_url", None)
+            data = getattr(b, "data", None)
+            if isinstance(data, bytes):
+                data = data.decode("utf-8", "replace")
+            r.append(InlineKeyboardButton(text=text,
+                                          callback_data=data, url=url))
+        rows.append(r)
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def _retheme_message_text(text: str, new_theme_key: str) -> str | None:
     """Перекрашивает текст сообщения под новую тему.
 
-    В готику — прямая эмодзи-таблица; обратно в стандарт — ничего не делаем
-    (восстановление исходного текста по готической разметке ненадёжно, а
-    после /start экраны перерисовываются в стандарте целиком).
+    В готику — прямая эмодзи-таблица (идемпотентна: повторная перекраска
+    уже готического текста ничего не меняет); обратно в стандарт — ничего
+    не делаем (восстановление исходного текста по готической разметке
+    ненадёжно, а после /start экраны перерисовываются в стандарте целиком).
     """
     if new_theme_key == themes.STANDARD.key:
         return None
-    old = themes.CURRENT_THEME.get()
-    try:
-        themes.set_theme(new_theme_key)
-        mapped = themes.gothic(text)
-        return mapped if mapped != text else None
-    finally:
-        themes.CURRENT_THEME.set(old)
+    mapped = themes._map_emoji(text, themes.GOTHIC.emoji_map)
+    return mapped if mapped != text else None
 
 
 async def repaint_chat_messages(bot: Bot, chat_id: int, theme_key: str,
@@ -141,38 +222,46 @@ async def repaint_chat_messages(bot: Bot, chat_id: int, theme_key: str,
     """Перерисовывает последние сообщения бота в чате под новую тему.
 
     Определяет экран по callback_data кнопок сообщения:
-      • «menu:settings»  -> перекрашиваем весь текст (эмодзи тумблеров и т.п.);
-      • «menu:*» (главное меню) -> восстанавливаем стандартный текст по
-        подписям кнопок, перекрашиваем и пересобираем клавиатуру в новой теме.
+      • настройки («menu:settings» / «set:*») -> перекрашиваем весь текст;
+      • главное меню («menu:*») -> восстанавливаем стандартный текст по
+        подписям кнопок, перекрашиваем и пересобираем клавиатуру в новой теме;
+      • прочие экраны с навигацией -> перекрашиваем текст как есть.
     """
     repainted = 0
+    client = await _get_mtproto()
+    if client is None:
+        return 0
     try:
         me = await bot.get_me()
-        msgs = await bot.get_chat_history(chat_id, limit=limit)
+        msgs = await _fetch_history(client, chat_id, limit)
     except TelegramAPIError as exc:
         logger.debug("repaint: history unavailable ({})", exc)
         return 0
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("repaint: mtproto history failed: {}", exc)
+        return 0
     for m in msgs:
-        if m.from_user is None or m.from_user.id != me.id:
+        from_user = getattr(m, "from_user", None)
+        if from_user is None or from_user.id != me.id:
             continue
-        text = m.text or m.caption
-        if not text or m.reply_markup is None:
+        text = getattr(m, "text", None) or getattr(m, "caption", None)
+        kb_src = getattr(m, "reply_markup", None)
+        if not text or kb_src is None:
+            continue
+        try:
+            kb = _telethon_markup_to_aiogram(kb_src)
+        except Exception:  # noqa: BLE001
             continue
         cbs = [btn.callback_data or ""
-               for row in m.reply_markup.inline_keyboard for btn in row]
-        is_settings = any(c == "menu:settings" or c.startswith("set:")
-                          for c in cbs)
-        is_main = any(c.startswith("menu:") for c in cbs)
-        if not (is_settings or is_main):
+               for row in kb.inline_keyboard for btn in row]
+        screen = _detect_screen(cbs)
+        if screen is None:
             continue
         new_text: str | None = None
-        kb = m.reply_markup
-        if is_settings:
-            new_text = _retheme_message_text(text, theme_key)
-        elif is_main:
+        if screen == "main":
             std = _main_menu_text_from_buttons(kb)
             if std:
-                # подставляем сохранённые показатели из первой строки текста
+                # подставляем сохранённые показатели из строки со статистикой
                 stats_line = ""
                 for ln in text.splitlines():
                     if ("уровень" in ln or "ступень" in ln) and "XP" in ln:
@@ -182,6 +271,23 @@ async def repaint_chat_messages(bot: Bot, chat_id: int, theme_key: str,
                 new_text = _retheme_message_text(std, theme_key)
                 if new_text:
                     kb = _rebuild_kb(std, kb, theme_key)
+        elif screen == "settings":
+            # экран настроек перерисовываем ЦЕЛИКОМ (тумблеры + блок темы с
+            # актуальным списком тем), а не эмодзи-таблицей — иначе готика
+            # выглядела бы «недостаточно готической»
+            try:
+                from app.db.session import session_factory
+
+                hm = _HistoryMsg(bot, m)
+                async with session_factory() as s_:
+                    await _render_settings(s_, hm, chat_id, chat_id=chat_id)
+                repainted += 1
+                continue
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("repaint: settings re-render failed: {}", exc)
+                new_text = _retheme_message_text(text, theme_key)
+        else:  # sub
+            new_text = _retheme_message_text(text, theme_key)
         if new_text is None or new_text == text:
             continue
         try:
