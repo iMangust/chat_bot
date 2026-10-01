@@ -207,9 +207,15 @@ def _weather_error_text(exc: BaseException) -> str:
 
 
 async def _weather_text() -> str:
-    """Собирает текст погоды для команды /weather и кнопки меню."""
-    from app.services.weather import kamchatka_weather, weather_hint_block_fresh
+    """Собирает текст погоды для команды /weather и кнопки меню.
+
+    ВАЖНО: все обращения к сервису погоды — ВНУТРИ try. Импорт тоже может
+    упасть (например, в запущенном процессе лежит устаревшая версия модуля
+    без нужных имён), и раньше это исключение уходило наружу до обработчика,
+    из-за чего пользователь видел «Погода временно недоступна (NameError)».
+    """
     try:
+        from app.services.weather import kamchatka_weather, weather_hint_block_fresh
         w = await kamchatka_weather()
         hint = await weather_hint_block_fresh(walk=True, show_legend=True)
     except Exception as exc:
@@ -255,11 +261,14 @@ async def cb_weather_refresh(cb: CallbackQuery) -> None:
 
 async def _render_weather_screen(cb: CallbackQuery, view: str,
                                  force: bool = False) -> None:
-    from app.keyboards.inline import weather_kb
-    from app.services.weather import (_ensure_fresh, hourly_points,
-                                      render_today, render_week,
-                                      weather_now, _day_rows)
+    # Все обращения к сервису погоды (включая импорт — на случай устаревшего
+    # кода в запущенном процессе) внутри try: наружу не должен уходить
+    # NameError/ImportError, пользователю показывается понятная заглушка.
     try:
+        from app.keyboards.inline import weather_kb
+        from app.services.weather import (_ensure_fresh, hourly_points,
+                                          render_today, render_week,
+                                          weather_now, _day_rows)
         if force:
             await _ensure_fresh(force=True)
         w = await weather_now()
@@ -270,9 +279,11 @@ async def _render_weather_screen(cb: CallbackQuery, view: str,
         else:
             body = render_today(w, await hourly_points())
         text = body + footer
+        kb = weather_kb(view)
     except Exception as exc:
         text = _weather_error_text(exc)
-    await safe_edit_or_answer(cb.message, text, reply_markup=weather_kb(view))
+        kb = None
+    await safe_edit_or_answer(cb.message, text, reply_markup=kb)
 
 @router.message(Command("pet"), F.chat.type == "private")
 async def cmd_pet(message: Message, session: AsyncSession) -> None:

@@ -422,6 +422,10 @@ def _rebuild_kb(std_text: str, kb, theme_key: str):
     rows: list[list] = []
     it = iter(labels)
     old_flat = [btn for r in old_rows for btn in r]
+    # Живая метка погоды со СТАРОЙ кнопки — после пересборки темы подпись
+    # «menu:weather» всегда берётся из кэша погоды, а не из текста меню.
+    weather_lbl = next((b.text for b in old_flat
+                        if (b.callback_data or "") == "menu:weather"), None)
     # создаём кнопки при активной целевой теме — ThemeButton.__init__
     # подставит тематические подписи по callback_data
     prev_theme = themes.current_theme_key()
@@ -432,6 +436,8 @@ def _rebuild_kb(std_text: str, kb, theme_key: str):
             if lbl is None:
                 break
             cb = old_btn.callback_data or ""
+            if cb == "menu:weather" and weather_lbl:
+                lbl = weather_lbl  # не теряем живую температуру на кнопке
             if not rows or len(rows[-1]) >= 2:
                 rows.append([])
             rows[-1].append(InlineKeyboardButton(text=lbl, callback_data=cb))

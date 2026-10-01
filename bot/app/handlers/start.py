@@ -318,8 +318,10 @@ async def cb_onboard_start(cb: CallbackQuery, state: FSMContext,
         await cb.answer()
         return
     await state.clear()
+    kb = main_menu()
+    _repaint_weather_label(kb)
     await safe_edit_or_answer(cb.message, "Отлично! Всё уже открыто в меню ниже 👇",
-                              reply_markup=main_menu())
+                              reply_markup=kb)
     await cb.answer()
 
 @router.callback_query(F.data == "onb:skip")
@@ -329,7 +331,9 @@ async def cb_onboard_skip(cb: CallbackQuery, state: FSMContext,
     user = await users.get_or_create(cb.from_user.id, cb.from_user.first_name or "",
                                      cb.from_user.username)
     if user.onboarded:
-        await safe_edit_or_answer(cb.message, "Ты уже с нами! 🎉", reply_markup=main_menu())
+        kb = main_menu()
+        _repaint_weather_label(kb)
+        await safe_edit_or_answer(cb.message, "Ты уже с нами! 🎉", reply_markup=kb)
         await cb.answer()
         return
     user.onboarded = True
