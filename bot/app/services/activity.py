@@ -49,21 +49,20 @@ class ActivityService:
             # Пользователь написал в группе, но ещё не проходил /start в
             # личке (или пишет от имени канала). Раньше такое сообщение
             # молча игнорировалось — самый частый баг «написал в группу,
-            # а статистика не обновилась». Заводим запись автоматически:
-            # онборд засчитываем с первого сообщения где угодно.
+            # а статистика не обновилась». Заводим запись автоматически.
             user = await self.users.get_or_create(user_id)
-            user.onboarded = True
-            await self.session.flush()
         if user.is_banned:
             return None
-        if not user.onboarded:
-            # Любое первое засчитанное сообщение (в т.ч. в группе или от
-            # имени канала) = человек уже «в игре»: помечаем онборднутым.
-            user.onboarded = True
-            if not user.first_name and self.bot is not None:
+        if not user.onboarded and user.first_name:
+            # Существующий пользователь (после /start) пишет от имени
+            # канала/иначе и ещё не помечен онборднутым — добираем имя.
+            # ВАЖНО: новым пользователям (без /start) onboarded здесь НЕ
+            # ставим: иначе «Твоя статистика» показывает пустой профиль
+            # («Питомец: ещё не заведён») вместо приглашения пройти /start.
+            if not user.username and self.bot is not None:
                 try:
                     chat = await self.bot.get_chat(user_id)
-                    user.first_name = (chat.title or chat.username or "")[:128]
+                    user.username = (chat.username or "")[:64] or None
                 except Exception as exc:
                     logger.debug("channel author name fetch failed: {}", exc)
             await self.session.flush()
@@ -195,12 +194,10 @@ class ActivityService:
             # Реакцию поставил человек без записи в реестре (не проходил
             # /start или пишет от имени канала) — заводим его и засчитываем,
             # иначе «поставил реакцию, а статистика не обновилась».
+            # onboarded НЕ ставим — онбординг только через /start.
             user = await self.users.get_or_create(from_user)
-            user.onboarded = True
         if user.is_banned:
             return False
-        if not user.onboarded:
-            user.onboarded = True
         day_start = _day(local_now())
         given_today = (await self.session.execute(
             select(func.count()).select_from(ReactionLog).where(

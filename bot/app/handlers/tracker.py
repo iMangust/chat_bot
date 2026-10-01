@@ -38,7 +38,8 @@ MEDIA_XP_BONUS: dict[str, int] = {
 def _is_tracked(chat_id: int) -> bool:
     """Отслеживаемый чат? Конфиг TRACKED_CHAT_IDS — основной источник."""
     from app.handlers.access import is_watched
-    if is_watched(chat_id):
+    tracked = is_watched(chat_id)
+    if tracked:
         return True
     # Фолбэк: если в конфиге не перечислены трекаемые чаты (или чат ещё не
     # попал в реестр), считаем отслеживаемым любой чат, где бот состоит и
@@ -51,6 +52,10 @@ def _is_tracked(chat_id: int) -> bool:
             return True
     except Exception:  # noqa: BLE001
         pass
+    logger.info("📊 трекер: чат {} НЕ в списке отслеживаемых "
+                "(TRACKED_CHAT_IDS / реестр сервисных чатов) — сообщение не "
+                "будет засчитано. Проверь CHAT_DISCUSSION_GROUP/"
+                "TRACKED_CHAT_IDS в .env", chat_id)
     return False
 
 def detect_media_type(message: Message) -> str | None:
@@ -100,6 +105,13 @@ async def track_group_message(message: Message, session: AsyncSession) -> None:
                     "будет создан автоматически (первое сообщение)", author)
     elif user.is_banned:
         logger.info("📊 трекер: пользователь {} забанен — не считаем", author)
+
+    if message.sender_chat is not None and message.from_user is None:
+        from app.services.access import remember_contact
+        sc = message.sender_chat
+        with contextlib.suppress(Exception):
+            await remember_contact(sc.id, first_name=sc.title or "",
+                                   username=getattr(sc, "username", None))
 
     svc = ActivityService(session, bot=message.bot)
     entry = await svc.process_group_message(
@@ -155,11 +167,16 @@ async def track_reaction_update(update: MessageReactionUpdated,
     if update.chat.type not in ("group", "supergroup", "channel") or not _is_tracked(update.chat.id):
         return
     from_user_id: int | None = None
-    if getattr(update.user, "id", None) is not None:
+    if update.user is not None and getattr(update.user, "id", None) is not None \
+            and not update.user.is_bot:
         from_user_id = update.user.id
-    elif update.actor_chat is not None:
-        return
-    if from_user_id is None:
+    elif getattr(update.actor_chat, "id", None) is not None \
+            and getattr(update.actor_chat, "type", "") in ("channel",):
+        # Реакцию поставил канал (пользователь пишет от имени канала) —
+        # раньше такое молча игнорировалось: «поставил реакцию, статистика
+        # не обновилась». Засчитываем на id канала.
+        from_user_id = update.actor_chat.id
+    else:
         return
 
     old_set = {_reaction_emoji(r) for r in (update.old_reaction or [])} - {None}
