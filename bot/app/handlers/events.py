@@ -62,22 +62,54 @@ FIELDS = [
     ("place", "Место"),
     ("meet", "Сбор"),
     ("description", "Описание"),
-    ("image_url", "Афиша (URL)"),
+    ("image_url", "📷 Афиша (фото)"),
     ("url", "Ссылка (билеты)"),
 ]
 
 PROMPTS = {
     "title": "Например: Концерт Кани Уэста",
     "date": "Формат: 1 октября, 01.10, 1 окт или 2026-10-01",
-    "time": "Например: 19:00 (можно «-»)",
-    "place": "Например: клуб «Питон», пр. Ленина 12",
-    "meet": "Например: сбор 18:30 у входа",
-    "description": "Подробности: программа, цена билета, что взять с собой",
-    "image_url": "Прямая ссылка http(s)://… на афишу",
-    "url": "Прямая ссылка http(s)://… (билеты/подробности)",
+    "time": "Например: 19:00 · шаг необязательный",
+    "place": "Например: клуб «Питон», пр. Ленина 12 · шаг необязательный",
+    "meet": "Например: сбор 18:30 у входа · шаг необязательный",
+    "description": "Подробности: программа, цена билета, что взять с собой · шаг необязательный",
+    "url": "Прямая ссылка http(s)://… (билеты/подробности) · можно «-», чтобы убрать/пропустить",
 }
 
+# Отдельный prompt для афиши: картинка загружается сообщением (как фото в мерче),
+# хранится вечным file_id, а не ссылкой-URL.
+POSTER_PROMPT = ("Пришли картинку сообщением — она сохранится навсегда "
+                 "(как фото товара в мерче). Или нажми ⏭ Пропустить.")
+
 ADD_STEPS = ["title", "date", "time", "place", "meet", "description"]
+
+# Шаги мастера создания, которые можно пропустить
+# (кнопка «⏭ Пропустить» и сообщение «-»).
+OPTIONAL_STEPS = {"time", "place", "meet", "description", "image_url"}
+
+# Поля, которые можно очистить значением None (nullable-колонки Event).
+NULLABLE_KEYS = {"image_url", "url"}
+
+
+def _ask_text(key: str) -> str:
+    label = dict(FIELDS)[key]
+    if key == "image_url":
+        return f"🖼 <b>{label}</b>\n\n{POSTER_PROMPT}"
+    prompt = PROMPTS[key]
+    tail = "\n\nОтправь значение сообщением."
+    if key in OPTIONAL_STEPS:
+        tail += "\nЧтобы пропустить шаг — нажми ⏭ или отправь «-»."
+    return f"✏️ <b>{label}</b>\n{prompt}{tail}"
+
+
+def _wizard_kb(key: str, cancel_cb: str) -> InlineKeyboardBuilder:
+    """Клавиатура шага мастера: «⏭ Пропустить» (для необязательных) + «❌ Отменить»."""
+    b = InlineKeyboardBuilder()
+    if key in OPTIONAL_STEPS:
+        b.button(text="⏭ Пропустить", callback_data=f"evadmin:skip:{key}")
+        _vrow(b)
+    b.button(text="❌ Отменить", callback_data=cancel_cb)
+    return b
 
 
 def _summary(ev) -> str:
@@ -583,14 +615,107 @@ async def evadmin_item(cb: CallbackQuery, session) -> None:
     await cb.answer()
 
 
-async def _ask(message: Message, state: FSMContext, key: str) -> None:
+def _resolve_bot(message: Message) -> Bot | None:
+    """Бот из сообщения, либо из контекста диспетчера (fallback для тестов)."""
+    with contextlib.suppress(Exception):
+        b = message.bot
+        if b is not None:
+            return b
+    from aiogram.context import context
+    return context.get("bot")
+
+
+def _as_result(value, model):
+    """aiogram Session может вернуть dict или готовую модель — приводим к модели."""
+    if isinstance(value, model):
+        return value
+    try:
+        return model.model_validate(value)
+    except Exception:
+        return None
+
+
+async def _save_photo_as_file_id(bot: Bot | None, message: Message) -> str | None:
+    """Сохраняет фото сообщением и возвращает вечный file_id (как в мерче)."""
+    if not message.photo:
+        return None
+    fid = message.photo[-1].file_id
+    bot = bot or _resolve_bot(message)
+    if bot is None:
+        return fid
+    try:
+        raw = await bot.send_photo(message.chat.id, fid)
+        up = _as_result(raw, Message)
+        saved = up.photo[-1].file_id if (up and up.photo) else fid
+        if up is not None:
+            with contextlib.suppress(Exception):
+                await bot.delete_message(message.chat.id, up.message_id)
+        return saved
+    except Exception as exc:
+        logger.warning("event photo re-save failed: {}: {}", type(exc).__name__, exc)
+        return fid
+
+
+async def _ask(target, state: FSMContext, key: str) -> None:
+    """Показать вопрос шага мастера.
+
+    В режиме редактирования («set») перерисовываем сообщение-карточку кнопки,
+    чтобы не спамить в чате; в режиме добавления — отвечаем новым сообщением.
+    """
     data = await state.get_data()
-    b = InlineKeyboardBuilder()
-    b.button(text="❌ Отменить", callback_data=data.get("ev_cancel_cb", "evadmin:home"))
-    label = dict(FIELDS)[key]
-    await message.answer(f"✏️ <b>{label}</b>\n{PROMPTS[key]}\n\n"
-                         f"Отправь значение сообщением.",
-                         reply_markup=b.as_markup())
+    b = _wizard_kb(key, data.get("ev_cancel_cb", "evadmin:home"))
+    msg = target.message if isinstance(target, CallbackQuery) else target
+    if key == "image_url":
+        # Афиша — картинка сообщением (как фото товара в мерче).
+        # Сообщение-карточка редактирования не содержит текста, поэтому
+        # edit_text по ней упал бы; всегда отвечаем новым сообщением.
+        await msg.answer(_ask_text(key), reply_markup=b.as_markup())
+        return
+    if isinstance(target, CallbackQuery):
+        # Режим редактирования: перерисовываем карточку, чтобы не спамить.
+        await safe_edit_or_answer(target.message, _ask_text(key),
+                                  reply_markup=b.as_markup())
+    else:
+        await msg.answer(_ask_text(key), reply_markup=b.as_markup())
+
+
+@router.callback_query(F.data.startswith("evadmin:skip:"))
+async def evadmin_skip_step(cb: CallbackQuery, state: FSMContext, session) -> None:
+    """⏭ Пропустить необязательный шаг мастера/редактирования."""
+    if not _is_event_admin(cb.from_user.id):
+        await cb.answer("Только для админов.", show_alert=True)
+        return
+    parts = cb.data.split(":")
+    key = parts[2] if len(parts) > 2 else ""
+    data = await state.get_data()
+    mode = data.get("mode")
+    if mode == "set":
+        eid = data.get("eid")
+        if key != data.get("key"):
+            await cb.answer()
+            return
+        repo = EventRepository(session)
+        await repo.update(eid, **{key: None if key in NULLABLE_KEYS else ""})
+        await session.commit()
+        await state.clear()
+        await cb.answer("Пропущено ⏭")
+        await _item_menu(cb, session, int(eid))
+        return
+    # режим добавления: шаг по индексу в ADD_STEPS
+    steps = ADD_STEPS
+    i = int(data.get("step", 0))
+    if i >= len(steps) or steps[i] != key:
+        await cb.answer()
+        return
+    draft = dict(data.get("draft") or {})
+    draft[key] = ""
+    i += 1
+    await state.update_data(step=i, draft=draft)
+    await cb.answer("Пропущено ⏭")
+    if i < len(steps):
+        await _ask(cb.message, state, steps[i])
+    else:
+        await _create_from_draft(cb.message, state, session, draft)
 
 
 @router.callback_query(F.data == "evadmin:add")
@@ -714,7 +839,19 @@ async def ev_wizard_text(message: Message, state: FSMContext, session) -> None:
         fields: dict = {}
         if key == "date":
             fields["date"] = _parse_date(value) or value
-        elif key in ("image_url", "url"):
+        elif key == "image_url":
+            # Афиша загружается картинкой-сообщением (как фото в мерче).
+            # Текстом можно прислать URL как fallback или «-», чтобы убрать.
+            if value == "-":
+                fields[key] = None
+            elif value.lower().startswith(("http://", "https://", "tg://")):
+                fields[key] = value
+            else:
+                await message.answer(
+                    "🖼 Пришли <b>картинку</b> сообщением — она сохранится навсегда.\n"
+                    "Либо отправь ссылку http(s)://…, либо «-»/⏭, чтобы убрать/пропустить.")
+                return
+        elif key == "url":
             if value == "-":
                 fields[key] = None
             elif not value.lower().startswith(("http://", "https://", "tg://")):
@@ -722,12 +859,10 @@ async def ev_wizard_text(message: Message, state: FSMContext, session) -> None:
                 return
             else:
                 fields[key] = value
-        elif value == "-" and key in ("time", "place", "meet", "description"):
+        elif value == "-" and key in OPTIONAL_STEPS:
             fields[key] = ""
         else:
             fields[key] = value
-        if key == "title" and value != "-":
-            pass
         await repo.update(eid, **fields)
         await session.commit()
         await state.clear()
@@ -752,6 +887,13 @@ async def ev_wizard_text(message: Message, state: FSMContext, session) -> None:
         await state.update_data(step=i, draft=draft)
         await _ask(message, state, steps[i])
         return
+    await state.update_data(step=i, draft=draft)
+    await _create_from_draft(message, state, session, draft)
+
+
+async def _create_from_draft(message: Message, state: FSMContext, session,
+                             draft: dict) -> None:
+    """Финализация мастера добавления: создание события + экран с действиями."""
     repo = EventRepository(session)
     ev = await repo.create(title=draft.get("title") or "Без названия",
                            date=draft.get("date", ""), time=draft.get("time", ""),
@@ -760,7 +902,7 @@ async def ev_wizard_text(message: Message, state: FSMContext, session) -> None:
     await session.commit()
     await state.clear()
     b = InlineKeyboardBuilder()
-    b.button(text="🖼 Добавить афишу", callback_data=f"evadmin:set:{ev.id}:image_url")
+    b.button(text="📷 Добавить афишу", callback_data=f"evadmin:set:{ev.id}:image_url")
     _vrow(b)
     b.button(text="🔗 Добавить ссылку", callback_data=f"evadmin:set:{ev.id}:url")
     _vrow(b)
@@ -769,3 +911,56 @@ async def ev_wizard_text(message: Message, state: FSMContext, session) -> None:
     _vrow(b)
     await message.answer("✅ Мероприятие создано!\n\n" + _summary(ev),
                          reply_markup=b.as_markup())
+
+
+@router.message(EvStates.awaiting, F.photo & F.chat.type == ChatType.PRIVATE)
+async def ev_wizard_photo(message: Message, state: FSMContext, session) -> None:
+    """Загрузка афиши картинкой-сообщением (по образцу фото товара в мерче)."""
+    if not _is_event_admin(message.from_user.id):
+        await state.clear()
+        return
+    data = await state.get_data()
+    if data.get("mode") != "set" or data.get("key") != "image_url":
+        await message.answer("Сейчас от тебя нужно текстовое значение 🙂 "
+                             "(или нажми «❌ Отменить»).")
+        return
+    eid = data.get("eid")
+    bot = _resolve_bot(message)
+    fid = await _save_photo_as_file_id(bot, message)
+    if not fid:
+        b = InlineKeyboardBuilder()
+        b.button(text="⏭ Пропустить", callback_data="evadmin:skip:image_url")
+        _vrow(b)
+        b.button(text="❌ Отменить", callback_data=data.get("ev_cancel_cb", "evadmin:home"))
+        await message.answer(
+            "Не удалось сохранить фото 😅 Telegram не отдал файл (часто бывает со "
+            "старыми пересланными картинками). Пришли фото ещё раз обычным "
+            "сообщением — обычно помогает.\nИли пропусти / отмени ввод 👇",
+            reply_markup=b.as_markup())
+        return
+    repo = EventRepository(session)
+    await repo.update(eid, image_url=fid)
+    await session.commit()
+    await state.clear()
+    ev = await repo.get(eid)
+    b = InlineKeyboardBuilder()
+    if ev is not None:
+        b.button(text="🛠 К мероприятию", callback_data=f"evadmin:item:{eid}")
+    else:
+        b.button(text="📋 К списку", callback_data="evadmin:list")
+    _vrow(b)
+    b.button(text="🏠 Меню", callback_data="menu:main")
+    await message.answer("✅ Афиша сохранена — участники увидят её на карточке "
+                         "мероприятия!", reply_markup=b.as_markup())
+
+
+@router.message(EvStates.awaiting,
+                (F.chat.type == ChatType.PRIVATE) & ~F.text & ~F.photo)
+async def ev_wizard_other_media(message: Message, state: FSMContext) -> None:
+    """Реакция на стикеры/видео/документы вместо текста или фото-афиши."""
+    data = await state.get_data()
+    if data.get("mode") == "set" and data.get("key") == "image_url":
+        await message.answer("🖼 Нужна именно <b>картинка</b>. Пришли фото сообщением "
+                             "или нажми ⏭ Пропустить.")
+    else:
+        await message.answer("Отправь значение текстом (или нажми кнопки 👇).")

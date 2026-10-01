@@ -127,6 +127,9 @@ MENU_PAGES: list[tuple[str, list[tuple[str, str]]]] = [
         ("🐾 Питомец", "menu:pet"),
         ("🧢 Наш мерч", "menu:merch"),
         ("📅 Мероприятия", "menu:events"),
+        # Кнопка «Погода»: подпись динамически перекрашивается в актуальную
+        # погоду («🌦 +3° Дождь») — см. update_weather_button / main_menu.
+        ("☀️ Погода", "menu:weather"),
     ]),
     ("👤 Профиль", [
         ("📊 Статистика", "menu:stats"),
@@ -146,11 +149,11 @@ ADMIN_TOOLS_PAGE = ("🛠 Инструменты админа", [
     ("🧢 Управление мерчем", "madmin:home"),
     ("📅 Управление мероприятиями", "evadmin:home"),
     ("⚙️ Мои настройки", "menu:settings"),
-    ("☀️ Погода (/weather)", "menu:weather"),
 ])
 
 def main_menu(link: str | None = None, reward: int = 0,
-              page: int = 0, is_admin: bool = False) -> InlineKeyboardMarkup:
+              page: int = 0, is_admin: bool = False,
+              weather_label: str | None = None) -> InlineKeyboardMarkup:
     settings = get_settings()
     pages = list(MENU_PAGES)
     if is_admin:
@@ -160,6 +163,13 @@ def main_menu(link: str | None = None, reward: int = 0,
     buttons = [InlineKeyboardButton(text=t, callback_data=cb)
                for t, cb in actions
                if not (cb == "menu:merch" and not settings.merch_enabled)]
+    # Кнопка «☀️ Погода» показывает актуальную погоду прямо в подписи
+    # («🌦 +3° Дождь»). Метка приходит извне (update_weather_button /
+    # кэш сервиса), чтобы сборка меню никогда не делала сетевой запрос.
+    if weather_label:
+        for btn in buttons:
+            if btn.callback_data == "menu:weather":
+                btn.text = weather_label[:64]
     kb_rows: list[list[InlineKeyboardButton]] = _two_per_row(buttons)
     # Постраничная навигация меню (◀️ 📖 ▶️). Отдельного CTA «🥚 Усыновить
     # питомца» здесь нет: усыновление живёт в разделе питомца — кнопка
@@ -994,3 +1004,37 @@ def open_slot_of(cb_data: str) -> int | None:
     except (IndexError, ValueError):
         pass
     return None
+
+
+# ============================================================================
+# Погодный раздел (wthr:*) и клавиатура дневного отчёта
+# ============================================================================
+
+def weather_kb(view: str = "today") -> _IKM:
+    """Навигация погодного экрана: «Сегодня» / «Неделя» + возврат в меню.
+
+    Активный таб подсвечивается галочкой ✅ — экран двухрежимный, и без
+    метки пользователь не понимает, где он сейчас.
+    """
+    b = InlineKeyboardBuilder()
+    b.button(text=("✅ Сегодня" if view == "today" else "📅 Сегодня"),
+             callback_data="wthr:today")
+    b.button(text=("✅ Неделя" if view == "week" else "🗓 Неделя"),
+             callback_data="wthr:week")
+    b.button(text="🔄 Обновить", callback_data=f"wthr:refresh:{view}")
+    b.adjust(2)
+    b.row(_IKB(text="⬅️ В меню", callback_data="menu"))
+    return b.as_markup()
+
+
+def daily_report_kb() -> _IKM:
+    """Кнопки под вечерним дневным отчётом («Твой день»).
+
+    Без этой клавиатуры фраза «Жми „Продолжить день“» в тексте отчёта
+    ведёт в никуда — кнопка обязательна.
+    """
+    b = InlineKeyboardBuilder()
+    b.button(text="▶️ Продолжить день", callback_data="menu")
+    b.button(text="🐾 Питомец", callback_data="menu:pet")
+    b.adjust(1)
+    return b.as_markup()

@@ -215,10 +215,49 @@ async def cmd_weather(message: Message) -> None:
 
 @router.callback_query(F.data == "menu:weather")
 async def cb_menu_weather(cb: CallbackQuery) -> None:
-    # Кнопка «☀️ Погода» в админ-странице меню: раньше вела в мёртвый
-    # menu:noop и ничего не делала. Теперь показывает тот же экран, что /weather.
-    await safe_edit_or_answer(cb.message, await _weather_text())
+    # Кнопка погоды в главном меню — вход в полноценный погодный раздел:
+    # «Сегодня» (актуальный снимок + почасовая лента) / «Неделя» (прогноз
+    # по дням). Подпись самой кнопки показывает актуальную погоду.
+    await _render_weather_screen(cb, view="today", force=False)
     await cb.answer()
+
+
+@router.callback_query(F.data.in_({"wthr:today", "wthr:week"}))
+async def cb_weather_view(cb: CallbackQuery) -> None:
+    view = "week" if cb.data.endswith("week") else "today"
+    await _render_weather_screen(cb, view=view, force=False)
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("wthr:refresh:"))
+async def cb_weather_refresh(cb: CallbackQuery) -> None:
+    view = cb.data.split(":")[-1]
+    if view not in ("today", "week"):
+        view = "today"
+    await _render_weather_screen(cb, view=view, force=True)
+    await cb.answer("Погода обновлена 🔄")
+
+
+async def _render_weather_screen(cb: CallbackQuery, view: str,
+                                 force: bool = False) -> None:
+    from app.keyboards.inline import weather_kb
+    from app.services.weather import (_ensure_fresh, hourly_points,
+                                      render_today, render_week,
+                                      weather_now, _day_rows)
+    try:
+        if force:
+            await _ensure_fresh(force=True)
+        w = await weather_now()
+        hint = await weather_hint_block_fresh(show_legend=True)
+        footer = ("\n\n📋 Как это влияет на питомца:\n" + hint) if hint else ""
+        if view == "week":
+            body = render_week(_day_rows(await hourly_points()))
+        else:
+            body = render_today(w, await hourly_points())
+        text = body + footer
+    except Exception as exc:
+        text = f"🌦️ Погода временно недоступна ({type(exc).__name__})."
+    await safe_edit_or_answer(cb.message, text, reply_markup=weather_kb(view))
 
 @router.message(Command("pet"), F.chat.type == "private")
 async def cmd_pet(message: Message, session: AsyncSession) -> None:

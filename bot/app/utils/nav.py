@@ -81,7 +81,12 @@ async def _save(chat_id: int, stack: deque[str]) -> None:
 # Переключение вкладок/периодов внутри одного экрана («День/Неделя/Всё
 # время», категории топов) — тоже клик внутри страницы, не переход.
 _IGNORED_PREFIXES = ("onb:", "pet:page:", "shop:page:", "inv:page:",
-                     "style:page:", "ach:page:", "top:page:", "top:")
+                     "style:page:", "ach:page:", "top:page:", "top:",
+                     # шаги двухшагового подтверждения брони мерча
+                     # («merch:sold:yes:<vid>» и т.п.) — действие внутри
+                     # экрана, а не переход; иначе «Назад» из карточки
+                     # вёл бы на саму карточку (дубликат в стеке)
+                     "merch:sold:", "merch:cancel:")
 _IGNORED_EXACT = {"menu:main", "menu:home", "pet:noop", "shop:noop",
                   "inv:noop", "style:noop", "ach:noop", "top:noop",
                   "arena:noop", "game:noop", "guess:noop", "rps:noop",

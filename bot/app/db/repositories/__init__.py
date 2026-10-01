@@ -721,7 +721,9 @@ class MerchRepository:
         await self.session.delete(v)
         return True
 
-    async def reserve(self, variant_id: int, user_id: int) -> str:
+    async def reserve(self, variant_id: int, user_id: int, *,
+                      buyer_name: str = "",
+                      buyer_username: str | None = None) -> str:
         from app.db.models import MerchVariant
         v = await self.get_variant(variant_id)
         if v is None:
@@ -735,7 +737,9 @@ class MerchRepository:
             .where(MerchVariant.id == variant_id,
                    MerchVariant.reserved_by.is_(None),
                    MerchVariant.stock > 0)
-            .values(reserved_by=user_id, reserved_at=utcnow()))
+            .values(reserved_by=user_id, reserved_at=utcnow(),
+                    buyer_name=(buyer_name or "")[:128],
+                    buyer_username=(buyer_username or None)))
         if res.rowcount != 1:
             return "already_reserved"
         return "ok"
@@ -856,8 +860,11 @@ class EventRepository:
         ev = await self.get(event_id)
         if ev is None:
             return False
+        nullable = {c.name for c in Event.__table__.columns if c.nullable}
         for k, v in fields.items():
-            if hasattr(ev, k) and v is not None:
+            # None — легальный способ очистить необязательное поле (афиша/ссылка);
+            # для NOT NULL колонок None по-прежнему игнорируется.
+            if hasattr(ev, k) and (v is not None or k in nullable):
                 setattr(ev, k, v)
         await self.session.flush()
         return True

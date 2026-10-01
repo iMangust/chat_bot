@@ -108,8 +108,18 @@ async def flush_notifications(bot: Bot) -> None:
                         uname = (await session.execute(
                             select(_U.first_name).where(_U.tg_id == n.user_id)
                         )).scalar_one_or_none() or str(n.user_id)
+                # клавиатура, прикреплённая к уведомлению (например,
+                # «Продолжить день» в дневном отчёте)
+                kb = None
+                if getattr(n, "payload_json", None):
+                    try:
+                        from aiogram.types import InlineKeyboardMarkup
+                        kb = InlineKeyboardMarkup.model_validate_json(n.payload_json)
+                    except Exception as exc:  # noqa: BLE001 — без кнопок лучше, чем мимо
+                        logger.debug("notification {} kb parse failed: {}", n.id, exc)
                 try:
-                    await bot.send_message(n.user_id, n.text, parse_mode="HTML")
+                    await bot.send_message(n.user_id, n.text, parse_mode="HTML",
+                                           reply_markup=kb)
                     n.sent = True
                     sent += 1
                 except TelegramAPIError as exc:
@@ -190,13 +200,28 @@ async def daily_reports(bot: Bot) -> None:
                 pet = (await session.execute(
                     select(Pet).where(Pet.user_id == u.tg_id, Pet.is_archived.is_(False))
                 )).scalars().first()
-                text = await build_daily_report(u, pet, stats_today, rank=None)
-                await queue_notification(session, int(u.tg_id), "daily", text)
-                sent += 1
+                # прирост XP/монет за сегодня — по правилам начисления
+                # активности (xp_per_message / coins_per_message_cap)
+                st = get_settings()
+                xp_gained = stats_today * st.xp_per_message
+                coins_earned = min(stats_today, st.coins_per_message_cap * 10)
+                text = await build_daily_report(
+                    u, pet, stats_today, rank=None,
+                    xp_gained=xp_gained, new_level=False,
+                    coins_earned=coins_earned)
+                # «Продолжить день» — кнопка под самим отчётом; если её не
+                # прикрепить, обещание в тексте становится недостижимым.
+                from app.keyboards.inline import daily_report_kb
+                ok = await queue_notification(session, int(u.tg_id), "daily", text,
+                                              reply_markup=daily_report_kb())
+                if ok:
+                    sent += 1
             await session.commit()
             logger.info("daily reports queued: {}", sent)
     finally:
         await release_lock("daily_report")
+
+
 
 async def evening_streak_warnings(bot: Bot) -> None:
     if not await acquire_lock("streak_warn", ttl_sec=3000):

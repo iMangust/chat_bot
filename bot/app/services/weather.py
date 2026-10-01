@@ -466,11 +466,17 @@ def _describe(temp_c: float, wind_kmh: float, code: int, feels: float | None = N
 
 _cache: dict = {"ts": 0.0, "info": None, "next_try_mono": 0.0}
 _decay_cache: dict = {"ts": 0.0, "mods": {}}
+# Сырые почасовые точки последнего успешного запроса прогноза
+# ([{"time": "YYYY-MM-DDTHH", "temp", "code", "precip", "gust", "cloud"}]).
+# Нужны для недельного экрана погоды: One Call отдаёт 24 ч, /2.5/forecast —
+# до 5 дней (3 ч шаг). Кэш живёт столько же, сколько основной кэш погоды.
+_hours_cache: dict = {"ts": 0.0, "points": []}
 
 def _reset_state_for_tests() -> None:
     global _fetch_inflight, _inflight_force
     _cache.update({"ts": 0.0, "info": None, "next_try_mono": 0.0})
     _decay_cache.update({"ts": 0.0, "mods": {}})
+    _hours_cache.update({"ts": 0.0, "points": []})
     with _FETCH_GUARD:
         _fetch_inflight = None
         _inflight_force = False
@@ -488,6 +494,20 @@ async def _do_fetch() -> dict | None:
     ts = _mono.monotonic()
     _cache["ts"] = ts
     _cache["info"] = real
+    # сохраняем почасовые точки для недельного экрана (wthr:week)
+    hp = ((real or {}).get("hourly") or {}).get("time") or []
+    if hp:
+        hd = real.get("hourly") or {}
+        _hours_cache["ts"] = ts
+        _hours_cache["points"] = [
+            {"time": t, "temp": (hd.get("temp") or [None] * len(hp))[i],
+             "code": (hd.get("code") or [None] * len(hp))[i],
+             "precip": (hd.get("precip") or [0.0] * len(hp))[i],
+             "gust": (hd.get("gust") or [0.0] * len(hp))[i],
+             "cloud": (hd.get("cloud") or [None] * len(hp))[i]}
+            for i, t in enumerate(hp)]
+    else:
+        _hours_cache["ts"], _hours_cache["points"] = 0.0, []
     if real is None:
         _cache["next_try_mono"] = ts + RETRY_AFTER_SEC
         logger.warning("погода: источник недоступен — показываем последний "
@@ -1107,3 +1127,198 @@ async def kamchatka_weather() -> dict:
     if hol_line:
         info["holiday_icon"], info["holiday_note"] = hol_line
     return info
+
+
+# ============================================================================
+# Погодный раздел главного меню (wthr:*)
+# ============================================================================
+
+_WEEKDAY_RU = ("пн", "вт", "ср", "чт", "пт", "сб", "вс")
+_DAY_ICON = {0: "☀️", 1: "🌤️", 2: "⛅", 3: "☁️", 45: "🌫️", 48: "🧊",
+             51: "🌦️", 53: "🌦️", 55: "🌧️", 61: "🌧️", 63: "🌧️", 65: "🌧️",
+             66: "🌧️", 71: "🌨️", 73: "❄️", 75: "❄️", 77: "🌨️", 80: "🌦️",
+             81: "🌧️", 82: "⛈️", 85: "🌨️", 86: "❄️", 95: "⛈️", 96: "⛈️",
+             99: "⛈️"}
+# «Хорошая погода для прогулки» — типы из classify_weather с множителем ≥ 1.0
+_GOOD_TYPES = {"sunny", "cloudy", "overcast", "snowy"}
+
+
+def _fmt_temp(t) -> str:
+    try:
+        return f"{float(t):+.0f}°"
+    except (TypeError, ValueError):
+        return "··°"
+
+
+def _parse_hour_key(s: str) -> datetime | None:
+    """'YYYY-MM-DDTHH' (UTC) -> aware-datetime UTC."""
+    from datetime import timezone as _tz
+    try:
+        return datetime.strptime(str(s)[:13], "%Y-%m-%dT%H").replace(tzinfo=_tz.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+async def weather_now() -> dict:
+    """Снимок текущей погоды для виджетов/экрана: live-данные или сезонная модель."""
+    real = await _ensure_fresh()
+    dt = local_now()
+    if isinstance(real, dict) and real.get("temperature") is not None:
+        icon, name, note = _describe(
+            real["temperature"], real.get("wind", 0.0), int(real.get("code", 2)),
+            feels=real.get("feels"), gust=real.get("gust"),
+            night=not real.get("is_day", True))
+        wtype = classify_weather(int(real.get("code", 2)), real["temperature"],
+                                 real.get("wind", 0.0), gust=real.get("gust"),
+                                 snow_cm=real.get("snow_cm", 0.0))
+        return {"live": True, "icon": icon, "name": name, "note": note,
+                "temp": float(real["temperature"]), "code": int(real.get("code", 2)),
+                "type": wtype, "wind_ms": round(float(real.get("wind", 0.0)) / 3.6, 1),
+                "humidity": real.get("humidity"), "pressure": real.get("pressure_hpa")}
+    base = _fallback(dt)
+    return {"live": False, "icon": base.get("icon", "🌡️"),
+            "name": base.get("name", "—"), "note": base.get("note", ""),
+            "temp": None, "code": -1, "type": "",
+            "wind_ms": None, "humidity": None, "pressure": None}
+
+
+async def weather_button_label() -> str:
+    """Подпись кнопки погоды в главном меню: «🌦 +3° Дождь» (не длиннее ~26 симв.)."""
+    try:
+        w = await weather_now()
+    except Exception as exc:  # noqa: BLE001 — меню не должно падать из-за погоды
+        logger.debug("weather_button_label: {}", exc)
+        return "🌦️ Погода"
+    if not w["live"]:
+        return "🌦️ Погода"
+    label = f"{w['icon']} {_fmt_temp(w['temp'])} {w['name']}"
+    if len(label) > 26:
+        label = label[:26].rstrip()
+    return label
+
+
+async def hourly_points() -> list[dict]:
+    """Почасовые точки прогноза (UTC-ключи) из кэша последнего запроса."""
+    fresh = (_mono.monotonic() - _hours_cache["ts"]) < _ttl()
+    if not fresh:
+        await _ensure_fresh()
+    pts = [_hours_cache["points"] and p for p in _hours_cache["points"]]
+    return [p for p in pts if p]
+
+
+def _day_rows(points: list[dict], days: int = 7) -> list[dict]:
+    """Группировка почасовых точек по камчатским суткам: min/max/самая частая «погода»."""
+    by_day: dict = {}
+    for p in points:
+        dt = _parse_hour_key(p.get("time") or "")
+        if dt is None:
+            continue
+        d = dt.astimezone(KAMCHATKA_TZ).date()
+        by_day.setdefault(d, []).append(p)
+    today_ = local_now().date()
+    rows: list[dict] = []
+    for i in range(days):
+        d = today_ + timedelta(days=i)
+        ps = by_day.get(d)
+        if not ps:
+            continue
+        temps = [float(p["temp"]) for p in ps if p.get("temp") is not None]
+        codes = [int(p["code"]) for p in ps if p.get("code") is not None]
+        precip = max((float(p.get("precip") or 0.0) for p in ps), default=0.0)
+        gust = max((float(p.get("gust") or 0.0) for p in ps), default=0.0)
+        wind = max((float(p.get("wind") or 0.0) for p in ps), default=0.0)
+        code = max(set(codes), key=codes.count) if codes else 2
+        tmin, tmax = (min(temps), max(temps)) if temps else (None, None)
+        temp_for_cls = ((tmin + tmax) / 2.0) if temps else 0.0
+        wtype = classify_weather(code, temp_for_cls, wind, gust=gust)
+        rows.append({"date": d, "tmin": tmin, "tmax": tmax, "code": code,
+                     "precip": precip, "gust": gust, "wind": wind,
+                     "type": wtype, "n": len(ps)})
+    return rows
+
+
+def _walk_rating(wtype: str) -> tuple[str, str]:
+    if not wtype:
+        return ("•", "нет данных")
+    m = WALK_MODS.get(wtype) or {}
+    mult = float(m.get("mult", 1.0))
+    if mult >= 1.25:
+        return ("🚶🚶🚶", "отлично")
+    if mult >= 1.05:
+        return ("🚶🚶", "хорошо")
+    if mult >= 0.95:
+        return ("🚶", "нейтрально")
+    return ("🏠", "лучше дома")
+
+
+def render_today(w: dict, hours: list[dict]) -> str:
+    """Экран «сегодня»: крупный снимок + почасовая лента до конца суток."""
+    city = WEATHER_CITY or "Камчатка"
+    dt = local_now()
+    wd = _WEEKDAY_RU[dt.weekday()]
+    lines = [f"🌍 <b>{esc(city)} · {wd}, {dt.day}.{dt.month:02d}</b>", ""]
+    lines.append(f"{w['icon']} <b>{esc(w['name'])}</b> · {_fmt_temp(w['temp'])}")
+    if w["live"]:
+        if w.get("note"):
+            lines.append(esc(w["note"]))
+        extra = []
+        if w.get("wind_ms") is not None:
+            extra.append(f"💨 {w['wind_ms']:.0f} м/с")
+        if w.get("humidity") is not None:
+            extra.append(f"💧 {w['humidity']:.0f}%")
+        if w.get("pressure") is not None:
+            hpa = round(float(w["pressure"]) * 0.7500637)
+            extra.append(f"🌀 {hpa} мм рт.ст.")
+        if extra:
+            lines += ["", " · ".join(extra)]
+    else:
+        lines.append("⚠️ Живые данные недоступны — сезонная модель")
+    # почасовая лента: до 12 следующих часов, строками по 4 часа
+    now_utc = datetime.now(timezone.utc)
+    nxt = []
+    for p in hours:
+        dth = _parse_hour_key(p.get("time") or "")
+        if dth is None or dth < now_utc - timedelta(hours=1):
+            continue
+        nxt.append((dth, p))
+        if len(nxt) >= 12:
+            break
+    if nxt:
+        lines += ["", "<b>⏰ Ближайшие часы</b>"]
+        row: list[str] = []
+        for dth, p in nxt:
+            loc = dth.astimezone(KAMCHATKA_TZ)
+            icon = _DAY_ICON.get(int(p.get("code") or 0), "🌡️")
+            row.append(f"{loc:%H}:00 {icon}{_fmt_temp(p.get('temp'))}")
+            if len(row) == 3:
+                lines.append("   " + "  ".join(row))
+                row = []
+        if row:
+            lines.append("   " + "  ".join(row))
+    return "\n".join(lines)
+
+
+def render_week(rows: list[dict]) -> str:
+    """Экран «на неделю вперёд»: по дню — min/max, иконка, осадки,оценку прогулки."""
+    city = WEATHER_CITY or "Камчатка"
+    lines = [f"📅 <b>Погода · {esc(city)} на {len(rows)} дн.</b>", ""]
+    today_ = local_now().date()
+    for r in rows:
+        d = r["date"]
+        tag = ("Сегодня" if d == today_ else
+               "Завтра" if d == today_ + timedelta(days=1)
+               else _WEEKDAY_RU[d.weekday()])
+        icon = _DAY_ICON.get(int(r.get("code", 2)), "🌡️")
+        span = f"{_fmt_temp(r['tmin'])}…{_fmt_temp(r['tmax'])}" \
+            if r["tmin"] is not None else "··"
+        walk_icon, walk_word = _walk_rating(r.get("type", ""))
+        line = f"<b>{tag.capitalize():<8}</b> {icon} {span:<9} 🚶 {walk_icon} {walk_word}"
+        lines.append(line)
+        det: list[str] = []
+        if r.get("precip"):
+            det.append(f"🌧 осадки до {r['precip']:.0f} мм")
+        if r.get("gust"):
+            det.append(f"💨 порывы до {r['gust'] / 3.6:.0f} м/с")
+        if det:
+            lines.append("          " + " · ".join(det))
+    return "\n".join(lines)

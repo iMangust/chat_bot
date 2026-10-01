@@ -192,10 +192,53 @@ async def cmd_start(message: Message, state: FSMContext, session: AsyncSession,
         await session.commit()
     link = invite_link_for(user.tg_id)
     reward = get_settings().invite_reward_coins
+    # Deep-link навигация из уведомлений: /start nav_<screen>_[arg] сразу
+    # открывает нужный экран вместо главного меню. Сейчас используется в
+    # уведомлении о новой броне мерча («📋 Все брони», «🧾 Бронь #id»).
+    if payload.startswith("nav_"):
+        handled = await _handle_nav_payload(payload, message, session)
+        if handled:
+            return
     text = _main_menu_text(user)
-    await message.answer(text, reply_markup=main_menu(
+    await message.answer(text, reply_markup=await _menu_markup(
         link=link, reward=reward, is_admin=_menu_is_admin(message.from_user.id)),
         parse_mode="HTML")
+
+
+async def _handle_nav_payload(payload: str, message: Message,
+                              session: AsyncSession) -> bool:
+    """Открыть экран по deep-link-адресату (см. merch._bot_link).
+
+    Формат: ``nav_<screen>`` или ``nav_<screen>_<arg>``. Возвращает True,
+    если экран открыт; False — неизвестный адресат (тогда покажем меню).
+    """
+    rest = payload[4:]  # срезать "nav_"
+    # Токен навигации: «nav_merch_myres» → ("merch", "myres");
+    # «nav_rescard_123» → ("rescard", "123").
+    parts = rest.split("_", 1)
+    screen = parts[0] if parts else ""
+    arg = parts[1] if len(parts) > 1 else ""
+    if screen == "merch" and arg == "myres":
+        from app.handlers.merch import merch_my_reserves_open
+        await merch_my_reserves_open(message, session, message.from_user.id)
+        return True
+    if screen == "rescard" and arg.isdigit():  # nav_rescard_<vid>
+        from app.handlers.merch import merch_reserve_card_open
+        await merch_reserve_card_open(message, session, int(arg),
+                                      message.from_user.id)
+        return True
+    return False
+
+async def _menu_markup(link: str | None = None, reward: int = 0, page: int = 0,
+                       is_admin: bool = False):
+    """Главное меню + подпись актуальной погоды на кнопке «Погода».
+
+    Метка берётся из кэша сервиса погоды (weather_button_label), поэтому
+    сборка меню не делает лишних сетевых запросов и не может зависнуть.
+    """
+    from app.services.weather import weather_button_label
+    return main_menu(link=link, reward=reward, page=page, is_admin=is_admin,
+                     weather_label=await weather_button_label())
 
 @router.callback_query(F.data == "gate:check")
 async def cb_gate_check(cb: CallbackQuery, bot: Bot, session: AsyncSession,
@@ -228,8 +271,8 @@ async def cb_gate_check(cb: CallbackQuery, bot: Bot, session: AsyncSession,
                                      cb.from_user.username)
     await safe_edit_or_answer(
         cb.message, _main_menu_text(user),
-        reply_markup=main_menu(link=invite_link_for(user.tg_id),
-                               reward=get_settings().invite_reward_coins))
+        reply_markup=await _menu_markup(link=invite_link_for(user.tg_id),
+                                        reward=get_settings().invite_reward_coins))
     await cb.answer("Ура, добро пожаловать! 🎉")
 
 @router.callback_query(F.data == "onb:start")
@@ -251,8 +294,9 @@ async def cb_onboard_start(cb: CallbackQuery, state: FSMContext,
                                      cb.from_user.username)
     if user.onboarded:
         await safe_edit_or_answer(cb.message, _main_menu_text(user),
-                                  reply_markup=main_menu(link=invite_link_for(user.tg_id),
-                                                         reward=get_settings().invite_reward_coins))
+                                  reply_markup=await _menu_markup(
+                                      link=invite_link_for(user.tg_id),
+                                      reward=get_settings().invite_reward_coins))
         await cb.answer()
         return
     await state.clear()
@@ -482,7 +526,7 @@ async def _render_main_menu(cb: CallbackQuery, session: AsyncSession,
     # где без питомца показывается экран с предложением завести его.
     page %= len(MENU_PAGES) + (1 if _menu_is_admin(cb.from_user.id) else 0)
     await safe_edit_or_answer(cb.message, _main_menu_text(user, min(page, len(MENU_PAGES) - 1)),
-                              reply_markup=main_menu(link=link, reward=reward,
-                                                     page=page,
-                                                     is_admin=_menu_is_admin(cb.from_user.id)))
+                              reply_markup=await _menu_markup(
+                                  link=link, reward=reward, page=page,
+                                  is_admin=_menu_is_admin(cb.from_user.id)))
     await cb.answer()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import html
 
 from aiogram import Bot, F, Router
@@ -52,6 +53,14 @@ def _is_merch_admin(user_id: int) -> bool:
         return True
     return bool(s.merch_admin_id) and user_id == s.merch_admin_id
 
+
+def _bot_link(payload: str | None = None) -> str:
+    """Ссылка на бота (?start=payload — обработается в cmd_start)."""
+    uname = (get_settings().bot_username or "").strip().lstrip("@")
+    if not uname:
+        return ""
+    return f"https://t.me/{uname}" + (f"?start={payload}" if payload else "")
+
 def _media_ref(product, v) -> str | None:
     if v is not None and getattr(v, "photo_file_id", None):
         return v.photo_file_id
@@ -81,6 +90,17 @@ async def _notify_merch_admins(bot: Bot, text: str, kb) -> None:
             await bot.send_message(uid, text, parse_mode="HTML", reply_markup=kb)
         except Exception as exc:
             logger.debug("merch notify {} failed: {}", uid, type(exc).__name__)
+
+
+def _buyer_mention(v) -> str:
+    """Кликабельное упоминание покупателя по сохранённому username (или имя)."""
+    uname = getattr(v, "buyer_username", None)
+    name = getattr(v, "buyer_name", None) or ""
+    if uname:
+        return f'<a href="https://t.me/{uname}">{html.escape(name or "@" + uname)}</a>'
+    if name:
+        return html.escape(name)
+    return f"<code>{v.reserved_by}</code>"
 
 @router.callback_query(F.data == "menu:merch")
 async def merch_screen(cb: CallbackQuery, session) -> None:
@@ -333,7 +353,10 @@ async def merch_reserve(cb: CallbackQuery, session, bot: Bot) -> None:
     if v is None:
         return await cb.answer("Позиция не найдена 😅", show_alert=True)
     product = await repo.get_product(v.product_id)
-    status = await repo.reserve(vid, cb.from_user.id)
+    uname = cb.from_user.username or None
+    status = await repo.reserve(vid, cb.from_user.id,
+                                buyer_name=cb.from_user.full_name,
+                                buyer_username=uname)
     if status == "out_of_stock":
         return await cb.answer("Увы, нет в наличии 😔", show_alert=True)
     if status == "already_reserved":
@@ -343,18 +366,43 @@ async def merch_reserve(cb: CallbackQuery, session, bot: Bot) -> None:
                                show_alert=True)
     await session.commit()
     name = cb.from_user.full_name
-    uname = f"@{cb.from_user.username}" if cb.from_user.username else "без username"
+    uname_disp = f"@{uname}" if uname else "без username"
     desc = f"{product.name} · {v.size or '—'} · {v.color or '—'} · {v.price_rub:,} ₽"
+    # Уведомление о новой броне: само сообщение НЕ содержит кнопок
+    # подтверждения/отмены — чтобы нельзя было закрыть или снять сделку
+    # случайным касанием. Нажатие на уведомление открывает карточку брони
+    # (merch:rescard), где дальше идёт взаимодействие: «💬 Написать
+    # покупателю», «✅ Подтвердить продажу», «❌ Отменить резерв». Последние
+    # два требуют явного подтверждения в отдельном экране.
+    # Inline-кнопки в Telegram умеют открывать только URL — «нажатие на
+    # само сообщение» кнопкой не сделать, поэтому в уведомление кладём
+    # ссылку-кнопку на профиль покупателя (там жмёшь «Написать»), а все
+    # действия с бронью — в карточке «📋 Все брони».
     admin_text = (f"🛒 <b>НОВАЯ БРОНЬ МЕРЧА</b>\n\n"
-                  f"👤 {html.escape(name)} ({uname}, <code>{cb.from_user.id}</code>)\n"
+                  f"👤 <a href=\"https://t.me/{uname}\">{html.escape(name)}</a>"
+                  f"{'' if not uname else f' ({uname_disp})'} · <code>{cb.from_user.id}</code>\n"
                   f"🧢 {html.escape(desc)}\n\n"
-                  f"Свяжись с покупателем для оплаты/доставки, затем подтверди продажу "
-                  f"или отмени резерв.")
+                  f"Свяжись с покупателем для оплаты/доставки, затем подтверди "
+                  f"продажу или отмени резерв.\n"
+                  f"⚠️ Кнопок подтверждения в этом сообщении нет специально — "
+                  f"чтобы сделку нельзя было закрыть случайным касанием. "
+                  f"Управление бронями: 🧢 Управление мерчем → 📋 Все брони.")
     kb = InlineKeyboardBuilder()
-    kb._vb("✅ Подтвердить продажу", f"merch:sold:{vid}")
-    kb._vb("❌ Отменить резерв", f"merch:cancel:{vid}")
-    _vsplit(kb)
-    kb._vb("📋 Все брони", "merch:myres")
+    if uname:
+        kb.button(text="💬 Написать покупателю", url=f"https://t.me/{uname}")
+    # Telegram не умеет открывать callback по нажатию на само сообщение,
+    # поэтому «открытие карточки брони» делаем deep-link-кнопкой:
+    # t.me/<bot>?start=nav_rescard_<vid> → cmd_start обработает payload и
+    # сразу покажет карточку (merch_reserve_card_open) с действиями.
+    card_link = _bot_link(f"nav_rescard_{vid}")
+    if card_link:
+        kb.button(text="🧾 Открыть бронь", url=card_link)
+    all_link = _bot_link("nav_merch_myres")
+    if all_link:
+        kb.button(text="📋 Все брони", url=all_link)
+    else:
+        kb.button(text="📋 Все брони", callback_data="merch:myres")
+    kb.adjust(1)
     await _notify_merch_admins(bot, admin_text, kb.as_markup())
     b = InlineKeyboardBuilder()
     _vbtn(b, "⬅️ К позиции", f"merch:var:{vid}")
@@ -366,12 +414,105 @@ async def merch_reserve(cb: CallbackQuery, session, bot: Bot) -> None:
     logger.info("merch reserved: variant={} by {}", vid, cb.from_user.id)
     await cb.answer("Забронировано ✅")
 
+# Подтверждение опасных действий с бронью. Кнопки «✅ Подтвердить продажу» /
+# «❌ Отменить резерв» никогда не исполняют действие сразу: сначала
+# показывается экран «⚠️ Подтверди действие», и только «✅ Да, подтвердить»
+# (merch:<action>:yes:<vid>) меняет базу. Так случайное касание не закрывает
+# и не снимает сделку.
+_RESERVE_ACTION_LABELS = {"sold": "продать", "cancel": "снять бронь"}
+
+
+def _reserve_confirm_kb(action: str, vid: int) -> InlineKeyboardBuilder:
+    kb = InlineKeyboardBuilder()
+    kb._vb("✅ Да, подтвердить", f"merch:{action}:yes:{vid}")
+    kb._vb("⬅️ Отмена", f"merch:{action}:no:{vid}")
+    _vsplit(kb)
+    kb._vb("↩️ Назад к броне", f"merch:rescard:{vid}")
+    kb._vb("📋 К списку броней", "merch:myres")
+    return kb
+
+
+async def _reserve_card_text(session, vid: int) -> tuple[str, InlineKeyboardBuilder] | None:
+    """Собрать текст и клавиатуру карточки брони.
+
+    Возвращает None, если позиция не найдена или бронь уже снята —
+    вызывающий тогда показывает список всех броней. Общая логика для
+    callback-экрана (merch:rescard / merch:resitem) и deep-link из
+    уведомления (nav_rescard_<vid>).
+    """
+    repo = MerchRepository(session)
+    v = await repo.get_variant(vid)
+    if v is None or v.reserved_by is None:
+        return None
+    product = await repo.get_product(v.product_id)
+    pname = product.name if product else f"#{vid}"
+    when = v.reserved_at.strftime("%d.%m.%Y %H:%M") if v.reserved_at else "—"
+    text = (f"🧾 <b>Бронь #{vid}</b>\n\n"
+            f"🧢 {html.escape(pname)} · {html.escape(v.size or '—')} · "
+            f"{_color_label(v.color)} · {v.price_rub:,} ₽\n"
+            f"👤 Покупатель: {_buyer_mention(v)} · <code>{v.reserved_by}</code>\n"
+            f"🕒 Забронировано: {when}\n\n"
+            f"✅ Продажа спишет 1 шт. с остатка, ❌ снятие вернёт позицию в продажу.")
+    b = InlineKeyboardBuilder()
+    uname = getattr(v, "buyer_username", None)
+    if uname:
+        b.button(text="💬 Написать покупателю", url=f"https://t.me/{uname}")
+    b._vb("✅ Подтвердить продажу", f"merch:sold:{vid}")
+    b._vb("❌ Отменить резерв", f"merch:cancel:{vid}")
+    _vsplit(b)
+    b._vb("📋 Ко всем броням", "merch:myres")
+    return text, b
+
+
+async def _render_reserve_card(cb: CallbackQuery, session, vid: int) -> None:
+    """Карточка одной брони по callback: детали + безопасные действия."""
+    res = await _reserve_card_text(session, vid)
+    if res is None:
+        await cb.answer("Эта позиция больше не забронирована 😅")
+        return await merch_my_reserves(cb, session)
+    text, b = res
+    await safe_edit_or_answer(cb.message, text, reply_markup=b.as_markup())
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("merch:rescard:"))
+async def merch_reserve_card(cb: CallbackQuery, session) -> None:
+    """Открыть карточку брони по callback (например, «Назад к броне»)."""
+    if not _is_merch_admin(cb.from_user.id):
+        return await cb.answer("Только для админов мерча 🙅", show_alert=True)
+    try:
+        vid = int(cb.data.split(":")[2])
+    except (ValueError, IndexError):
+        return await cb.answer()
+    await _render_reserve_card(cb, session, vid)
+
+
+async def merch_reserve_card_open(message: Message, session, vid: int,
+                                  user_id: int) -> None:
+    """Deep-link «/start nav_rescard_<vid>» — открыть карточку брони."""
+    if not _is_merch_admin(user_id):
+        await message.answer("Раздел броней доступен только админам мерча 🙅")
+        return
+    res = await _reserve_card_text(session, vid)
+    if res is None:
+        await message.answer("Эта позиция больше не забронирована или снята 😅")
+        return
+    text, b = res
+    await message.answer(text, parse_mode="HTML", reply_markup=b.as_markup())
+
+
 @router.callback_query(F.data.startswith("merch:sold:") | F.data.startswith("merch:cancel:"))
-async def merch_admin_action(cb: CallbackQuery, session) -> None:
+async def merch_admin_action(cb: CallbackQuery, session) -> None:  # noqa: C901
     if not _is_merch_admin(cb.from_user.id):
         return await cb.answer("Это действие только для админов мерча 🙅", show_alert=True)
     parts = cb.data.split(":")
-    action, sid = parts[1], parts[2]
+    action = parts[1]
+    # «merch:<action>:yes|no:<vid>» — второй шаг (подтверждение) или отказ;
+    # голлый «merch:<action>:<vid>» — первый шаг: показываем подтверждение.
+    if len(parts) > 3 and parts[2] in ("yes", "no"):
+        confirm, sid = parts[2], parts[3]
+    else:
+        confirm, sid = "", (parts[2] if len(parts) > 2 else "")
     try:
         vid = int(sid)
     except ValueError:
@@ -381,7 +522,29 @@ async def merch_admin_action(cb: CallbackQuery, session) -> None:
     if v is None:
         return await cb.answer("Позиция не найдена 😅", show_alert=True)
     product = await repo.get_product(v.product_id)
-    pname = product.name if product else f"#{vid}"
+    pname = product.name if product else f"#vid"
+
+    # Шаг 1 (или отказ на шаге 2): ничего не меняем в базе.
+    if not confirm or confirm == "no":
+        if v.reserved_by is None:
+            return await cb.answer("У этой позиции уже нет активной брони 😅",
+                                   show_alert=True)
+        if confirm == "no":
+            await cb.answer("Отменено, бронь цела 🛡")
+        else:
+            await cb.answer()
+        verb = _RESERVE_ACTION_LABELS.get(action, action)
+        await safe_edit_or_answer(
+            cb.message,
+            f"⚠️ <b>Подтверди действие</b>\n\n"
+            f"Действие: <b>{verb}</b>\n"
+            f"🧢 {html.escape(pname)} · {html.escape(v.size or '—')}/"
+            f"{_color_label(v.color)} · {v.price_rub:,} ₽ (id={vid})\n"
+            f"👤 Покупатель: {_buyer_mention(v)} · <code>{v.reserved_by}</code>\n\n"
+            f"{'Остаток уменьшится на 1, бронь снимется.' if action == 'sold' else 'Бронь снимется, позиция снова станет свободной.'}\n"
+            f"Точно?",
+            reply_markup=_reserve_confirm_kb(action, vid).as_markup())
+        return
     if action == "sold":
         res = await repo.confirm_sale(vid)
         if res is None:
@@ -397,11 +560,14 @@ async def merch_admin_action(cb: CallbackQuery, session) -> None:
                 parse_mode="HTML")
         except Exception:
             pass
+        back_kb = InlineKeyboardBuilder()
+        back_kb._vb("📋 К списку броней", "merch:myres")
+        back_kb._vb("🏠 Управление мерчем", "madmin:home")
         await safe_edit_or_answer(
             cb.message,
             f"✅ Продажа подтверждена!\n\n🧢 {html.escape(pname)} · {v.size}/{v.color}\n"
             f"👤 Покупатель: <code>{buyer}</code>\n📦 Остаток обновлён.",
-            reply_markup=None)
+            reply_markup=back_kb.as_markup())
         logger.info("merch sale confirmed: variant={} buyer={}", vid, buyer)
     else:
         res = await repo.cancel_reserve(vid)
@@ -417,37 +583,74 @@ async def merch_admin_action(cb: CallbackQuery, session) -> None:
                 parse_mode="HTML")
         except Exception:
             pass
+        back_kb = InlineKeyboardBuilder()
+        back_kb._vb("📋 К списку броней", "merch:myres")
+        back_kb._vb("🏠 Управление мерчем", "madmin:home")
         await safe_edit_or_answer(
             cb.message,
             f"❌ Резерв отменён.\n\n🧢 {html.escape(pname)} · {v.size}/{v.color}\n"
             f"👤 Покупатель: <code>{buyer}</code>\nПозиция снова свободна.",
-            reply_markup=None)
+            reply_markup=back_kb.as_markup())
         logger.info("merch reserve cancelled: variant={} buyer={}", vid, buyer)
     await cb.answer("Готово ✅")
 
-@router.callback_query(F.data == "merch:myres")
-async def merch_my_reserves(cb: CallbackQuery, session) -> None:
-    if not _is_merch_admin(cb.from_user.id):
-        return await cb.answer("Только для админов мерча 🙅", show_alert=True)
+async def _my_reserves_body(session, user_id: int) -> tuple[str, InlineKeyboardBuilder]:
+    """Собрать текст и клавиатуру экрана «📋 Все брони»."""
     repo = MerchRepository(session)
     reserved = await repo.all_reserved()
     b = InlineKeyboardBuilder()
     if not reserved:
         text = "📋 Активных броней нет."
     else:
-        lines = [f"📋 <b>Активные брони мерча ({len(reserved)})</b>", ""]
+        lines = [f"📋 <b>Активные брони мерча ({len(reserved)})</b>", "",
+                 "Нажми на бронь — там можно подтвердить продажу или снять "
+                 "резерв (с обязательным подтверждением):", ""]
         for v in reserved[:25]:
             product = await repo.get_product(v.product_id)
             pname = product.name if product else f"#{v.product_id}"
-            lines.append(f"• id={v.id} {html.escape(pname)} · {v.size}/{v.color} "
-                         f"— 👤 <code>{v.reserved_by}</code>")
-            b._vb(f"✅ Продано #{v.id}", f"merch:sold:{v.id}")
-            b._vb(f"❌ Снять #{v.id}", f"merch:cancel:{v.id}")
+            when = ""
+            if v.reserved_at is not None:
+                when = f" · {v.reserved_at:%d.%m %H:%M}"
+            lines.append(f"• <b>{html.escape(pname)}</b> · "
+                         f"{html.escape(v.size or '—')}/{_color_label(v.color)} · "
+                         f"{v.price_rub:,} ₽ — 👤 <code>{v.reserved_by}</code>{when}")
+            b._vb(f"🧾 {pname} · {v.size or '—'}/{v.color or '—'} · #{v.id}",
+                  f"merch:resitem:{v.id}")
             _vsplit(b)
         text = "\n".join(lines)
-    _vbtn(b, "⬅️ В мерч", "menu:merch")
+    _vbtn(b, "⬅️ Назад", "madmin:home")
+    _vbtn(b, "🧢 В магазин", "menu:merch")
+    return text, b
+
+
+@router.callback_query(F.data == "merch:myres")
+async def merch_my_reserves(cb: CallbackQuery, session) -> None:
+    if not _is_merch_admin(cb.from_user.id):
+        return await cb.answer("Только для админов мерча 🙅", show_alert=True)
+    text, b = await _my_reserves_body(session, cb.from_user.id)
     await safe_edit_or_answer(cb.message, text, reply_markup=b.as_markup())
     await cb.answer()
+
+
+async def merch_my_reserves_open(message: Message, session,
+                                 user_id: int) -> None:
+    """Deep-link «/start nav_merch_myres» — показать список всех броней."""
+    if not _is_merch_admin(user_id):
+        await message.answer("Раздел броней доступен только админам мерча 🙅")
+        return
+    text, b = await _my_reserves_body(session, user_id)
+    await message.answer(text, parse_mode="HTML", reply_markup=b.as_markup())
+
+@router.callback_query(F.data.startswith("merch:resitem:"))
+async def merch_reserve_item(cb: CallbackQuery, session) -> None:
+    """Карточка одной брони со списком всех забронированных заказов."""
+    if not _is_merch_admin(cb.from_user.id):
+        return await cb.answer("Только для админов мерча 🙅", show_alert=True)
+    try:
+        vid = int(cb.data.split(":")[2])
+    except (ValueError, IndexError):
+        return await cb.answer()
+    await _render_reserve_card(cb, session, vid)
 
 HELP_LINES = [
     "<b>Подкоманды:</b>",
@@ -1199,9 +1402,14 @@ async def _save_photo_as_file_id(bot: Bot, message: Message) -> str | None:
         return None
     fid = message.photo[-1].file_id
     try:
-        up = await bot.send_photo(message.chat.id, fid)
-        saved = up.photo[-1].file_id if up.photo else fid
-        await bot.delete_message(message.chat.id, up.message_id)
+        raw = await bot.send_photo(message.chat.id, fid)
+        # Кастомные Session (тесты) могут вернуть dict — приводим к модели.
+        from app.handlers.events import _as_result
+        up = _as_result(raw, Message)
+        saved = up.photo[-1].file_id if (up and up.photo) else fid
+        if up is not None:
+            with contextlib.suppress(Exception):
+                await bot.delete_message(message.chat.id, up.message_id)
         return saved
     except Exception as exc:
         logger.warning("merch photo re-save failed: {}: {}", type(exc).__name__, exc)

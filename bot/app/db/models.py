@@ -338,6 +338,9 @@ class NotificationQueue(Base):
     send_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     sent: Mapped[bool] = mapped_column(Boolean, default=False)
     kind: Mapped[str] = mapped_column(String(32), default="info")
+    # сериализанная inline-клавиатура уведомления (например «Продолжить день»
+    # в дневном отчёте); NULL — без кнопок
+    payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 class LeaderboardSnapshot(Base):
     __tablename__ = "leaderboards_snapshot"
@@ -417,6 +420,11 @@ class MerchVariant(Base):
     photo_file_id: Mapped[str | None] = mapped_column(String(256), nullable=True)
     reserved_by: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     reserved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Данные покупателя на момент брони (имя/username/id) — сохраняем «снимок»,
+    # чтобы уведомление о новой броне оставалось кликабельным и информативным,
+    # даже если профиль покупателя изменится.
+    buyer_name: Mapped[str] = mapped_column(String(128), default="")
+    buyer_username: Mapped[str | None] = mapped_column(String(64), nullable=True)
     sold_count: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 

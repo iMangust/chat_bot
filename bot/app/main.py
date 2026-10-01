@@ -150,6 +150,10 @@ _LIGHT_COLUMNS: dict[str, list[tuple[str, str]]] = {
     ],
     "merch_variants": [
         ("photo_file_id", "VARCHAR(256)"),
+        # «Снимок» покупателя на момент брони — нужен для кликабельного
+        # уведомления о новой броне (имя + username).
+        ("buyer_name", "VARCHAR(128) NOT NULL DEFAULT ''"),
+        ("buyer_username", "VARCHAR(64)"),
     ],
     "users": [
         ("welcome_shown", "BOOLEAN NOT NULL DEFAULT 0"),
@@ -163,6 +167,10 @@ _LIGHT_COLUMNS: dict[str, list[tuple[str, str]]] = {
         ("messages_count", "INTEGER NOT NULL DEFAULT 0"),
         ("reactions_given", "INTEGER NOT NULL DEFAULT 0"),
         ("reactions_received", "INTEGER NOT NULL DEFAULT 0"),
+    ],
+    "notifications_queue": [
+        # клавиатура уведомления («Продолжить день» в дневном отчёте)
+        ("payload_json", "TEXT"),
     ],
 }
 
@@ -687,6 +695,17 @@ async def main() -> None:
         token=settings.bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
+    # Юзернейм бота нужен для deep-link кнопок (t.me/<bot>?start=...).
+    # Если в .env не задан — определяем через get_me() и пишем в settings,
+    # чтобы _bot_link() в merch/events мог его читать. Ошибку сети не считаем
+    # фатальной: без username просто не будет URL-кнопок-ссылок на бота.
+    if not (settings.bot_username or "").strip():
+        try:
+            me = await bot.get_me()
+            if me.username:
+                settings.bot_username = me.username
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("get_me for bot_username failed: %s", exc)
     storage = _make_fsm_storage(settings.redis_url)
     storage = await probe_fsm_storage(storage)
 

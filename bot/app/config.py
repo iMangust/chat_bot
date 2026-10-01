@@ -213,6 +213,11 @@ class Settings(BaseSettings):
     weather_lon: float = 158.6507
     redis_socket_timeout: int = 5
 
+    # Юзернейм бота (без @) — для deep-link кнопок вида
+    # https://t.me/<bot>?start=<payload>. Если не задан — подтягивается
+    # автоматически через get_me() при старте (см. main.py).
+    bot_username: str | None = None
+
     channel_username: str | None = None
     channel_username_visual: str | None = None
     channel_chat_id: int | None = None
