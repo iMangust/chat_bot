@@ -266,9 +266,13 @@ async def _render_weather_screen(cb: CallbackQuery, view: str,
     # NameError/ImportError, пользователю показывается понятная заглушка.
     try:
         from app.keyboards.inline import weather_kb
+        # ВАЖНО: weather_hint_block_fresh обязательно в этом же импорте —
+        # раньше он здесь отсутствовал и экран падал с NameError (см. коммит
+        # 501867a). Все имена, используемые ниже, должны быть в списке импорта.
         from app.services.weather import (_ensure_fresh, hourly_points,
                                           render_today, render_week,
-                                          weather_now, _day_rows)
+                                          weather_now, _day_rows,
+                                          weather_hint_block_fresh)
         if force:
             await _ensure_fresh(force=True)
         w = await weather_now()
