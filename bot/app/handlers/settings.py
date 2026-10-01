@@ -217,6 +217,63 @@ def _retheme_message_text(text: str, new_theme_key: str) -> str | None:
     return mapped if mapped != text else None
 
 
+async def repaint_main_menu(bot: Bot, chat_id: int, theme_key: str) -> int:
+    """Перерисовывает сообщение главного меню в ЛС под новую тему.
+
+    Главное меню может быть открыто на любой странице — опознаём его по
+    кнопке-заглушке «menu:noop» (её подпись не тематизируется и служит
+    маркером). Это единственный экран, который нужно перезарисовать сразу
+    при смене темы: он висит над чатом как постоянная точка входа.
+    """
+    client = await _get_mtproto()
+    if client is None:
+        return 0
+    try:
+        me = await bot.get_me()
+        msgs = await _fetch_history(client, chat_id, 40)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("repaint main menu: history unavailable ({})", exc)
+        return 0
+    repainted = 0
+    for m in msgs:
+        from_user = getattr(m, "from_user", None)
+        if from_user is None or from_user.id != me.id:
+            continue
+        text = getattr(m, "text", None) or getattr(m, "caption", None)
+        kb_src = getattr(m, "reply_markup", None)
+        if not text or kb_src is None:
+            continue
+        try:
+            kb = _telethon_markup_to_aiogram(kb_src)
+        except Exception:  # noqa: BLE001
+            continue
+        cbs = [btn.callback_data or ""
+               for row in kb.inline_keyboard for btn in row]
+        if _detect_screen(cbs) != "main":
+            continue
+        std = _main_menu_text_from_buttons(kb)
+        if not std:
+            continue
+        stats_line = ""
+        for ln in text.splitlines():
+            if ("уровень" in ln or "ступень" in ln) and "XP" in ln:
+                stats_line = ln
+                break
+        std = std.replace("{stats}", stats_line or " ")
+        new_text = _retheme_message_text(std, theme_key)
+        if not new_text:
+            continue
+        kb = _rebuild_kb(std, kb, theme_key)
+        try:
+            await bot.edit_message_text(chat_id=chat_id, message_id=m.message_id,
+                                         text=new_text, parse_mode="HTML",
+                                         reply_markup=kb)
+            repainted += 1
+        except TelegramAPIError:
+            continue
+    return repainted
+
+
 async def repaint_chat_messages(bot: Bot, chat_id: int, theme_key: str,
                                 limit: int = 40) -> int:
     """Перерисовывает последние сообщения бота в чате под новую тему.
@@ -384,11 +441,19 @@ async def cb_set_theme(cb: CallbackQuery, session: AsyncSession,
     chat_id = cb.message.chat.id if cb.message else None
     await _render_settings(session, cb.message, cb.from_user.id,
                            chat_id=chat_id)
-    # перекрашиваем старые сообщения, чтобы тема было видно СРАЗУ
+    # Перезарисовываем ГЛАВНОЕ МЕНЮ в ЛС: у него может быть открыта любая
+    # страница (menu:noop «🎮 Игра 📖 1/2»), а без этого шага пользователь
+    # видел бы готику только на экране настроек до первого своего тапа.
     n_repainted = 0
     if chat_id is not None:
         try:
-            n_repainted = await repaint_chat_messages(bot, chat_id, key)
+            n_repainted += await repaint_main_menu(bot, chat_id, key)
+        except Exception as exc:  # noqa: BLE001 — не ломать выбор темы
+            logger.debug("theme main-menu repaint failed: {}", exc)
+    # перекрашиваем старые сообщения, чтобы тема было видно СРАЗУ
+    if chat_id is not None:
+        try:
+            n_repainted += await repaint_chat_messages(bot, chat_id, key)
         except Exception as exc:  # noqa: BLE001 — перекраска не должна ломать выбор темы
             logger.debug("theme repaint failed: {}", exc)
     toast = f"Тема изменена: {th.title}"

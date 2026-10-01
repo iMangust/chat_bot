@@ -18,8 +18,11 @@ from __future__ import annotations
 
 import contextvars
 import fnmatch
+import logging
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 CURRENT_THEME: contextvars.ContextVar[str] = contextvars.ContextVar(
     "bot_theme", default="standard")
@@ -28,7 +31,9 @@ CURRENT_THEME: contextvars.ContextVar[str] = contextvars.ContextVar(
 # в настройках), поэтому одно чтение строки users на апдейт — лишняя нагрузка
 # на БД; invalidate_theme_cache() вызывается при смене темы и админских
 # операциях, сбрасывающих настройки пользователя.
-_THEME_CACHE: dict[int, str | None] = {}
+# ВАЖНО: значение None («юзера ещё нет в БД») в кэш НЕ кладётся — иначе
+# первый же /start до get_or_create заморозил бы тему как standard навсегда.
+_THEME_CACHE: dict[int, str] = {}
 
 
 def set_theme(name: str | None) -> None:
@@ -47,7 +52,14 @@ def invalidate_theme_cache(tg_id: int | None = None) -> None:
 
 
 async def load_theme_key(tg_id: int) -> str | None:
-    """Ключ темы пользователя из БД (с кэшем на процесс)."""
+    """Ключ темы пользователя из БД (с кэшем на процесс).
+
+    Возвращает ``None``, если юзера в БД ещё нет или тема не выбрана —
+    такие значения в кэш НЕ кладутся (см. комментарий у _THEME_CACHE),
+    чтобы следующий апдейт прочитал актуальное состояние. Ошибки чтения
+    логируются на WARNING: молчаливый откат к standard раньше приводил к
+    «тема не применяется нигде, кроме настроек» без единой зацепки в логах.
+    """
     tg_id = int(tg_id)
     if tg_id in _THEME_CACHE:
         return _THEME_CACHE[tg_id]
@@ -59,10 +71,17 @@ async def load_theme_key(tg_id: int) -> str | None:
         async with session_factory() as s:
             db_user = await s.get(User, tg_id)
             extra = (db_user.settings_extra or {}) if db_user else {}
-            theme_key = extra.get("theme")
+            raw = extra.get("theme")
+            # JSON-колонка может содержать что угодно (например, после
+            # ручной правки) — принимаем только известные ключи тем.
+            if isinstance(raw, str) and raw in THEMES:
+                theme_key = raw
     except Exception:
-        theme_key = None
-    _THEME_CACHE[tg_id] = theme_key
+        logger.exception("theme: не удалось прочитать тему пользователя %s",
+                         tg_id)
+        return None
+    if theme_key is not None:
+        _THEME_CACHE[tg_id] = theme_key
     return theme_key
 
 
@@ -306,15 +325,21 @@ def theme_button_label(cb: str, label: str) -> str:
     theme = THEMES.get(current_theme_key())
     if theme is None or theme is STANDARD:
         return label
+    # 1) Полное совпадение callback_data — самый сильный приоритет.
+    #    Так работают точечные переименования («🐾 Питомец» → «🐈‍⬛ Кошка-демон»).
     if cb in theme.label_overrides:
         return theme.label_overrides[cb]
-    for pattern in theme.label_cb_patterns:
-        if fnmatch.fnmatch(cb, pattern):
-            return _map_emoji(label, theme.emoji_map)
-    # точечные замены по шаблону (например «menu:page:*» — кнопки навигации)
+    # 2) Точечная замена по шаблону («menu:page:*» и т.п.) — раньше проверялась
+    #    ПОСЛЕ глобального эмодзи-маппинга и до неё никогда не доходило:
+    #    «menu:page:0» подходил под паттерн «menu:*» и возвращался уже
+    #    перемешенный текст вместо задуманной готической подписи.
     for pattern, repl in theme.label_overrides.items():
         if "*" in pattern and fnmatch.fnmatch(cb, pattern):
             return repl
+    # 3) Глобальная замена эмодзи для кнопок из тематизируемых разделов.
+    for pattern in theme.label_cb_patterns:
+        if fnmatch.fnmatch(cb, pattern):
+            return _map_emoji(label, theme.emoji_map)
     return label
 
 
