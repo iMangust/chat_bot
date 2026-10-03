@@ -430,6 +430,10 @@ class TamagotchiService:
 
     @staticmethod
     def rps_beaten_by(hand: str) -> str:
+        """Ход, КОТОРЫМ бьют указанный hand (rock beaten by paper и т.д.).
+
+        Исторический хелпер; единая правда о правилах — в games.RPS_BEATS.
+        """
         return {"rock": "paper", "paper": "scissors", "scissors": "rock"}[hand]
 
     def guess_range(self, pet: Pet) -> tuple[int, int]:

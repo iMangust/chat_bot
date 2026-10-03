@@ -1,7 +1,16 @@
 """Регресс: негативное шторм-окно не должно затирать успешный кэш погоды."""
 import asyncio, os, sys
+from datetime import datetime, timedelta, timezone
 sys.path.insert(0, os.path.dirname("app"))
 from app.services import weather as W
+from app.utils.local_time import KAMCHATKA_TZ
+
+
+def _yesterday_hour_key() -> str:
+    """Ключ 'YYYY-MM-DDTHH' (UTC) за вчерашний день — как у живого /2.5/forecast,
+    который всегда покрывает текущие камчатские сутки."""
+    dt = datetime.now(timezone.utc) - timedelta(days=1)
+    return dt.strftime("%Y-%m-%dT%H")
 
 
 def test_weather_storm_window_does_not_evict_good_cache():
@@ -74,8 +83,13 @@ class TestWeekHoursSurviveNoHourlySnapshot:
             os.environ["OPENWEATHER_API_KEY"] = "test-key"
 
             async def with_hours():
+                # Точка за текущие камчатские сутки: /2.5/forecast всегда их
+                # покрывает (~4 дня вперёд). Проверяем, что даже один живой
+                # день рендерится как прогноз, а НЕ как сезонная заглушка.
+                now_k = datetime.now(KAMCHATKA_TZ)
+                key = now_k.astimezone(timezone.utc).strftime("%Y-%m-%dT%H")
                 return {"temperature": 3.0, "hourly": {
-                    "time": ["2026-10-02T06"], "temp": [2.0],
+                    "time": [key], "temp": [2.0],
                     "code": [61], "precip": [0.4], "gust": [18.0]}}
 
             async def without_hours():
@@ -88,8 +102,14 @@ class TestWeekHoursSurviveNoHourlySnapshot:
             await W._ensure_fresh(force=True)
             assert len(W._hours_cache["points"]) == 1, \
                 "снимок без hourly не должен затирать живые часовые точки"
-            rows = W._day_rows(W._hours_cache["points"])
-            assert "сезонная оценка" not in W.render_week(rows)
+            # Ровно тот путь, которым идёт экран «Неделя»: через hourly_points().
+            points = await W.hourly_points()
+            assert len(points) == 1, \
+                "часовой кэш переживает шторм-окно и не пересобирается заново"
+            rows = W._day_rows(points)
+            assert rows, "живая почасовая точка должна давать строку дня"
+            week = W.render_week(rows)
+            assert "сезонная оценка" not in week, week
             W._reset_state_for_tests()
 
         asyncio.run(scenario())

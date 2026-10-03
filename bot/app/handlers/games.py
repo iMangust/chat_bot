@@ -22,6 +22,17 @@ router = Router(name="games")
 
 RPS_EMOJI = {"rock": "🪨", "scissors": "✂️", "paper": "📄"}
 
+# Классические правила КНБ: 🪨 бьёт ✂️, ✂️ режут 📄, 📄 накрывает 🪨.
+# RPS_BEATS[hand] = ход, который ЭТОТ hand побеждает.
+RPS_BEATS = {"rock": "scissors", "scissors": "paper", "paper": "rock"}
+
+
+def rps_outcome(mine: str, theirs: str) -> str:
+    """'win' | 'lose' | 'draw' с точки зрения игрока (mine)."""
+    if mine == theirs:
+        return "draw"
+    return "win" if RPS_BEATS[mine] == theirs else "lose"
+
 
 def _chat_of(cb: CallbackQuery) -> int | None:
     """chat_id для стека навигации: «Назад» строится по истории этого чата."""
@@ -127,9 +138,15 @@ async def start_rps(cb: CallbackQuery, state: FSMContext, session: AsyncSession)
     if pet is None:
         return await cb.answer()
     await state.set_state(Games.rps)
-    await safe_edit_or_answer(cb.message, 
+    # Ход питомца ЖЕРЕБУЕТСЯ ЗАРАНЕЕ и хранится в FSM: игрок выбирает
+    # вслепую («синхронное раскрытие»), а не получает ответ постфактум.
+    pet_hand = random.choice(list(RPS_EMOJI))
+    await state.update_data(pet_hand=pet_hand)
+    await safe_edit_or_answer(cb.message,
         "✂️ <b>Камень-ножницы-бумага!</b>\n\n"
-        f"{pet.name} уже выбрал ход (честный рандом). Выбирай свой — откроемся одновременно.",
+        f"{pet.name} уже тайно выбрал свой ход 🤫 (честный рандом).\n"
+        "Выбирай свой — откроемся одновременно.\n\n"
+        "Правила: 🪨 бьёт ✂️ · ✂️ режет 📄 · 📄 накрывает 🪨",
         reply_markup=rps_keyboard(_chat_of(cb)),
     )
     await cb.answer()
@@ -143,9 +160,16 @@ async def play_rps(cb: CallbackQuery, state: FSMContext, session: AsyncSession) 
     if pet is None:
         await state.clear()
         return await cb.answer()
-    theirs = random.choice(list(RPS_EMOJI))
-    won = TamagotchiService.rps_beaten_by(mine) == theirs
-    draw = theirs == mine
+    data = await state.get_data()
+    theirs = data.get("pet_hand")
+    if theirs not in RPS_EMOJI:
+        theirs = random.choice(list(RPS_EMOJI))
+    # Единый источник истины по правилам КНБ (см. RPS_BEATS): побеждает тот,
+    # чей ход бьёт ход соперника. Никакого «угадывания» — исход полностью
+    # определяется самими ходами: ✂️ режут 📄, значит выиграл показавший ✂️.
+    outcome = rps_outcome(mine, theirs)
+    won = outcome == "win"
+    draw = outcome == "draw"
     svc = TamagotchiService(session)
     result = await svc.play(pet, won)
     await state.clear()
@@ -154,15 +178,31 @@ async def play_rps(cb: CallbackQuery, state: FSMContext, session: AsyncSession) 
                                                   "theirs": theirs})
     if won:
         await bump_games_won(session, cb.from_user.id)
-    outcome = "🤝 Ничья!" if draw else ("🎉 Ты выиграл! Питомец не угадал твой ход." if won else "😿 Питомец хитрее…")
-    await safe_edit_or_answer(cb.message, 
-        f"Ты: {RPS_EMOJI[mine]} · {pet.name}: {RPS_EMOJI[theirs]} — {outcome}\n\n"
-        f"{result}\n\n" + await svc.render_async(pet),
+    # Причина результата — в самих ходах (🪨 > ✂️ > 📄 > 🪨), поэтому строка
+    # с ходами объясняет ВСЁ. Ниже — только награда от питомца (без повтора
+    # слова «Победа») и карточка статов.
+    if draw:
+        line = f"Ты: {RPS_EMOJI[mine]} · {pet.name}: {RPS_EMOJI[theirs]} — 🤝 ничья, одинаковые ходы."
+    elif won:
+        line = (f"Ты: {RPS_EMOJI[mine]} · {pet.name}: {RPS_EMOJI[theirs]} — "
+                f"✅ твой ход бьёт: {RPS_EMOJI[mine]} побеждает {RPS_EMOJI[theirs]}.")
+    else:
+        line = (f"Ты: {RPS_EMOJI[mine]} · {pet.name}: {RPS_EMOJI[theirs]} — "
+                f"❌ ход питомца бьёт: {RPS_EMOJI[theirs]} побеждает {RPS_EMOJI[mine]}.")
+    reward = ("Питомец в восторге!" if won else
+              "Ничья — питомец довольно урчит." if draw else
+              "В следующий раз повезёт больше!")
+    # В строке выше уже написано, ЧЬЙ ход победил — не дублируем слово
+    # «Победа» из общего результата play(): оставляем только награду (+XP).
+    res_line = result.split("!", 1)[-1].strip() if won and "!" in result else result
+    toast = line[:200]
+    await safe_edit_or_answer(cb.message,
+        f"{line}\n{reward} {res_line}\n\n" + await svc.render_async(pet),
         reply_markup=games_menu(_chat_of(cb)),
     )
     from app.utils.fx import apply_effect
     await apply_effect(cb, "win" if won else ("play" if draw else "lose"),
-                       toast_override=outcome[:200])
+                       toast_override=toast)
 
 BJ_DECK = [(r, s) for r in range(2, 11) for s in ("♠", "♥", "♦", "♣")]
 

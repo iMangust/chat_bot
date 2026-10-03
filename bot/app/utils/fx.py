@@ -82,7 +82,11 @@ async def apply_effect(cb: CallbackQuery, action: str, *,
     emoji = list(eff.primary)
     if eff.extra_pool and random.random() < eff.extra_chance:
         emoji.append(random.choice(eff.extra_pool))
-    msg: Message | None = cb.message
-    if msg is None:
+    # Реакцию ставим ТОЛЬКО на исходное сообщение с нажатой кнопкой и
+    # только если оно не будет отредактировано результатом (иначе
+    # Telegram показывает реакцию как «реакцию на ответ бота» рядом со
+    # строкой результата — визуально это выглядит багом).
+    text = getattr(cb.message, "text", None) or ""
+    if text.startswith(("Ты:", "🎲", "🃏")):
         return
     await react_to_message(cb, emoji[0])
