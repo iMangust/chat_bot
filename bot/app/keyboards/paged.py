@@ -85,14 +85,18 @@ def paged_keyboard(
     if url_button is not None:
         kb_rows.append([url_button])
     # Единая нижняя строка навигации: «⬅️ Назад» (в корень раздела/экран
-    # источника) + «🏠 Меню» (главное меню). home_cb=None означает «домами
+    # источника) + «🏠 Домой» (главное меню). home_cb=None означает «домами
     # служит back_cb» — отдельная кнопка «Меню» тогда не нужна.
     nav_btns: list[InlineKeyboardButton] = []
     # «Назад» не должен вести в себя: если целевой callback совпадает с
     # кнопкой, открывающей этот же экран (например, вход в магазин по
     # 'pet:shop', а корень раздела тоже 'pet:shop'), возврат перерисовал бы
     # текущий экран — Telegram показал бы «кнопка ничего не делает».
-    if back_cb and back_cb != f"pet:{prefix}":
+    # Исключение — возврат на вкладку хаба 'pet:page:N': подраздел живёт
+    # ОТДЕЛЬНЫМ сообщением поверх вкладки, переход на неё — реальный выход
+    # на уровень выше (из магазина ← 'pet:page:1' возвращает к вкладке).
+    _tab_back = str(back_cb or "").startswith("pet:page:")
+    if back_cb and (back_cb != f"pet:{prefix}" or _tab_back):
         nav_btns.append(InlineKeyboardButton(text=BACK_LABEL, callback_data=back_cb))
     home_target = home_cb if home_cb is not None else back_cb
     if home_target and home_target != back_cb:

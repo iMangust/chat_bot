@@ -60,7 +60,7 @@ def test_stats_from_main_menu_has_no_back_button():
     kb = b.as_markup()
     assert _back_cb_of(kb) is None
     texts = [btn.text for r in kb.inline_keyboard for btn in r]
-    assert any("Меню" in t for t in texts), texts
+    assert any("Домой" in t for t in texts), texts
 
 
 def test_stats_from_merch_back_returns_to_merch():
@@ -129,7 +129,7 @@ def test_games_submenu_from_pet_hub_back_to_menu_only():
     bc = _back_cb_of(kb)
     assert bc is None, (kb, bc)
     texts = [btn.text for r in kb.inline_keyboard for btn in r]
-    assert any("Меню" in t for t in texts), texts
+    assert any("Домой" in t for t in texts), texts
 
 
 # ── Регрессия бага «Назад ничего не делает» (Статистика из главного меню):
@@ -144,7 +144,7 @@ def test_stats_from_main_no_self_loop_back():
     kb = b.as_markup()
     assert _back_cb_of(kb) is None          # самопетли нет
     texts = [btn.text for r in kb.inline_keyboard for btn in r]
-    assert any("Меню" in t for t in texts), texts
+    assert any("Домой" in t for t in texts), texts
 
 
 def test_pet_hub_from_main_no_self_loop_back():

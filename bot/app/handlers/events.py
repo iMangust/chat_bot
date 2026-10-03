@@ -10,7 +10,7 @@ from aiogram.filters import BaseFilter, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InputMediaPhoto, Message
-from app.keyboards.inline import InlineKeyboardBuilder
+from app.keyboards.inline import InlineKeyboardBuilder, HOME_LABEL
 from loguru import logger
 
 from app.config import get_settings
@@ -246,7 +246,7 @@ async def _render_list(cb: CallbackQuery, session, bot: Bot | None = None) -> No
     if back_cb and back_cb != "menu:main":
         b.button(text="⬅️ Назад", callback_data=back_cb)
         _vrow(b)
-    b.button(text="🏠 Меню", callback_data="menu:main")
+    b.button(text=HOME_LABEL, callback_data="menu:main")
     # ВАЖНО: InlineKeyboardBuilder.as_markup() НЕ сбрасывает накопленные кнопки.
     # Если вызвать его дважды (например, при ретрае после «message is not
     # modified»), во второй разметке каждая кнопка продублируется и Telegram
@@ -463,7 +463,7 @@ async def _detail_render(cb: CallbackQuery, session, eid: int) -> None:
              callback_data=f"ev:going:{eid}")
     _vrow(b)
     b.button(text="⬅️ К списку", callback_data="menu:events")
-    b.button(text="🏠 Меню", callback_data="menu:main")
+    b.button(text=HOME_LABEL, callback_data="menu:main")
     _vrow(b)
     if _is_event_admin(cb.from_user.id):
         b.button(text="✏️ Редактировать", callback_data=f"evadmin:item:{eid}")
@@ -536,7 +536,7 @@ async def _admin_home(cb: CallbackQuery, session) -> None:
     # если истории нет — жёстко в корень раздела мероприятий.
     back_ev = _nav_back_cb("events", cb.message.chat.id if cb.message else None)         or "menu:events"
     b.button(text="⬅️ Назад к списку", callback_data=back_ev)
-    b.button(text="🏠 Меню", callback_data="menu:main")
+    b.button(text=HOME_LABEL, callback_data="menu:main")
     _vrow(b)
     await safe_edit_or_answer(cb.message, text, reply_markup=b.as_markup())
 
@@ -596,7 +596,7 @@ async def _item_menu(cb: CallbackQuery, session, eid: int) -> None:
     b.button(text="🗑 Удалить мероприятие", callback_data=f"evadmin:delq:{eid}")
     _vrow(b)
     b.button(text="⬅️ К списку", callback_data="evadmin:list")
-    b.button(text="🏠 Меню", callback_data="menu:main")
+    b.button(text=HOME_LABEL, callback_data="menu:main")
     _vrow(b)
     await safe_edit_or_answer(cb.message, text, reply_markup=b.as_markup())
 
@@ -949,7 +949,7 @@ async def ev_wizard_photo(message: Message, state: FSMContext, session) -> None:
     else:
         b.button(text="📋 К списку", callback_data="evadmin:list")
     _vrow(b)
-    b.button(text="🏠 Меню", callback_data="menu:main")
+    b.button(text=HOME_LABEL, callback_data="menu:main")
     await message.answer("✅ Афиша сохранена — участники увидят её на карточке "
                          "мероприятия!", reply_markup=b.as_markup())
 

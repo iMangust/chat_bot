@@ -338,6 +338,31 @@ def _nav_back_cb(section: str | None, chat_id: int | None,
     # последнюю запись стека, НЕ относящуюся к текущему разделу, и ведём
     # «Назад» туда. Это гарантирует возврат на вкладку хаба («🎒 Вещи»,
     # «🎮 Досуг»), а не в главное меню.
+    def _pet_sub_tab_back() -> str | None:
+        """Точка возврата «на уровень выше» для подраздела хаба питомца.
+
+        Подразделы («Стиль», «Магазин», «Инвентарь», «Игры») живут
+        ОТДЕЛЬНЫМИ сообщениями поверх вкладки хаба, поэтому возврат на
+        вкладку ('pet:page:N') — реальный переход вверх, а не самопетля.
+        Берём вкладку из истории; если её нет — дефолт по корню секции.
+        Раньше эти записи считались «своими» (_SECTION_OWN_PREFIXES
+        включает 'pet'), «Назад» исчезал совсем или улетал в главное меню.
+        """
+        if section not in _PET_SUB_SECTIONS or section == "pet":
+            return None
+        for j in range(len(stack) - 1, -1, -1):
+            e = stack[j]
+            if e and e.startswith("pet:page:"):
+                return e
+        # Истории нет (deep-link / рестарт без Redis) — дефолтная вкладка
+        # раздела: магазин/инвентарь/стиль ← «🎒 Вещи», игры/друзья/арена ←
+        # «🎮 Досуг». Иначе «Назад» не строился вовсе и пользователь мог
+        # уйти только «🏠 Домой» (главное меню), минуя хаб.
+        default_tab = SECTION_ROOTS.get(section or "")
+        if default_tab and default_tab.startswith("pet:page:"):
+            return default_tab
+        return root if root.startswith("pet:page:") else None
+
     if current_cb and stack and stack[-1] == current_cb:
         # Исключение: 'menu:page:N' (листание страниц главного меню).
         # Если пользователь перелистнул меню, а потом открыл подраздел
@@ -346,6 +371,11 @@ def _nav_back_cb(section: str | None, chat_id: int | None,
         # экрана → самопетля. Подавляем «Назад», оставляем только «Меню».
         if current_cb.startswith("menu:page:"):
             return None
+        # Подраздел хаба питомца: источник перехода — вкладка хаба
+        # ('pet:page:N'), даже если формально она «своя» по префиксам.
+        tab = _pet_sub_tab_back()
+        if tab and tab != current_cb:
+            return tab
         for j in range(len(stack) - 2, -1, -1):
             e = stack[j]
             if not e or e.endswith(":noop") or e == "noop":
@@ -377,6 +407,16 @@ def _nav_back_cb(section: str | None, chat_id: int | None,
     # перерисовка текущего экрана («Назад ничего не делает»). Считаем
     # историю «своей», если в ней нет ни одной записи вне раздела.
     def _is_internal_entry(e: str) -> bool:
+        # 'pet:page:N' — вкладка хаба, а НЕ экран подраздела: подраздел
+        # («Магазин», «Игры», «Стиль») открывается ОТДЕЛЬНЫМ сообщением
+        # поверх вкладки, поэтому вкладка — реальный источник перехода и
+        # валидная точка возврата («Назад» на неё возвращает к вкладке).
+        # Раньше она считалась «своей» историей, весь стек признавался
+        # внутренним, «Назад» подавлялся — и из подразделов оставался
+        # только безликий «🏠 Домой».
+        if e.startswith("pet:page:") and section in _PET_SUB_SECTIONS \
+                and section != "pet":
+            return False
         return (_is_own_section_entry(e, section)
                 or (section in _PET_SUB_SECTIONS and e.startswith("pet:"))
                 or (not section and e.startswith("menu:page:")))
@@ -415,19 +455,17 @@ def _nav_back_cb(section: str | None, chat_id: int | None,
     def _effective_root() -> str:
         """Корень раздела с учётом вкладки хаба питомца, по которой пришли.
 
-        Хаб питомца ('pet:page:*') содержит кнопки-подразделы (магазин/
-        инвентарь/стиль/игры/друзья). Если вход в подраздел был из хаба,
-        осмысленный «Назад на уровень выше» — вкладка, по которой пришли
-        ('pet:shop' → открыть магазин; 'pet:inv' → открыть инвентарь),
-        либо общий корень хаба 'menu:pet', если конкретной вкладки в
-        истории нет. Для секций вне хаба — просто корень раздела."""
-        if section in _PET_SUB_SECTIONS and stack:
-            for key in ("pet:shop", "pet:inv", "pet:style", "pet:games",
-                        "pet:friends", "pet:arena"):
-                if _find_last(stack, key) is not None:
-                    return key
-            if _find_last_prefix(stack, ("pet:page:",)) is not None:
-                return "menu:pet"
+        Подразделы хаба («Магазин», «Инвентарь», «Стиль», «Игры»…) живут
+        ОТДЕЛЬНЫМИ сообщениями поверх вкладки, поэтому реальный «Назад на
+        уровень выше» — вкладка хаба ('pet:page:N'), по которой пришли.
+        Раньше здесь возвращалась КНОПКА входа ('pet:shop'), которая равна
+        текущему экрану: проверка самопетли ниже гасила её в menu:main —
+        и вместо возврата к вкладке пользователь получал только «🏠 Домой».
+        Для секций вне хаба — просто корень раздела."""
+        if section in _PET_SUB_SECTIONS and section != "pet":
+            tab = _pet_sub_tab_back()
+            if tab:
+                return tab
         return root
 
     root = _effective_root()
@@ -607,7 +645,10 @@ def games_menu(chat_id: int | None = None) -> InlineKeyboardMarkup:
     b.button(text="✂️ Камень-ножницы-бумага", callback_data="game:rps")
     b.button(text="🃏 Двадцать одно · 🧠 помогает", callback_data="game:blackjack")
     b.adjust(1, 2)
-    with_nav(b, "games", chat_id)
+    # current_cb='pet:games' — нажатая кнопка входа из хаба: включает режим
+    # current_source, «Назад» ведёт на вкладку 'pet:page:N', а не подавляется.
+    append_nav(b, "games", back_cb=_nav_back_cb("games", chat_id,
+                                                current_cb="pet:games"))
     return b.as_markup()
 
 def rps_keyboard(chat_id: int | None = None) -> InlineKeyboardMarkup:
@@ -679,7 +720,12 @@ SECTION_ROOTS: dict[str, str] = {
 }
 
 BACK_LABEL = "⬅️ Назад"
-HOME_LABEL = "🏠 Меню"
+# «Домой» — прежняя подпись кнопки выхода в главное меню. Пользователи
+# привыкли именно к ней, и на экранах с кнопкой «⬅️ Назад» слово «Меню»
+# читалось как «удалённый дом»: поэтому выход всегда подписан «🏠 Домой»,
+# а «Назад» — только возврат на шаг назад. Никогда не убирай «Домой»
+# оттуда, где добавляешь «Назад» — это два разных действия.
+HOME_LABEL = "🏠 Домой"
 
 # Секции, экраны которых — ПОДСТРАНИЦЫ своего корня (товар/категория
 # мерча, карточка события): для них «Назад → корень раздела» осмыслен
@@ -739,21 +785,24 @@ def nav_row(section: str | None, back_cb: str | None = None,
     (только «Меню»). current_cb — callback, по которому открыт текущий
     экран (защита от самопетли в open-root-модели мерча/событий)."""
     if _back_suppressed(section):
-        # Плоский раздел — без кнопки «Назад», только «🏠 Меню».
+        # Плоский раздел — без кнопки «Назад», только «🏠 Домой».
         return _nav_buttons("")
     root = SECTION_ROOTS.get(section or "", "menu:main")
     if back_cb is None:
         back_cb = _nav_back_cb(section, chat_id, current_cb=current_cb)
         if back_cb is None:
-            # Пустой/непригодный стек: корень раздела уместен только для
-            # подстраниц (мерч/события — выход к списку категорий); для
-            # верхнеуровневых экранов это возврат «в себя» → подавляем.
-            # Для хаба питомца ('pet' — сам корневой экран) и подразделов
-            # с внутренним корнем ('pet:page:N') — тоже подавляем.
+            # Пустой/непригодный стек. Корень раздела (для подразделов
+            # хаба питомца это вкладка 'pet:page:N') — осмысленный выход
+            # НА УРОВЕНЬ ВЫШЕ, показываем его даже при пустой истории:
+            # с устройства пользователь мог попасть сюда deep-link'ом или
+            # после рестарта без Redis. Для верхнеуровневых экранов
+            # («Статистика», карточка…) корень == текущий экран → возврат
+            # «в себя» бессмыслен, оставляем только «🏠 Домой».
+            pet_sub_root = section in _PET_SUB_SECTIONS and \
+                root.startswith("pet:page:")
             is_subpage = section in _SUBPAGE_SECTIONS and \
                 str(current_cb or "").split(":")[0] == section
-            pet_hub_root = section == "pet" or root.startswith("pet:")
-            back_cb = "" if (not is_subpage or pet_hub_root) else root
+            back_cb = root if (is_subpage or pet_sub_root) else ""
     # Самопетля недопустима: «Назад» на тот же callback, по которому мы
     # сейчас находимся, = Telegram покажет «ничего не происходит».
     # Корень раздела ('menu:merch' для списка категорий) блокируется ТОЛЬКО
@@ -762,17 +811,30 @@ def nav_row(section: str | None, back_cb: str | None = None,
     # (товар/категория/позиция) 'menu:merch' — валидный пункт возврата на
     # уровень выше, и блокировать его нельзя (иначе «Назад» исчезает совсем).
     explicit = back_cb is not None and back_cb != ""
+    # «Назад» ведёт на вкладку хаба питомца ('pet:page:N'): эта вкладка
+    # живёт ВНУТРИ сообщения-хаба, но НЕ внутри текущего экрана — это
+    # реальный переход на уровень выше (Стиль → вкладка «🎒 Вещи»), его
+    # блокировать нельзя. Раньше этот случай ошибочно считался
+    # самопетлёй, и кнопка «Назад» исчезала из подразделов хаба
+    # (стиль/магазин/инвентарь/игры) — оставался только «Домой».
+    pet_tab_back = str(back_cb or "").startswith("pet:page:")
     if not explicit:
         on_root_screen = (not current_cb) or current_cb == root \
             or str(current_cb).split(":")[0] == section
-        if back_cb and back_cb == root and on_root_screen:
+        if back_cb and back_cb == root and on_root_screen and not pet_tab_back:
             back_cb = ""
     elif back_cb == root and root != f"menu:{section}":
         # Подраздел хаба (магазин/игры ← вкладка 'pet:page:N'): корень
         # раздела лежит ВНУТРИ того же экрана-сообщения, и возврат туда =
         # перерисовка текущего сообщения («Назад ничего не делает»).
-        # Такую явную цель тоже блокируем — остаётся «🏠 Меню».
-        back_cb = ""
+        # Такую явную цель тоже блокируем — остаётся «🏠 Домой».
+        # Исключение — сам возврат на вкладку-корень: с экрана подраздела
+        # (открыт КНОПКОЙ 'pet:style'/'shop:...') переход на 'pet:page:1'
+        # перерисует хаб — это осмысленный выход наружу, а не самопетля.
+        sub_from_hub = section in _PET_SUB_SECTIONS and \
+            str(current_cb or "").startswith(("pet:", "shop", "inv", "style"))
+        if not (sub_from_hub and pet_tab_back):
+            back_cb = ""
     if back_cb and back_cb == current_cb:
         back_cb = ""
     return _nav_buttons(back_cb)
@@ -877,7 +939,7 @@ def species_picker(chat_id: int | None = None,
 def adopt_cta_kb() -> InlineKeyboardMarkup:
     b = InlineKeyboardBuilder()
     b.button(text="🥚 Усыновить питомца", callback_data="pet:adopt")
-    b.button(text="🏠 Меню", callback_data="menu:main")
+    b.button(text=HOME_LABEL, callback_data="menu:main")
     b.adjust(1)
     return b.as_markup()
 
@@ -1068,7 +1130,7 @@ def weather_kb(view: str = "today") -> _IKM:
     b.adjust(2)
     # «menu:main» — единственный обработчик возврата в главное меню
     # (голого payload «menu» в боте нет — такая кнопка была мёртвой).
-    b.row(_IKB(text="⬅️ В меню", callback_data="menu:main"))
+    b.row(_IKB(text=HOME_LABEL, callback_data="menu:main"))
     return b.as_markup()
 
 

@@ -33,10 +33,16 @@ def _nav_back_cb(cb: CallbackQuery, section: str) -> "str | None":
     Единый источник истины — `inline._nav_back_cb` (тот же алгоритм, что у
     всех остальных экранов): учитывает историю переходов, корень раздела и
     защиту от самопетли. Локальная копия логики раньше расходилась с общей
-    и возвращала «Назад в себя» (кнопка «ничего не делает»)."""
+    и возвращала «Назад в себя» (кнопка «ничего не делает»).
+
+    current_cb = нажатая кнопка входа ('pet:shop'/'pet:inv'): включает
+    режим current_source — подраздел хаба открывается ОТДЕЛЬНЫМ сообщением
+    поверх вкладки 'pet:page:N', поэтому «Назад» должен вести на вкладку,
+    а не подавляться как «самопетля к корню раздела»."""
     from app.keyboards.inline import _nav_back_cb as _common
     chat_id = cb.message.chat.id if cb.message else None
-    return _common(section, chat_id)
+    entry = {"shop": "pet:shop", "inv": "pet:inv"}.get(section)
+    return _common(section, chat_id, current_cb=entry)
 
 
 ITEMS_SEED = [
@@ -204,6 +210,7 @@ async def shop_screen(cb: CallbackQuery, session: AsyncSession,
     kb, page = paged_keyboard(
         content_buttons, prefix="shop", title="🛒 Магазин", page=page,
         back_cb=_nav_back_cb(cb, "shop"), pages=all_pages,
+        home_cb="menu:main",
     )
     _SHOP_PAGE_CTX[cb.message.chat.id] = page
     await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=kb)
@@ -299,6 +306,7 @@ async def inventory_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     kb, page = paged_keyboard(
         content_buttons, prefix="inv", title="🎒 Инвентарь", page=page,
         back_cb=_nav_back_cb(cb, "inv"), pages=all_pages,
+        home_cb="menu:main",
     )
     await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=kb)
     await cb.answer()
