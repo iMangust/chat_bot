@@ -78,10 +78,9 @@ async def _game_entry_guard(cb: CallbackQuery, state: FSMContext,
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
         await state.clear()
-        await safe_edit_or_answer(cb.message, "🥚 Сначала заведи питомца (/start).",
-                                  reply_markup=pet_hub(2))
-        await cb.answer()
-        return None
+        # Единый стиль отказа: всплывающий alert (как у «Покормить» во сне),
+        # экран не перерисовываем.
+        return await _deny(cb, "🥚 Сначала заведи питомца — /start")
     set_pet_page(_chat_of(cb) or 0, 2)
     await state.clear()
     svc = TamagotchiService(session)
@@ -153,9 +152,7 @@ async def game_exit(cb: CallbackQuery, state: FSMContext,
     await state.clear()
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
-        await safe_edit_or_answer(cb.message, "🥚 Сначала заведи питомца (/start).",
-                                  reply_markup=pet_hub(2))
-        return await cb.answer()
+        return await _deny(cb, "🥚 Сначала заведи питомца — /start")
     set_pet_page(_chat_of(cb) or 0, 2)
     await _games_screen_render(cb, pet)
 
@@ -182,7 +179,8 @@ def _guess_kb(lo: int, hi: int, chat_id: int | None) -> InlineKeyboardMarkup:
     """Варианты чисел + ЯВНЫЙ выход из игры (кнопка «Назад» по стеку может
     не построиться без Redis — гарантируем путь наружу)."""
     mid = (lo + hi) // 2
-    rows = [[(str(n), f"guess:{n}") for n in (lo, mid, hi)]]
+    uniq = sorted({lo, mid, hi})   # при узком диапазоне lo==mid — дубликаты недопустимы
+    rows = [[(str(n), f"guess:{n}") for n in uniq]]
     return inline_back_kb("games", chat_id=chat_id, extra_rows=rows)
 
 
@@ -195,6 +193,58 @@ def _rps_kb(chat_id: int | None) -> InlineKeyboardMarkup:
 def _bj_kb(chat_id: int | None) -> InlineKeyboardMarkup:
     rows = [[("➕ Ещё карту", "bj:hit"), ("✋ Хватит", "bj:stand")]]
     return inline_back_kb("games", chat_id=chat_id, extra_rows=rows)
+
+
+# ── Страж потерянного FSM-состояния для ходов мини-игр ────────────────────
+# Кнопки хода («guess:7», «rps:rock», «bj:hit») обработаны хендлерами с
+# FSM-фильтром. Если состояние игры потеряно (перезапуск бота без общей
+# FSM-storage, несколько воркеров, истёкшая сессия или тап по «мёртвому»
+# сообщению старой игры), такой тап не матчил НИ ОДИН хендлер и молча
+# проглатывался noop-guard'ом — пользователь видел «ничего не происходит».
+# Теперь этот страж отвечает явно: возвращает игрока в меню игр.
+_STALE_GAME_HINTS = {
+    "guess": "🔢 Угадай число", "rps": "✂️ Камень-ножницы-бумага",
+    "bj": "🃏 Двадцать одно",
+}
+_STALE_GAME_STATE = {
+    "guess": Games.guessing.state, "rps": Games.rps.state,
+    "bj": Games.blackjack.state,
+}
+
+
+@router.callback_query(F.data.startswith(("guess:", "rps:", "bj:")))
+async def game_stale_guard(cb: CallbackQuery, state: FSMContext,
+                           session: AsyncSession) -> None:
+    """Ход мини-игры без активного состояния игры → вернуть в меню игр.
+
+    Объявлен ДО целевых FSM-хендлеров: срабатывает только когда состояние
+    НЕ совпадает (настоящий ход пропускается дальше по роутеру).
+    """
+    prefix = next((p for p in _STALE_GAME_HINTS
+                   if (cb.data or "").startswith(f"{p}:")), None)
+    if prefix is None:
+        return await cb.answer()
+    cur = await state.get_state()
+    if cur == _STALE_GAME_STATE[prefix]:
+        # Состояние на месте — это настоящий ход; его обработает целевой
+        # хендлер ниже (этот guard стоит раньше него в том же роутере,
+        # поэтому просто выходим, ничего не отвечая, чтобы aiogram пошёл дальше).
+        return None
+    pet = await _get_pet(session, cb.from_user.id)
+    if pet is None:
+        await safe_edit_or_answer(cb.message, "🥚 Сначала заведи питомца (/start).",
+                                  reply_markup=pet_hub(2))
+        return await cb.answer()
+    set_pet_page(_chat_of(cb) or 0, 2)
+    await state.clear()
+    await safe_edit_or_answer(
+        cb.message,
+        f"⏳ Игра «{_STALE_GAME_HINTS[prefix]}» уже закончилась или состояние "
+        "сбросилось (например, после перезапуска бота). Начинай заново — "
+        "выбор игр ниже 👇",
+        reply_markup=games_menu(_chat_of(cb)))
+    return await cb.answer()
+
 
 @router.callback_query(Games.guessing, F.data.startswith("guess:"))
 async def do_guess_cb(cb: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:

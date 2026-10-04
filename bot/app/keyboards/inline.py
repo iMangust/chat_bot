@@ -659,16 +659,6 @@ def games_menu(chat_id: int | None = None) -> InlineKeyboardMarkup:
                                                 current_cb="pet:games"))
     return b.as_markup()
 
-def rps_keyboard(chat_id: int | None = None) -> InlineKeyboardMarkup:
-    b = InlineKeyboardBuilder()
-    b.button(text="🪨 Камень", callback_data="rps:rock")
-    b.button(text="✂️ Ножницы", callback_data="rps:scissors")
-    b.button(text="📄 Бумага", callback_data="rps:paper")
-    b.adjust(3)
-    # «Назад» — по истории (обычно в меню игр): игрок может передумать.
-    append_nav(b, "games", back_cb=_nav_back_cb("games", chat_id))
-    return b.as_markup()
-
 
 def inline_back_kb(section: str = "games", *,
                    chat_id: int | None = None,
@@ -691,14 +681,6 @@ def inline_back_kb(section: str = "games", *,
     b.row(InlineKeyboardButton(text="⬅️ Выйти из игры",
                                callback_data=exit_cb or "game:exit"))
     append_nav(b, section, back_cb=_nav_back_cb(section, chat_id))
-    return b.as_markup()
-
-def twentyone_keyboard(chat_id: int | None = None) -> InlineKeyboardMarkup:
-    b = InlineKeyboardBuilder()
-    b.button(text="➕ Ещё карту", callback_data="bj:hit")
-    b.button(text="✋ Хватит", callback_data="bj:stand")
-    b.adjust(2)
-    append_nav(b, "games", back_cb=_nav_back_cb("games", chat_id))
     return b.as_markup()
 
 def guess_hint_keyboard(secret_lo: int, secret_hi: int,

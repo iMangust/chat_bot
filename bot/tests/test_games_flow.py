@@ -51,3 +51,78 @@ def test_deny_style_is_alert(monkeypatch):
     from app.handlers import tamagotchi as tg
     asyncio.run(tg._deny(FakeCb(), "Питомец спит 😴"))
     assert calls == {"text": "Питомец спит 😴", "show_alert": True}
+
+
+# ── Регрессия «Игры не работают: при нажатии ничего не происходит» ────────
+
+def test_every_game_button_has_handler():
+    """Каждая callback_data игровых клавиатур матчится хотя бы одному
+    зарегистрированному хендлеру роутера games (иначе тап молча игнорируется)."""
+    import asyncio
+    from aiogram.types import CallbackQuery
+    from app.keyboards.inline import games_menu
+    from app.handlers.games import _guess_kb, _rps_kb, _bj_kb
+
+    # Собираем все кнопки всех игровых экранов.
+    datas = []
+    for kb in (games_menu(1), _guess_kb(5, 12, 1), _rps_kb(1), _bj_kb(1)):
+        for row in kb.inline_keyboard:
+            datas += [b.callback_data for b in row if b.callback_data]
+    assert datas, "клавиатуры пустые"
+
+    # Прогоняем каждую через реальные роутеры (тот же набор, что в main.py).
+    from app.handlers import (admin, access, settings, start, tracker,
+                              tamagotchi, games, shop, merch, manual, social,
+                              arena, stats, events)
+    order = [admin.router, access.router, settings.router, start.router,
+             tracker.router, tamagotchi.router, games.router, shop.router,
+             merch.router, manual.router, social.router, arena.router,
+             stats.router, events.router]
+
+    class FakeCb:
+        def __init__(self, data):
+            self.data = data
+            self.id = "x"
+            self.from_user = type("U", (), {"id": 1})()
+            self.message = None
+        async def answer(self, *a, **k):
+            return True
+
+    async def _match(data: str) -> bool:
+        cb = FakeCb(data)
+        for r in order:
+            for h in r.callback_query.handlers:
+                try:
+                    res = await h.check(cb, {})
+                except Exception:
+                    res = False
+                if res:
+                    return True
+        return False
+
+    unmatched = [d for d in datas if not asyncio.run(_match(d))]
+    assert not unmatched, f"кнопки без обработчика (тап = «ничего не происходит»): {unmatched}"
+
+
+def test_stale_guard_registered_before_fsm_handlers():
+    """Ходы guess:/rps:/bj: без FSM-состояния больше не повисают в воздухе:
+    game_stale_guard объявлен в роутере раньше целевых FSM-хендлеров."""
+    from app.handlers.games import router, game_stale_guard, do_guess_cb
+    handlers = router.callback_query.handlers
+    idx_guard = next(i for i, h in enumerate(handlers) if h.callback is game_stale_guard)
+    idx_guess = next(i for i, h in enumerate(handlers) if h.callback is do_guess_cb)
+    assert idx_guard < idx_guess
+    # сам guard матчит все три префикса без состояния
+    src = inspect.getsource(game_stale_guard)
+    assert '"guess:"' in src and '"rps:"' in src and '"bj:"' in src
+
+
+def test_guess_kb_no_duplicate_buttons():
+    """Дубликаты callback_data в одной клавиатуре недопустимы (Telegram их
+    не различает; при lo==mid старая версия ломала раскладку)."""
+    from app.handlers.games import _guess_kb
+    for lo, hi in ((10, 10), (10, 11), (1, 20), (3, 4)):
+        kb = _guess_kb(lo, hi, 1)
+        datas = [b.callback_data for row in kb.inline_keyboard for b in row]
+        num_datas = [d for d in datas if d.startswith("guess:")]
+        assert len(num_datas) == len(set(num_datas)), (lo, hi, datas)
