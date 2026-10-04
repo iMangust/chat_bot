@@ -227,13 +227,21 @@ async def game_stale_guard(cb: CallbackQuery, state: FSMContext,
                            session: AsyncSession) -> None:
     """Ход мини-игры без активного состояния игры → вернуть в меню игр.
 
-    Объявлен ДО целевых FSM-хендлеров: срабатывает только когда состояние
-    НЕ совпадает (настоящий ход пропускается дальше по роутеру).
+    ⚠️ КРИТИЧНО ПО ПОРЯДКУ В РОУТЕРЕ: этот guard матчит ЛЮБЫЕ кнопки хода
+    («guess:7», «rps:rock», «bj:hit») и объявлен ДО целевых FSM-хендлеров.
+    Поэтому для настоящего хода он обязан вернуть falsy (None), а не
+    Coroutine — иначе aiogram считает хендлер сработавшим и останавливает
+    диспетчеризацию: тап гасится молча, «игра началась, но дальнейшие
+    действия не работают» (регрессия 2026-10: guard возвращал `await`-вызов
+    как значение). Факт ответа записываем в flag, чтобы двойного answer()
+    не было даже при weird-маршрутизации.
     """
     prefix = next((p for p in _STALE_GAME_HINTS
                    if (cb.data or "").startswith(f"{p}:")), None)
     if prefix is None:
-        return await cb.answer()
+        await cb.answer()
+        cb._game_answered = True
+        return None
     cur = await state.get_state()
     if cur == _STALE_GAME_STATE[prefix]:
         # Состояние на месте — это настоящий ход; его обработает целевой
@@ -242,18 +250,26 @@ async def game_stale_guard(cb: CallbackQuery, state: FSMContext,
         return None
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
-        await safe_edit_or_answer(cb.message, "🥚 Сначала заведи питомца (/start).",
-                                  reply_markup=pet_hub(2))
-        return await cb.answer()
+        # Ответ на тап ПЕРВЫМ: если edit сообщения упадёт (старое/серверное
+        # сообщение, network), пользователь всё равно увидит реакцию.
+        await cb.answer("🥚 Сначала заведи питомца (/start)")
+        cb._game_answered = True
+        if cb.message:
+            await safe_edit_or_answer(cb.message, "🥚 Сначала заведи питомца (/start).",
+                                      reply_markup=pet_hub(2))
+        return True
     set_pet_page(_chat_of(cb) or 0, 2)
     await state.clear()
-    await safe_edit_or_answer(
-        cb.message,
-        f"⏳ Игра «{_STALE_GAME_HINTS[prefix]}» уже закончилась или состояние "
-        "сбросилось (например, после перезапуска бота). Начинай заново — "
-        "выбор игр ниже 👇",
-        reply_markup=games_menu(_chat_of(cb)))
-    return await cb.answer()
+    await cb.answer(f"⏳ Игра «{_STALE_GAME_HINTS[prefix]}» закончилась — начинай заново")
+    cb._game_answered = True
+    if cb.message:
+        await safe_edit_or_answer(
+            cb.message,
+            f"⏳ Игра «{_STALE_GAME_HINTS[prefix]}» уже закончилась или состояние "
+            "сбросилось (например, после перезапуска бота). Начинай заново — "
+            "выбор игр ниже 👇",
+            reply_markup=games_menu(_chat_of(cb)))
+    return True
 
 
 @router.callback_query(Games.guessing, F.data.startswith("guess:"))

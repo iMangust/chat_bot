@@ -157,3 +157,61 @@ def test_games_menu_always_has_exit_button():
     # на экране игр вообще без кнопок возврата.
     assert any(d.startswith("pet:page:") or d == "menu:main" for d in datas), \
         f"нет кнопки выхода из меню игр: {datas}"
+
+
+# ── Регрессия «игра началась, но дальнейшие действия не работают» ─────────
+
+def test_stale_guard_passes_real_moves_to_target_handlers():
+    """game_stale_guard стоит в роутере ДО целевых FSM-хендлеров и матчит
+    ЛЮБЫЕ кнопки хода. Настоящий ход (состояние на месте) он обязан
+    пропустить: callback вернёт falsy (None), иначе aiogram считает update
+    обработанным, диспетчеризация останавливается и тап гасится молча —
+    ровно этот баг ломал все три мини-игры (guard возвращал coroutine из
+    `return await cb.answer()`)."""
+    import asyncio
+    from types import SimpleNamespace
+    from app.handlers.games import game_stale_guard, Games
+
+    class FakeState:
+        def __init__(self, st): self._st = st
+        async def get_state(self): return self._st
+
+    for data, state_str in (("rps:rock", Games.rps.state),
+                            ("guess:7", Games.guessing.state),
+                            ("bj:hit", Games.blackjack.state)):
+        cb = SimpleNamespace(data=data, from_user=SimpleNamespace(id=1))
+        res = asyncio.run(game_stale_guard(cb, FakeState(state_str), None))
+        assert not res, f"ход {data} при активном состоянии должен пропускаться " \
+                        f"(falsy), а guard вернул {res!r} — цель не будет вызвана"
+
+def test_stale_guard_answers_when_state_lost():
+    """Ход без состояния (перезапуск бота/мёртвая кнопка) НЕ зависает:
+    guard сам отвечает на тап и возвращает truthy (update обработан)."""
+    import asyncio
+    from types import SimpleNamespace
+    from app.handlers.games import game_stale_guard
+
+    answered = []
+    class FakeCb:
+        data = "rps:rock"
+        from_user = SimpleNamespace(id=1)
+        message = None
+        async def answer(self, *a, **k):
+            answered.append(a); return True
+
+    class FakeState:
+        async def get_state(self): return None  # состояние потеряно
+
+    class FakeRepo:
+        @staticmethod
+        async def get_by_user(session, tg_id): return None  # нет питомца -> ранний выход
+
+    from app.handlers import games as g
+    orig = g._get_pet
+    g._get_pet = lambda session, tg_id: FakeRepo.get_by_user(session, tg_id)
+    try:
+        res = asyncio.run(game_stale_guard(FakeCb(), FakeState(), None))
+    finally:
+        g._get_pet = orig
+    assert res, "при потерянном состоянии update должен быть обработан (truthy)"
+    assert answered, "тап обязан получить ответ (не молча гаситься)"
