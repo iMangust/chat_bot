@@ -43,8 +43,9 @@ def effect_for(action: str, stat: str | None = None) -> Effect | None:
         action = _TRAIN_TOAST.get(stat, "train_str")
     return EFFECTS.get(action)
 
-async def react_to_message(cb: CallbackQuery, emoji: str, *, bot=None) -> None:
-    msg = cb.message
+async def react_to_message(cb: CallbackQuery, emoji: str, *, bot=None,
+                           message: Message | None = None) -> None:
+    msg = message if message is not None else cb.message
     chat = getattr(msg, "chat", None)
     if msg is None or chat is None or not emoji:
         return
@@ -66,7 +67,8 @@ async def react_to_message(cb: CallbackQuery, emoji: str, *, bot=None) -> None:
 async def apply_effect(cb: CallbackQuery, action: str, *,
                        stat: str | None = None,
                        toast_override: str | None = None,
-                       bot=None) -> None:
+                       bot=None,
+                       react_target: Message | None = None) -> None:
     from app import themes
 
     eff = themes.themed_effect(effect_for(action, stat)) \
@@ -82,11 +84,13 @@ async def apply_effect(cb: CallbackQuery, action: str, *,
     emoji = list(eff.primary)
     if eff.extra_pool and random.random() < eff.extra_chance:
         emoji.append(random.choice(eff.extra_pool))
-    # Реакцию ставим ТОЛЬКО на исходное сообщение с нажатой кнопкой и
-    # только если оно не будет отредактировано результатом (иначе
-    # Telegram показывает реакцию как «реакцию на ответ бота» рядом со
-    # строкой результата — визуально это выглядит багом).
-    text = getattr(cb.message, "text", None) or ""
-    if text.startswith(("Ты:", "🎲", "🃏")):
+    # Реакция = «ответ питомца» на действие пользователя. Ставится на то
+    # сообщение, где находится нажатая кнопка: если результат игры
+    # редактирует это же сообщение (safe_edit_or_answer), реакция остаётся
+    # прямо под итогом — это и есть «реакция после игры». Если же итог
+    # уйдёт в новое сообщение (edit не удался / другой чат), реагируем на
+    # него — цель передаётся через react_target.
+    if react_target is not None:
+        await react_to_message(cb, emoji[0], bot=bot, message=react_target)
         return
-    await react_to_message(cb, emoji[0])
+    await react_to_message(cb, emoji[0], bot=bot)

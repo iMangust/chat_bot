@@ -37,15 +37,34 @@ def season_decay_mult(season: str, stat_key: str, species: str = "") -> float:
     m *= SPECIES_SEASON_DECAY_MULT.get(species, {}).get(season, {}).get(stat_key, 1.0)
     return m
 
+# Базовые скорости изменения статов (ч/час). Умножаются на видовые,
+# сезонные и погодные модификаторы, а также на глобальные множители из
+# настроек (app.services.balance) — там же можно переопределить значения
+# без правки кода (BALANCE_* в .env).
 DECAY_PER_HOUR = {
     "hunger": 4.0,
     "happiness": 2.0,
     "energy_day": 1.2,
-    "energy_sleep": 8.0,
+    "energy_sleep": 8.0,   # прирост ⚡ во сне (единая правда: см. sleep_regen)
     "hygiene": 3.0,
     "health_low_care": 3.0,
 }
+# Награда за победу в игре (к happiness, до множителей) и штраф энергии.
+PLAY_WIN_HAPPY = 12.0
+PLAY_LOSE_HAPPY = 5.0
 FREE_ACTION_USES = 3
+
+
+def sleep_regen_per_hour(sp: dict | None = None) -> float:
+    """⚡ за час сна: база + видовой бонус (совёнок +4, шиншилла +2).
+
+    Единая точка правды: используется и в apply_decay (тик во время сна),
+    и в wake() (итог «сколько энергии набрал») — раньше они расходились,
+    и текст пробуждения обещал меньше, чем реально начислялось.
+    """
+    bonus = float((sp or {}).get("bonus", {}).get("sleep_bonus", 0.0))
+    from app.services import balance
+    return (DECAY_PER_HOUR["energy_sleep"] + bonus) * balance.get_mult("sleep_regen")
 PET_XP_BASE = 30.0
 
 STAGE_BY_LEVEL = [
@@ -56,69 +75,11 @@ STAGE_BY_LEVEL = [
     (1, PetStage.egg),
 ]
 
-SPECIES_DATA: dict[str, dict] = {
-    "cat": {
-        "title": "Котёнок",
-        "emoji": "🐱",
-        "desc": "Самостоятельный весельчак. Обожает игры, не любит воду и ранние подъёмы.",
-        "decay": {"hunger": 1.0, "happiness": 1.0, "energy": 1.0, "hygiene": 1.0},
-        "bonus": {"play_happy": 1.2, "xp_mult": 1.0, "coin_mult": 1.0, "sleep_bonus": 0.0},
-        "prefers": {"play": +6, "wash": -4, "walk": +2, "train": 0, "feed": 0},
-        "start": {"strength": 1, "agility": 3, "intellect": 2},
-    },
-    "dog": {
-        "title": "Щенок",
-        "emoji": "🐶",
-        "desc": "Верный спортсмен. Крепок, вынослив, обожает прогулки и еду. Немедленно откликается.",
-        "decay": {"hunger": 0.8, "happiness": 1.0, "energy": 0.9, "hygiene": 1.2},
-        "bonus": {"play_happy": 1.0, "xp_mult": 1.0, "coin_mult": 1.0, "sleep_bonus": 0.0},
-        "prefers": {"walk": +6, "feed": +3, "play": +2, "train": +2, "wash": -2},
-        "start": {"strength": 3, "agility": 2, "intellect": 1},
-    },
-    "fox": {
-        "title": "Лисёнок",
-        "emoji": "🦊",
-        "desc": "Хитрый кладователь. Приносит больше монет с прогулок, но быстро устаёт и пачкается.",
-        "decay": {"hunger": 1.15, "happiness": 1.0, "energy": 1.25, "hygiene": 1.25},
-        "bonus": {"play_happy": 1.0, "xp_mult": 1.0, "coin_mult": 1.3, "sleep_bonus": 0.0},
-        "prefers": {"walk": +4, "play": +2, "feed": -2, "wash": 0, "train": 0},
-        "start": {"strength": 1, "agility": 4, "intellect": 1},
-    },
-    "chinchilla": {
-        "title": "Шиншилла",
-        "emoji": "🐭",
-        "desc": ("Пушистый чистюля. Почти не пачкается (обожает пыльные ванны) и "
-                 "отлично восстанавливается во сне. Но быстро устаёт, не любит игры "
-                 "и прогулки, а летом грустнеет от жары."),
-        "decay": {"hunger": 1.05, "happiness": 1.0, "energy": 1.2, "hygiene": 0.65},
-        "bonus": {"play_happy": 0.9, "xp_mult": 1.0, "coin_mult": 1.0, "sleep_bonus": 2.0},
-        "prefers": {"wash": +6, "play": -3, "walk": -2, "feed": +2, "train": 0},
-        "start": {"strength": 1, "agility": 4, "intellect": 2},
-    },
-    "owl": {
-        "title": "Совёнок",
-        "emoji": "🦉",
-        "desc": "Ночной интеллектуал. Быстро учится, отлично восстанавливается во сне, но днём вялый.",
-        "decay": {"hunger": 1.05, "happiness": 1.0, "energy": 1.35, "hygiene": 0.95},
-        "bonus": {"play_happy": 1.0, "xp_mult": 1.3, "coin_mult": 1.0, "sleep_bonus": 4.0},
-        "prefers": {"train": +6, "sleep": +3, "play": -2, "feed": 0, "walk": -2},
-        "start": {"strength": 1, "agility": 1, "intellect": 4},
-    },
-    "dragon": {
-        "title": "Дракончик",
-        "emoji": "🐉",
-        "desc": "Редкий универсал (+10% ко всем наградам). Капризен: happiness падает быстрее.",
-        "decay": {"hunger": 0.9, "happiness": 1.3, "energy": 1.0, "hygiene": 1.0},
-        "bonus": {"play_happy": 1.1, "xp_mult": 1.1, "coin_mult": 1.1, "sleep_bonus": 0.0},
-        "prefers": {"train": +2, "feed": +2, "play": +2, "wash": +2, "walk": +2},
-        "start": {"strength": 2, "agility": 2, "intellect": 2},
-    },
-}
-
-SPECIES_START_PRICE = {"cat": 0, "dog": 150, "fox": 250, "chinchilla": 300,
-                       "owl": 450, "dragon": 800}
-
-SPECIES_BONUS = {k: v["desc"] for k, v in SPECIES_DATA.items()}
+# SPECIES_DATA / SPECIES_START_PRICE / SPECIES_BONUS вынесены в
+# app.services.pet_data (легковесный модуль для UI-справок); реэкспорт
+# сохраняет обратную совместимость всех импортов.
+from app.services.pet_data import (SPECIES_BONUS, SPECIES_DATA,
+                                    SPECIES_START_PRICE)
 
 def _species_key(pet) -> str:
     return getattr(pet.species, "value", str(pet.species))
@@ -275,19 +236,24 @@ class TamagotchiService:
         except Exception:
             wmods = {}
         sp_key = _species_key(pet)
-        decay_hunger = DECAY_PER_HOUR["hunger"] * d.get("hunger", 1.0) * season_decay_mult(season, "hunger", sp_key) * wmods.get("hunger", 1.0) * self.decay_multiplier(pet, "hunger")
-        decay_happy = DECAY_PER_HOUR["happiness"] * d.get("happiness", 1.0) * season_decay_mult(season, "happy", sp_key) * wmods.get("happy", 1.0) * self.decay_multiplier(pet, "happy")
-        decay_energy_day = DECAY_PER_HOUR["energy_day"] * d.get("energy", 1.0) * season_decay_mult(season, "energy", sp_key) * wmods.get("energy", 1.0) * self.decay_multiplier(pet, "energy")
-        decay_hygiene = DECAY_PER_HOUR["hygiene"] * d.get("hygiene", 1.0) * season_decay_mult(season, "hygiene", sp_key) * wmods.get("hygiene", 1.0) * self.decay_multiplier(pet, "hygiene")
-        sleep_regen = (DECAY_PER_HOUR["energy_sleep"] + sp["bonus"]["sleep_bonus"]) \
-            * self.action_modifier(pet, "sleep_regen")
+        from app.services import balance
+        decay_hunger = balance.get_mult("hunger_decay") * d.get("hunger", 1.0) * season_decay_mult(season, "hunger", sp_key) * wmods.get("hunger", 1.0) * self.decay_multiplier(pet, "hunger")
+        decay_happy = balance.get_mult("happy_decay") * d.get("happiness", 1.0) * season_decay_mult(season, "happy", sp_key) * wmods.get("happy", 1.0) * self.decay_multiplier(pet, "happy")
+        decay_energy_day = balance.get_mult("energy_decay") * d.get("energy", 1.0) * season_decay_mult(season, "energy", sp_key) * wmods.get("energy", 1.0) * self.decay_multiplier(pet, "energy")
+        decay_hygiene = balance.get_mult("hygiene_decay") * d.get("hygiene", 1.0) * season_decay_mult(season, "hygiene", sp_key) * wmods.get("hygiene", 1.0) * self.decay_multiplier(pet, "hygiene")
+        sleep_regen = sleep_regen_per_hour(sp) * self.action_modifier(pet, "sleep_regen")
 
         if pet.is_sleeping:
             if pet.sleep_until and now >= _aware(pet.sleep_until):
+                # Пробуждение по будильнику: энергия восстанавливается до
+                # 100 — видовые бонусы сна (sleep_bonus) уже учтены в
+                # sleep_regen_per_hour() на тиках во время сна. Раньше сюда
+                # дополнительно прибавлялся sp["bonus"]["sleep_bonus"] —
+                # двойной бонус, рассогласованный с wake().
                 pet.is_sleeping = False
                 pet.sleep_until = None
                 pet.sleep_started_at = None
-                pet.energy = clamp(100 + sp["bonus"]["sleep_bonus"])
+                pet.energy = clamp(100)
                 pet.happiness = clamp(pet.happiness + species_pref_delta(pet, "sleep"))
             else:
                 pet.energy = clamp(pet.energy + sleep_regen * hours)
@@ -299,14 +265,42 @@ class TamagotchiService:
         pet.happiness = clamp(pet.happiness - decay_happy * hours)
         pet.hygiene = clamp(pet.hygiene - decay_hygiene * hours)
 
-        if hours >= 24 and "bored_penalty" not in (pet.settings_extra or {}):
-            pet.happiness = clamp(pet.happiness - 15)
-            pet.settings_extra = {**(pet.settings_extra or {}), "bored_penalty": now.isoformat()}
+        # «Скука»: питомец не получал ЗАБОТЫ (кормёжка/игра/мытьё/прогулка)
+        # дольше порога — однократный штраф к счастью. Раньше условие
+        # строилось на hours (времени с последнего тика apply_decay), а
+        # сброс флага был привязан к _set_cooldown: пассивные тики
+        # планировщика сбивали его, и штраф мог как не сработать при
+        # настоящем забвении, так и сработать без него. Теперь источник
+        # истины — метка last_care, обновляемая только реальными действиями
+        # ухода (_mark_care). После штрафа отсчёт продолжается от момента
+        # штрафа (т.е. при полном молчании штраф повторяется раз в порог).
+        bored_hours = float(balance.get_mult("boredom_hours"))
+        last_care_iso = (pet.settings_extra or {}).get("last_care")
+        flag_iso = (pet.settings_extra or {}).get("bored_penalty")
+        base_dt = None
+        for raw in (last_care_iso, flag_iso):
+            if not raw:
+                continue
+            try:
+                dt = _aware(datetime.fromisoformat(raw))
+            except (TypeError, ValueError):
+                continue
+            if base_dt is None or dt > base_dt:
+                base_dt = dt
+        if base_dt is None:
+            # Заботы ещё не было (и штрафа тоже): отсчитываем от последней
+            # актуализации статов — это момент усыновления/пробуждения тика.
+            base_dt = last
+        if (now - base_dt).total_seconds() / 3600.0 >= bored_hours:
+            pet.happiness = clamp(pet.happiness - balance.get_mult("boredom_penalty"))
+            pet.settings_extra = {**(pet.settings_extra or {}),
+                                  "bored_penalty": now.isoformat()}
 
         if pet.hunger < 20 or pet.hygiene < 20:
             g = self.gear_bonuses(pet)
             hp_mult = max(0.1, 1.0 + g.get("health_decay_pct", 0.0))
-            pet.health = clamp(pet.health - DECAY_PER_HOUR["health_low_care"] * hours * hp_mult)
+            from app.services import balance
+            pet.health = clamp(pet.health - balance.get_mult("health_decay") * hours * hp_mult)
             if pet.health < 50 and pet.sick_since is None:
                 sick_chance = max(0.05, 1.0 + g.get("sick_chance_pct", 0.0))
                 if random.random() <= sick_chance:
@@ -324,19 +318,22 @@ class TamagotchiService:
         key = f"{action}_at"
         uses_key = f"{action}_uses"
         extra = pet.settings_extra or {}
+        from app.services import balance
         if not extra.get(key):
             return True, 0
         elapsed = (now - datetime.fromisoformat(extra[key])).total_seconds()
         if elapsed >= seconds:
             self._reset_uses(pet, action)
             return True, 0
-        if int(extra.get(uses_key, 0)) <= FREE_ACTION_USES:
+        if int(extra.get(uses_key, 0)) <= int(balance.get_mult("free_actions")):
             return True, 0
         return False, int(seconds - elapsed)
 
     @staticmethod
     def _free_use_left(pet: Pet, action: str) -> bool:
-        return int((pet.settings_extra or {}).get(f"{action}_uses", 0)) <= FREE_ACTION_USES
+        from app.services import balance
+        return int((pet.settings_extra or {}).get(f"{action}_uses", 0)) \
+            <= int(balance.get_mult("free_actions"))
 
     @staticmethod
     def _reset_uses(pet: Pet, action: str) -> None:
@@ -353,6 +350,17 @@ class TamagotchiService:
         pet.settings_extra = {**extra, f"{action}_at": now.isoformat(),
                               uses_key: uses}
 
+    @staticmethod
+    def _mark_care(pet: Pet, now: datetime) -> None:
+        """Метка реальной заботы (кормёжка/игра/мытьё/тренировка/прогулка).
+
+        Единственный источник истины для таймера «скуки» в apply_decay:
+        пассивные тики планировщика её НЕ обновляют, в отличие от старых
+        ключей <action>_at, которые сбивали штраф.
+        """
+        pet.settings_extra = {**(pet.settings_extra or {}),
+                              "last_care": now.isoformat()}
+
     def _gear_happy_flat(self, pet: Pet) -> float:
         return self.gear_bonuses(pet).get("happy_gain_flat", 0.0)
 
@@ -367,6 +375,7 @@ class TamagotchiService:
         if not ok:
             return t("pet.cooldown_feed", sec=wait)
         self._set_cooldown(pet, "feed", now)
+        self._mark_care(pet, now)
         hol = holiday_effect_mults(now)
         gear_mult = self.action_modifier(pet, "feed")
         hunger_mult = hol.get("feed_hunger", 1.0) * gear_mult
@@ -410,7 +419,9 @@ class TamagotchiService:
         if not ok:
             return f"⏳ Питомец запыхался! Подожди {wait} сек."
         self._set_cooldown(pet, "game", now)
+        self._mark_care(pet, now)
 
+        from app.services import balance
         sp = _species(pet)
         mult = sp["bonus"]["play_happy"] * self.action_modifier(pet, "play_happy")
         mult *= holiday_effect_mults(now).get("play_happy", 1.0)
@@ -421,10 +432,12 @@ class TamagotchiService:
         xp = int(xp_base * sp["bonus"]["xp_mult"] * holiday_effect_mults(now).get("xp", 1.0)
                  * self.action_modifier(pet, "xp"))
         if won:
-            pet.happiness = clamp(pet.happiness + 12 * mult + pref + self._gear_happy_flat(pet))
+            pet.happiness = clamp(pet.happiness + balance.get_mult("play_win") * mult
+                                  + pref + self._gear_happy_flat(pet))
             await self.add_pet_xp(pet, xp)
             return t("pet.won_game", xp=xp)
-        pet.happiness = clamp(pet.happiness + 5 * mult + pref + self._gear_happy_flat(pet))
+        pet.happiness = clamp(pet.happiness + balance.get_mult("play_lose") * mult
+                              + pref + self._gear_happy_flat(pet))
         await self.add_pet_xp(pet, xp)
         return t("pet.lost_game", xp=xp)
 
@@ -472,7 +485,7 @@ class TamagotchiService:
         pet.is_sleeping = False
         pet.sleep_until = None
         pet.sleep_started_at = None
-        gained = int(round(slept_h * DECAY_PER_HOUR["energy_sleep"]))
+        gained = int(round(slept_h * sleep_regen_per_hour(sp=_species(pet))))
         return t("pet.woken", hours=f"{slept_h:.1f}".rstrip("0").rstrip("."), energy=gained)
 
     async def wash(self, pet: Pet) -> str:
@@ -488,6 +501,7 @@ class TamagotchiService:
         if not ok:
             return f"⏳ Мыться можно раз в 5 минут (осталось {wait} сек)."
         self._set_cooldown(pet, "wash", now)
+        self._mark_care(pet, now)
         pet.hygiene = clamp(pet.hygiene + int(round(
             40 * max(0.5, 1.0 + self.gear_bonuses(pet).get("hygiene_wash_pct", 0.0)))))
         pet.happiness = clamp(pet.happiness - 3 + species_pref_delta(pet, "wash")
@@ -546,6 +560,7 @@ class TamagotchiService:
         if not ok:
             return f"⏳ Перерыв между тренировками: {wait} сек."
         self._set_cooldown(pet, "train", now)
+        self._mark_care(pet, now)
         pet.energy = clamp(pet.energy - 10)
         pet.hunger = clamp(pet.hunger - 8)
         stat_pref = {"strength": "dog", "agility": ("fox", "chinchilla"),
@@ -582,6 +597,7 @@ class TamagotchiService:
         pet.walk_until = now + timedelta(hours=hours)
         pet.walk_start_at = now
         pet.settings_extra = {**(pet.settings_extra or {}), "walk_hours": hours}
+        self._mark_care(pet, now)
         return t("pet.walk_started", hours=hours,
                  time=f"{_aware(pet.walk_until):%H:%M}")
 

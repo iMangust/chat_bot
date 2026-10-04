@@ -18,7 +18,7 @@ from app.config import get_settings
 from app.db.models import Base, utcnow
 from app.db.session import DbMiddleware, engine, session_factory
 from app.handlers import (access as access_handlers, admin, arena, errors,
-                          events, games, merch, shop, social,
+                          events, games, manual, merch, shop, social,
                           start, stats, tamagotchi, tracker)
 from app.middlewares.gate import AccessGateMiddleware
 from app.middlewares.nav_stack import NavStackMiddleware
@@ -748,6 +748,7 @@ async def main() -> None:
         games.router,
         shop.router,
         merch.router,
+        manual.router,          # 📖 гид + ⚙️ баланс — до catch-all «menu:*» из events
         social.router,
         arena.router,
         stats.router,

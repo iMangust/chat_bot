@@ -1,5 +1,8 @@
-__pycache__/
+# Compiled/Binary files
 *.pyc
+__pycache__/
+
+# Environment files
 .env
-venv/
-*.log
+.env.local
+.env.*

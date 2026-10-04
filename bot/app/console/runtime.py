@@ -18,7 +18,7 @@ from app.config import get_settings
 from app.db.models import Base
 from app.db.session import DbMiddleware, engine, session_factory
 from app.handlers import (access as access_handlers, admin, arena, errors,
-                          events, games, merch,
+                          events, games, manual, merch,
                           settings as settings_handlers, shop, social, start,
                           stats, tamagotchi, tracker)
 from app.handlers.shop import seed_items
@@ -140,6 +140,7 @@ class BotRuntime:
                 start.router, tracker.router,
                 tamagotchi.router, games.router, shop.router,
                 merch.router,
+                manual.router,   # 📖 гид + ⚙️ баланс — до catch-all «menu:*» из events
                 social.router, arena.router, stats.router,
                 events.router,
             )

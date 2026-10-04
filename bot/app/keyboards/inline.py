@@ -619,7 +619,8 @@ def _nav_back_cb(section: str | None, chat_id: int | None,
 
 
 def with_nav(b: InlineKeyboardBuilder, section: str | None,
-             chat_id: int | None = None) -> InlineKeyboardBuilder:
+             chat_id: int | None = None,
+             current_cb: str | None = None) -> InlineKeyboardBuilder:
     """Добавляет в билдер строку «⬅️ Назад» + «🏠 Меню»; «Назад» учитывает
     локальную историю переходов этого чата.
 
@@ -630,7 +631,7 @@ def with_nav(b: InlineKeyboardBuilder, section: str | None,
     дублировал бы кнопку «Меню». Разрешаем её только когда в истории есть
     реальный внешний источник из ДРУГОГО раздела (Мерч → Статы: «Назад»
     возвращает в мерч)."""
-    back_cb = _nav_back_cb(section, chat_id)
+    back_cb = _nav_back_cb(section, chat_id, current_cb=current_cb)
     if back_cb is None and not _back_suppressed(section) \
             and section not in _SUBPAGE_SECTIONS:
         # Корень раздела == текущий экран: верхнеуровневый экран без
@@ -659,6 +660,30 @@ def rps_keyboard(chat_id: int | None = None) -> InlineKeyboardMarkup:
     b.adjust(3)
     # «Назад» — по истории (обычно в меню игр): игрок может передумать.
     append_nav(b, "games", back_cb=_nav_back_cb("games", chat_id))
+    return b.as_markup()
+
+
+def inline_back_kb(section: str = "games", *,
+                   chat_id: int | None = None,
+                   extra_rows: list[list[tuple[str, str]]] | None = None,
+                   exit_cb: str | None = None) -> InlineKeyboardMarkup:
+    """Клавиатура игрового хода с ЯВНОЙ кнопкой выхода.
+
+    Мини-игры («Угадай число», КНБ, «Двадцать одно») живут в FSM-состоянии;
+    стек-навигация («⬅️ Назад») зависит от Redis и может не построиться
+    (рестарт без Redis, deep-link). Поэтому в каждой игровой клавиатуре
+    всегда есть «⬅️ Выйти из игры» → 'game:exit' (сбрасывает состояние и
+    возвращает в меню игр). Если навигационный «Назад» построился — он
+    остаётся дополнительной опцией; если нет — выход гарантирован.
+    """
+    b = InlineKeyboardBuilder()
+    for row in (extra_rows or []):
+        if row:
+            b.row(*[InlineKeyboardButton(text=t, callback_data=cb)
+                    for t, cb in row])
+    b.row(InlineKeyboardButton(text="⬅️ Выйти из игры",
+                               callback_data=exit_cb or "game:exit"))
+    append_nav(b, section, back_cb=_nav_back_cb(section, chat_id))
     return b.as_markup()
 
 def twentyone_keyboard(chat_id: int | None = None) -> InlineKeyboardMarkup:
@@ -717,6 +742,8 @@ SECTION_ROOTS: dict[str, str] = {
     "top": "menu:top",            # 🏅 Топы
     "card": "menu:card",          # 🖼 Карточка профиля
     "settings": "menu:settings",  # ⚙️ Настройки (уведомления + тема)
+    "manual": "manual:home",      # 📖 Гид по уходу за питомцем
+    "balance": "bal:home",        # ⚙️ Баланс (админ)
 }
 
 BACK_LABEL = "⬅️ Назад"
