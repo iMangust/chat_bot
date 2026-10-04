@@ -497,6 +497,16 @@ async def _do_fetch() -> dict | None:
         _cache["next_try_mono"] = 0.0
     return real
 
+# «Окно шторма»: негативный кэш ошибки сети — после неудачной попытки не
+# долбим API до истечения next_try_mono. Модульная функция: используется и
+# _ensure_fresh, и kamchatka_weather (см. там же — никогда не ждать сеть
+# синхронно в callback-хендлере).
+def _storm_window_active(now_m: float | None = None) -> bool:
+    if now_m is None:
+        now_m = _mono.monotonic()
+    return now_m < _cache.get("next_try_mono", 0.0)
+
+
 async def _ensure_fresh(force: bool = False) -> dict | None:
     global _fetch_inflight
 
@@ -521,11 +531,6 @@ async def _ensure_fresh(force: bool = False) -> dict | None:
         if _storm_window_active(now_m):
             return True
         return False
-
-    def _storm_window_active(now_m: float | None = None) -> bool:
-        if now_m is None:
-            now_m = _mono.monotonic()
-        return now_m < _cache.get("next_try_mono", 0.0)
 
     def _start_or_join(now_m: float):
         global _fetch_inflight, _inflight_force
@@ -1090,9 +1095,21 @@ async def kamchatka_weather() -> dict:
     if hol:
         hol_line = hol
 
+    # ⚠️ КРИТИЧНО: никогда не ходим в сеть синхронно. Сетевой fetch живёт
+    # до connect(6)+read(10) сек на источник (несколько источников — дольше).
+    # Раньше при протухшем кэше этот вызов ждал _ensure_fresh() прямо внутри
+    # callback-хендлера → aiogram не успевал ответить на тап за 10 секунд
+    # Telegram'а («кнопка неактивна», «игра началась, но первый же шаг
+    # зависает»: все экраны с render_async упирались в погоду). Наружу всегда
+    # отдаём последний кэш или сезонную модель; обновление кэша выполняется
+    # фоново (см. tasks/scheduler.py), а storm-window сам ограничивает
+    # частоту сетевых попыток.
     fresh = (_mono.monotonic() - _cache["ts"]) < _ttl()
-    if not fresh:
-        await _ensure_fresh()
+    if not fresh and _cache.get("info") is None and not _storm_window_active():
+        try:
+            await asyncio.wait_for(_ensure_fresh(), timeout=2.0)
+        except (asyncio.TimeoutError, Exception):
+            pass
     real = _cache["info"]
 
     season_key = season_for(dt)
