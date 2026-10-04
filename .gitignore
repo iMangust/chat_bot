@@ -2,6 +2,15 @@
 __pycache__/
 *.pyc
 
+# Environments & secrets
+.env
+*.env.local
+
 # Editor/IDE files
 .vscode/
 .idea/
+
+# Local runtime artifacts
+bot/data/
+logs/
+*.log

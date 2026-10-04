@@ -34,6 +34,24 @@ class AdoptConfirm(StatesGroup):
 async def _get_pet(session: AsyncSession, tg_id: int) -> Pet | None:
     return await PetRepository(session).get_by_user(tg_id)
 
+
+def _hub_kb(svc: TamagotchiService, pet: Pet | None, chat_id,
+            page: int | None = None) -> "object":
+    """Единая клавиатура хаба питомца для ВСЕХ экранов раздела.
+
+    Собирается из реального состояния питомца (critical/сон/прогулка), а не
+    вручную на каждом экране — иначе где-то терялась кнопка «💤 Разбудить»
+    или «🏠 Вернуть с прогулки». Это единственный способ собрать pet_hub:
+    хендлеры обязаны передавать сюда pet, а не кликать флаги руками.
+    """
+    cid = int(chat_id) if chat_id is not None else 0
+    if page is None:
+        page = pet_page_for(cid)
+    if pet is None:
+        return pet_hub(page)
+    return pet_hub(page, critical=svc.is_critical(pet),
+                   sleeping=pet.is_sleeping, walking=svc.on_walk(pet))
+
 _PET_PAGE_CTX: dict[int, int] = {}
 
 def pet_page_for(chat_id: int) -> int:
@@ -323,9 +341,7 @@ async def cmd_pet(message: Message, session: AsyncSession) -> None:
     user = await users.get(message.from_user.id)
     await answer_safe(message,
                       await svc.render_async(pet, user.first_name if user else ""),
-                      reply_markup=pet_hub(pet_page_for(message.chat.id),
-                                           sleeping=pet.is_sleeping,
-                                           walking=svc.on_walk(pet)))
+                      reply_markup=_hub_kb(svc, pet, message.chat.id))
 
 @router.callback_query(F.data == "menu:pet")
 async def pet_screen(cb: CallbackQuery, session: AsyncSession,
@@ -352,9 +368,7 @@ async def pet_screen(cb: CallbackQuery, session: AsyncSession,
     user = await users.get(cb.from_user.id)
     text = await svc.render_async(pet, user.first_name if user else "")
     await safe_edit_or_answer(cb.message, text,
-                              reply_markup=pet_hub(pet_page_for(cb.message.chat.id),
-                                                   sleeping=pet.is_sleeping,
-                                                   walking=svc.on_walk(pet)))
+                              reply_markup=_hub_kb(svc, pet, cb.message.chat.id if cb.message else None))
     await cb.answer()
 
 @router.callback_query(F.data == "pet:noop")
@@ -396,8 +410,7 @@ async def pet_page_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     await safe_edit_or_answer(
         cb.message,
         f"{await svc.render_async(pet)}\n\n<i>{title} · {hint}</i>{extra}",
-        reply_markup=pet_hub(page, critical=crit, sleeping=pet.is_sleeping,
-                             walking=svc.on_walk(pet)),
+        reply_markup=_hub_kb(svc, pet, cb.message.chat.id if cb.message else None, page),
     )
     await cb.answer()
 
@@ -416,9 +429,7 @@ async def act_revive(cb: CallbackQuery, session: AsyncSession) -> None:
     if not svc.is_critical(pet):
         await safe_edit_or_answer(
             cb.message, await svc.render_async(pet),
-            reply_markup=pet_hub(pet_page_for(cb.message.chat.id),
-                                 sleeping=pet.is_sleeping,
-                                 walking=svc.on_walk(pet)))
+            reply_markup=_hub_kb(svc, pet, cb.message.chat.id if cb.message else None))
         return await cb.answer(t("pet.not_critical"), show_alert=True)
     users = UserRepository(session)
     user = await users.get(cb.from_user.id)
@@ -446,7 +457,7 @@ async def act_revive(cb: CallbackQuery, session: AsyncSession) -> None:
     await safe_edit_or_answer(
         cb.message,
         f"{result}\n\n" + await svc.render_async(pet),
-        reply_markup=pet_hub(pet_page_for(cb.message.chat.id)))
+        reply_markup=_hub_kb(svc, pet, cb.message.chat.id if cb.message else None))
     await cb.answer(f"⭐ −{cost}")
 
 @router.callback_query(F.data == "pet:adopt_confirm", AdoptConfirm.confirm)
@@ -480,7 +491,7 @@ async def pet_adopt_cancel(cb: CallbackQuery, session: AsyncSession,
         return await cb.answer()
     svc = TamagotchiService(session)
     await safe_edit_or_answer(cb.message, await svc.render_async(pet),
-                              reply_markup=pet_hub(pet_page_for(cb.message.chat.id)))
+                              reply_markup=_hub_kb(svc, pet, cb.message.chat.id if cb.message else None))
     await cb.answer("Отменено 👍")
 
 @router.callback_query(F.data == "pet:adopt")
@@ -597,9 +608,7 @@ async def _after_action(cb: CallbackQuery, session: AsyncSession, result_text: s
     try:
         await safe_edit_or_answer(cb.message, 
             f"{prefix}{result_text}\n\n" + await svc.render_async(pet),
-            reply_markup=pet_hub(pet_page_for(cb.message.chat.id),
-                                 sleeping=pet.is_sleeping,
-                                 walking=svc.on_walk(pet)),
+            reply_markup=_hub_kb(svc, pet, cb.message.chat.id if cb.message else None),
         )
     finally:
         await session.commit()
