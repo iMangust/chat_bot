@@ -29,6 +29,7 @@ def _pet(**kw) -> Pet:
     p.health = kw.get("health", 100.0)
     p.is_sleeping = kw.get("is_sleeping", False)
     p.sleep_until = kw.get("sleep_until")
+    p.sleep_started_at = kw.get("sleep_started_at")
     p.intellect = kw.get("intellect", 1)
     p.settings_extra = kw.get("settings_extra", {}) or {}
     p.last_update = kw.get("last_update", _now())
@@ -101,15 +102,27 @@ async def test_sleep_no_double_energy_regen():
 
 
 async def test_wake_up_alarm_sets_full_energy_once():
-    """Тик пробуждения по будильнику: energy = 100 ровно один раз, без
-    накопления сверху при последующих тиках."""
+    """Пробуждение по будильнику после полного планового сна: ⚡ = 100
+    ровно один раз, без накопления сверху при последующих тиках.
+
+    Честный реген считается фазово (sleep_regen × часы сна), поэтому для
+    гарантированных 100⚡ питомец должен спать достаточно долго: берём
+    сон на 30 ч и тик через 31 ч — за это время clamp догоняет до 100,
+    а «проспанный» хвост не начисляется как сон.
+    """
     svc = TamagotchiService(None)
     now = _now()
-    pet = _pet(is_sleeping=True, sleep_until=now - timedelta(minutes=1),
-               energy=40.0, last_update=now - timedelta(hours=2))
+    pet = _pet(is_sleeping=True, sleep_started_at=now - timedelta(hours=30),
+               sleep_until=now - timedelta(hours=1),
+               energy=40.0, last_update=now - timedelta(hours=30))
     await svc.apply_decay(pet, now)
     assert not pet.is_sleeping
     assert pet.energy == 100.0
+    e_after = pet.energy
+    # второй тик (питомец уже бодрствует) — ничего не «капает» сверху
+    pet.last_update = now
+    await svc.apply_decay(pet, now + timedelta(minutes=30))
+    assert pet.energy <= e_after
 
 
 # ---------- Награды за игры ----------

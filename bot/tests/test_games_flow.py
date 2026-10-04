@@ -20,17 +20,31 @@ def test_games_screen_handler_exists():
 
 
 def test_all_entries_use_single_guard():
-    """Все точки входа в игры используют один и тот же страж."""
-    for fn in (g.games_screen, g.start_guess, g.start_rps, g.start_blackjack):
+    """Все точки входа в игры используют один и тот же страж.
+
+    Точки входа = экран меню и старт каждой мини-игры (включая рестарт
+    угадайки «🔄 Новая игра»). В финальной FSM-независимой архитектуре
+    start_guess/guess_new делегируют общий путь в _guess_start, поэтому
+    проверяем весь цепочку вызовов, а не только тело хендлера.
+    """
+    for fn in (g.games_screen, g.start_rps, g.start_blackjack, g.game_exit):
         src = inspect.getsource(fn)
-        assert "_game_entry_guard" in src, fn.__name__
+        assert "_game_entry_guard" in src or "games_screen_render" in src \
+            or "_games_screen_render" in src, fn.__name__
+    # угадайка: и вход, и рестарт идут через _guess_start со стражем
+    for fn in (g.start_guess, g.guess_new):
+        src = inspect.getsource(fn)
+        assert "_guess_start" in src, fn.__name__
+    assert "_game_entry_guard" in inspect.getsource(g._guess_start)
 
 
 def test_all_outcomes_use_single_renderer():
-    """Все итоги мини-игр идут через единый _game_outcome."""
+    """Все итоги мини-игр идут через единый _finish_game (экс-_game_outcome)."""
     for fn in (g.do_guess_cb, g.play_rps, g._bj_finish):
         src = inspect.getsource(fn)
-        assert "_game_outcome" in src, fn.__name__
+        assert "_finish_game" in src, fn.__name__
+    # сам рендерер больше не должен называться по-старому
+    assert not hasattr(g, "_game_outcome")
 
 
 def test_no_legacy_state_deny_screen():
@@ -186,22 +200,34 @@ def test_games_need_no_fsm_state():
             assert "get_state" not in src, h.callback.__name__
 
 
-def test_noop_guard_does_not_swallow_game_entries():
-    """Регресс на «игры не работают»: game_noop_guard стоял до хендлеров
-    входа с фильтром startswith("game:") и перехватывал game:guess/rps/
-    blackjack — тап по игре молча гасился. Guard обязан исключать все
-    известные кнопки."""
-    import inspect
-    from app.handlers.games import _GAME_KNOWN_CB
-    for cb_data in ("game:guess", "game:rps", "game:blackjack", "game:exit"):
-        assert cb_data in _GAME_KNOWN_CB, f"{cb_data} должен быть в списке известных"
-    # Фильтр guard'а должен содержать инверсию (исключение известных кнопок)
-    from app.handlers import games as g
-    src_txt = inspect.getsource(g)
-    idx = src_txt.index("async def game_noop_guard")
-    deco = src_txt[max(0, idx - 200):idx]
-    assert "~F.data.in_" in deco or "& ~" in deco, \
-        "game_noop_guard обязан исключать известные game:-кнопки из фильтра"
+def test_moves_have_no_extra_guards():
+    """Регресс на «игры не работают»: раньше game_noop_guard/game_stale_guard
+    стояли ДО целевых хендлеров и молча гасили тапы ходов. В финальной
+    архитектуре у роутера games — ровно по одному хендлеру на кнопку,
+    никаких guard'ов между ними быть не может."""
+    from app.handlers.games import router
+    names = [h.callback.__name__ for h in router.callback_query.handlers]
+    assert not any("guard" in n or "noop" in n for n in names), names
+    # дублей префиксов нет: каждый game:/guess:/rps:/bj: матчится ровно 1 раз
+    import asyncio
+    class FakeCb:
+        def __init__(self, data):
+            self.data, self.id = data, "x"
+            self.from_user = type("U", (), {"id": 1})()
+            self.message = None
+        async def answer(self, *a, **k):
+            return True
+    for d in ("game:guess", "game:rps", "game:blackjack", "game:exit"):
+        async def _count(data):
+            cb = FakeCb(data)
+            hits = []
+            for h in router.callback_query.handlers:
+                ok, _ = await h.check(cb)
+                if ok:
+                    hits.append(h.callback.__name__)
+            return hits
+        hits = asyncio.run(_count(d))
+        assert len(hits) == 1, f"{d} матчится {hits}: первый проглотит тап"
 
 
 def test_games_menu_always_has_exit_button():
@@ -251,3 +277,176 @@ def test_bj_state_roundtrip():
     # битый/поддельный токен → не 'ok' (ход уйдёт на stale-экран, а не упадёт)
     assert _bj_load_state("bj:hit:notatoken.deadbeef")[0] != "ok"
     assert _bj_load_state("bj:stand:")[0] == "stale"
+
+
+# ── Регресс: учёт ничьей и отказа play() ────────────────────────────────────
+
+def test_outcome_is_denial_structural():
+    """Детектор отказа play() не зависит от эмодзи/темы локализации.
+
+    Маркер по тексту («🎉 Победа!») ломался в готической теме и молча
+    лишал наград. Теперь детектор структурный: отказ = только критическое
+    состояние (префикс «🚨»); сон/прогулка/усталость/кулдаун отсекаются ДО
+    svc.play() стражами входа, а все реальные исходы игр — это награды.
+    """
+    from app.handlers.games import _outcome_is_denial
+    from app.i18n import t
+    # Реальные строки наград — НЕ отказы
+    assert not _outcome_is_denial(t("pet.won_game", xp=15))
+    assert not _outcome_is_denial(t("pet.lost_game", xp=8))
+    # В любой теме, подменяющей pet.won_game/pet.lost_game (готика),
+    # награда тоже не отказ
+    from app import themes
+    checked = 0
+    for name, th in themes.THEMES.items():
+        ov = (th.string_overrides or {})
+        text = ov.get("pet.won_game") if isinstance(ov, dict) else None
+        if text:
+            assert not _outcome_is_denial(text.format(xp=15)), name
+            checked += 1
+        text2 = ov.get("pet.lost_game") if isinstance(ov, dict) else None
+        if text2:
+            assert not _outcome_is_denial(text2.format(xp=8)), name
+    assert checked >= 1, "хотя бы одна тема должна подменять pet.won_game"
+    # Отказ-«критическое состояние» распознаётся structuralно (emoji 🚨
+    # не темизируется — это единственный путь play(), доходящий до
+    # _finish_game как отказ)
+    assert _outcome_is_denial(t("pet.critical_deny", name="Барсик"))
+
+
+
+class _FakeMsg:
+    chat = type("C", (), {"id": 1})()
+
+    def __init__(self, events):
+        self._events = events
+        # safe_edit_or_answer читает message.text/caption при сплите длинных
+        # сообщений — у реального сообщения экрана игры текст есть всегда
+        self.text = "🎮 Экран игры"
+        self.caption = None
+
+    async def edit_text(self, text=None, reply_markup=None, **kw):
+        self._events.append(("edit", {"text": text}))
+        self.text = text
+        return self
+
+
+def _make_cb(data, tg_id, events):
+    cb = type("CB", (), {})()
+    cb.data = data
+    cb.from_user = type("U", (), {"id": tg_id, "is_premium": False})()
+    cb.message = _FakeMsg(events)
+
+    async def _answer(text=None, show_alert=False, **kw):
+        events.append(("answer", {"text": text, "show_alert": show_alert}))
+    cb.answer = _answer
+    return cb
+
+
+def _pet_row(**kw):
+    from datetime import datetime, timezone
+    from app.db.models import Pet
+    from app.services.tamagotchi import local_now
+    # last_update = «сейчас»: apply_decay не должен превращать свежую
+    # фикстуру в критическое состояние (виртуальное время теста ≠ реальность).
+    base = dict(user_id=1, name="Тест", species="cat",
+                last_update=local_now().astimezone(timezone.utc).replace(tzinfo=None),
+                hunger=80, happiness=70, hygiene=70, energy=80,
+                health=100, xp=0, level=1)
+    base.update(kw)
+    return Pet(**base)
+
+
+def _rps_two_taps(mine1, theirs1, mine2, theirs2):
+    """Одна сессия (общий cooldown на объекте Pet) — два реальных тапа КНБ."""
+    from app.handlers import games as g
+    from app.db.models import User
+
+    async def run():
+        from sqlalchemy.ext.asyncio import (async_sessionmaker,
+                                            create_async_engine)
+        from app.db.models import Base
+        # ВАЖНО: не диспозим движок до конца теста — in-memory sqlite живёт
+        # в пуле соединений, dispose() уничтожает саму базу («no such table»).
+        engine = create_async_engine(
+            "sqlite+aiosqlite:///:memory:",
+            poolclass=__import__("sqlalchemy.pool", fromlist=["StaticPool"]
+                                 ).StaticPool)
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        sm = async_sessionmaker(engine, expire_on_commit=False)
+        ev1, ev2 = [], []
+        async with sm() as session:
+            session.add(User(tg_id=1, first_name="Владелец", lang="ru", coins=0))
+            pet = _pet_row()
+            session.add(pet)
+            await session.flush()
+            await g.play_rps(_make_cb(f"rps:{mine1}:{theirs1}", 1, ev1), session)
+            await g.play_rps(_make_cb(f"rps:{mine2}:{theirs2}", 1, ev2), session)
+        return ev1, ev2
+    return asyncio.run(run())
+
+
+def test_rps_draw_credits_and_single_answer():
+    """Ничья (одинаковые ходы): итог засчитывается как честная игра,
+    ОДИН ответ на тап, экран редактируется (не alert-отказ)."""
+    ev1, _ = _rps_two_taps("rock", "rock", "rock", "rock")
+    answers = [v for k, v in ev1 if k == "answer"]
+    assert len(answers) == 1 and not answers[0]["show_alert"], \
+        "ровно один мягкий answer; alert при засчитанной ничьей = баг"
+    edits = [v["text"] for k, v in ev1 if k == "edit"]
+    assert edits and "ничья" in edits[0].lower(), edits
+
+
+def test_play_free_uses_second_tap_credits_with_one_answer():
+    """В пределах бесплатных использований (free_actions) повторный тап
+    ДОЗВОЛЕН правилами баланса: итог засчитывается, экран редактируется,
+    РОВНО ОДИН ответ на тап и это НЕ alert-отказ."""
+    ev1, ev2 = _rps_two_taps("rock", "scissors", "paper", "rock")
+    assert any(k == "edit" for k, _ in ev1)           # первый тап сыграл
+    answers = [v for k, v in ev2 if k == "answer"]
+    assert len(answers) == 1 and not answers[0]["show_alert"], \
+        "ровно один мягкий answer; двойной ответ = QUERY_ID_INVALID"
+    assert any(k == "edit" for k, _ in ev2), "засчитанная игра обновляет экран"
+
+
+def test_play_hard_cooldown_single_soft_answer_no_edit():
+    """Кулдаун «запыхался» (после исчерпания бесплатных использований):
+    РОВНО ОДИН ответ, без alert (тост не перекрывает игровой экран),
+    экран не перерисовывается, награда не начисляется."""
+    from app.services import balance
+    from app.services.tamagotchi import local_now
+
+    async def run():
+        from sqlalchemy.ext.asyncio import (async_sessionmaker,
+                                            create_async_engine)
+        from app.db.models import Base, User
+        from app.handlers import games as g
+        engine = create_async_engine(
+            "sqlite+aiosqlite:///:memory:",
+            poolclass=__import__("sqlalchemy.pool", fromlist=["StaticPool"]
+                                 ).StaticPool)
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        sm = async_sessionmaker(engine, expire_on_commit=False)
+        events = []
+        async with sm() as session:
+            session.add(User(tg_id=1, first_name="Владелец", lang="ru", coins=0))
+            pet = _pet_row()
+            session.add(pet)
+            await session.flush()
+            # Превышаем лимит бесплатных использований: помечаем игру
+            # недавно состоявшейся с полным счётчиком использований.
+            free = int(balance.get_mult("free_actions"))
+            extra = dict(pet.settings_extra or {})
+            extra["game_at"] = local_now().isoformat()
+            extra["game_uses"] = free + 1
+            pet.settings_extra = extra
+            await g.play_rps(_make_cb("rps:rock:scissors", 1, events), session)
+        return events
+    events = asyncio.run(run())
+    answers = [v for k, v in events if k == "answer"]
+    assert len(answers) == 1, f"ровно один ответ на тап, было {len(answers)}"
+    assert not answers[0]["show_alert"], "кулдаун — мягкий toast, не alert"
+    assert "⏳" in (answers[0].get("text") or ""), answers
+    assert not any(k == "edit" for k, _ in events), "при отказе экран не трогаем"

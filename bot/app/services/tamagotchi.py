@@ -243,27 +243,98 @@ class TamagotchiService:
         decay_hygiene = balance.get_mult("hygiene_decay") * d.get("hygiene", 1.0) * season_decay_mult(season, "hygiene", sp_key) * wmods.get("hygiene", 1.0) * self.decay_multiplier(pet, "hygiene")
         sleep_regen = sleep_regen_per_hour(sp) * self.action_modifier(pet, "sleep_regen")
 
-        if pet.is_sleeping:
-            if pet.sleep_until and now >= _aware(pet.sleep_until):
-                # Пробуждение по будильнику: энергия восстанавливается до
-                # 100 — видовые бонусы сна (sleep_bonus) уже учтены в
-                # sleep_regen_per_hour() на тиках во время сна. Раньше сюда
-                # дополнительно прибавлялся sp["bonus"]["sleep_bonus"] —
-                # двойной бонус, рассогласованный с wake().
+        was_sleeping = pet.is_sleeping
+        woke_up = False
+        sleep_from = _aware(pet.sleep_started_at) if was_sleeping and pet.sleep_started_at else None
+        # Момент срабатывания будильника (для фазового расчёта сна и «скуки»)
+        alarm = _aware(pet.sleep_until) if (was_sleeping and pet.sleep_until) else None
+        # Полная длительность запланированного сна (из настроек усыновления,
+        # по умолчанию 8 ч). Нужна, если sleep_started_at затёрт/утерян:
+        # иначе нельзя отличить реальный сон от «проспанного» хвоста.
+        planned_h = 8.0
+        try:
+            planned_h = float((pet.settings_extra or {}).get("sleep_hours", 8) or 8)
+        except (TypeError, ValueError):
+            pass
+        if was_sleeping:
+            # Фазовый расчёт сна: интервал [last, now] делится на часть ДО
+            # будильника (это настоящий сон: ⚡ растёт по единой формуле
+            # sleep_regen × часы, голод убывает ×0.5, счастье/гигиена
+            # заморожены) и часть ПОСЛЕ будильника (питомец фактически уже
+            # не спит — декеи идут в полную силу). Раньше весь просроченный
+            # интервал (часы/сутки) целиком начислялся как сон либо energy
+            # ставилась в 100 разом — оба варианта ломали баланс и
+            # маскировали «скуку».
+            # Граница «сна» = максимум из будильника и конца планового сна
+            # (sleep_started_at + planned_h), но не позже now. Так честный
+            # недосып (разбудили раньше будильника) не превращается в
+            # мгновенные 100⚡. Но если питомец реально ПРОСПАЛ будильник
+            # (текущий тик догоняет опоздание больше суток назад), хвост
+            # после сигнала тоже засчитывается сном: иначе забытый на сутки
+            # питомец терял бы счастье/гигиену за всё время «проспанного»
+            # отсутствия, хотя физически лежал и спал. Просрочка ограничена
+            # сверху 24 ч (за дальний горизонт отвечает штраф «скуки»).
+            sleep_end = alarm
+            if sleep_from is not None:
+                sleep_end = max(sleep_end or datetime.min.replace(tzinfo=sleep_from.tzinfo),
+                                sleep_from + timedelta(hours=planned_h))
+            if sleep_end is not None and alarm is not None and now >= alarm:
+                sleep_end = max(sleep_end, min(now, alarm + timedelta(hours=24)))
+            if sleep_end is not None:
+                sleep_end = min(sleep_end, now)
+            if sleep_end is not None:
+                asleep_hours = max(0.0, min((sleep_end - last).total_seconds() / 3600.0, hours))
+            else:
+                asleep_hours = hours
+            awake_hours = max(0.0, hours - asleep_hours)
+            pet.energy = clamp(pet.energy + sleep_regen * asleep_hours)
+            pet.hunger = clamp(pet.hunger - decay_hunger * 0.5 * asleep_hours)
+            if awake_hours > 0:
+                pet.energy = clamp(pet.energy - decay_energy_day * awake_hours)
+                pet.hunger = clamp(pet.hunger - decay_hunger * awake_hours)
+            if alarm is not None and now >= alarm:
+                # Пробуждение по будильнику. Видовые бонусы сна уже учтены
+                # в sleep_regen_per_hour(); раньше сюда дополнительно
+                # прибавлялся sp["bonus"]["sleep_bonus"] — двойной бонус,
+                # рассогласованный с wake().
                 pet.is_sleeping = False
                 pet.sleep_until = None
                 pet.sleep_started_at = None
-                pet.energy = clamp(100)
                 pet.happiness = clamp(pet.happiness + species_pref_delta(pet, "sleep"))
-            else:
-                pet.energy = clamp(pet.energy + sleep_regen * hours)
-                pet.hunger = clamp(pet.hunger - decay_hunger * 0.5 * hours)
+                woke_up = True
         else:
             pet.energy = clamp(pet.energy - decay_energy_day * hours)
             pet.hunger = clamp(pet.hunger - decay_hunger * hours)
 
-        pet.happiness = clamp(pet.happiness - decay_happy * hours)
-        pet.hygiene = clamp(pet.hygiene - decay_hygiene * hours)
+        # Во сне счастье НЕ падает: сон — отдых и легальный способ
+        # пережить «скуку» без штрафа (уходовая механика, а не эксплойт).
+        # Гигиена во сне тоже не пачкается. При пробуждении по будильнику
+        # время ПОСЛЕ сигнала будильника питомец фактически бодрствует —
+        # декеи счастья/гигиены идут только на эту «проспанную» часть.
+        sleeping_now = pet.is_sleeping
+        if sleeping_now:
+            # Всё ещё спит (будильник не сработал): счастье и гигиена
+            # заморожены полностью.
+            happy_hours = 0.0
+            hygiene_hours = 0.0
+        elif was_sleeping and woke_up:
+            # Проспанный будильник: декеи только на часть ПОСЛЕ сигнала, но в
+            # рамках данного тика [last, now] — иначе один большой тик
+            # «догоняния» съел бы счастье за все сутки разом. Отсчёт ведётся от
+            # конца фазы сна (sleep_end), а не от будильника: если питомец спал
+            # дольше плана (sleep_started_at + planned_h > alarm), хвост после
+            # плана — тоже сон (недобудился), и счастье там заморожено. Иначе
+            # просрочка длиннее bored_hours давала бы каскад: дрейф за весь
+            # «проспанный» интервал + штраф −15 в одном тике.
+            awake_in_tick = hours - asleep_hours
+            rest_start = sleep_end or last
+            happy_hours = hygiene_hours = max(0.0, min(
+                (now - rest_start).total_seconds() / 3600.0, awake_in_tick))
+        else:
+            happy_hours = hygiene_hours = hours
+        if happy_hours > 0:
+            pet.happiness = clamp(pet.happiness - decay_happy * happy_hours)
+            pet.hygiene = clamp(pet.hygiene - decay_hygiene * hygiene_hours)
 
         # «Скука»: питомец не получал ЗАБОТЫ (кормёжка/игра/мытьё/прогулка)
         # дольше порога — однократный штраф к счастью. Раньше условие
@@ -291,7 +362,23 @@ class TamagotchiService:
             # Заботы ещё не было (и штрафа тоже): отсчитываем от последней
             # актуализации статов — это момент усыновления/пробуждения тика.
             base_dt = last
-        if (now - base_dt).total_seconds() / 3600.0 >= bored_hours:
+        # Сон — отдых: «скука» во сне НЕ копится вовсе. Точка отсчёта
+        # сдвигается на ПРОБУЖДЕНИЕ (будильник), но не может убегать в
+        # будущее: если питомец проспал будильник больше bored_hours, он
+        # фактически столько и не получал заботы — штраф остаётся
+        # законным. Поэтому wake_point = min(будильник, now - порог).
+        # Каскад штрафов сразу после длинного сна при этом исключён:
+        # просрочка ≤ порога прощает забытый интервал до засыпания, а
+        # следующий штраф возможен только через bored_hours ПОСЛЕ пробуждения.
+        slept_this_tick = bool(sleeping_now or woke_up)
+        if slept_this_tick:
+            wake_point = now if sleeping_now else alarm
+            if wake_point is not None:
+                wake_point = min(wake_point, now - timedelta(hours=bored_hours))
+                if base_dt is None or wake_point > base_dt:
+                    base_dt = wake_point
+        if (not pet.is_sleeping
+                and (now - base_dt).total_seconds() / 3600.0 >= bored_hours):
             pet.happiness = clamp(pet.happiness - balance.get_mult("boredom_penalty"))
             pet.settings_extra = {**(pet.settings_extra or {}),
                                   "bored_penalty": now.isoformat()}
@@ -321,7 +408,12 @@ class TamagotchiService:
         from app.services import balance
         if not extra.get(key):
             return True, 0
-        elapsed = (now - datetime.fromisoformat(extra[key])).total_seconds()
+        elapsed = (now - _aware(datetime.fromisoformat(extra[key]))).total_seconds()
+        # Кулдауны НЕ замораживаются во сне и не вычитаются после него.
+        # Это осознанное правило баланса: иначе «спать между играми» было бы
+        # эксплойтом против лимита действий (короткие сны по кругу снимали бы
+        # ожидание быстрее реального времени). Сон влияет только на статы
+        # (⚡ растёт, 😊/🫧 стоят, 🍎 убывает ×0.5) и на «скуку» (не копится).
         if elapsed >= seconds:
             self._reset_uses(pet, action)
             return True, 0
@@ -556,6 +648,10 @@ class TamagotchiService:
         pet.is_sleeping = True
         pet.sleep_started_at = now
         pet.sleep_until = now + timedelta(hours=hours)
+        # Длительность планового сна — в settings_extra: apply_decay по ней
+        # отличает настоящий сон от «проспанного» хвоста после будильника,
+        # даже если sleep_started_at затёрт.
+        pet.settings_extra = {**(pet.settings_extra or {}), "sleep_hours": hours}
         self._set_cooldown(pet, "sleep", now)
         return t("pet.fell_asleep", time=f"{pet.sleep_until:%H:%M}")
 

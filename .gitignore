@@ -1,7 +1,7 @@
-# Compiled/Binary files
+# Python compiled files
 __pycache__/
 *.pyc
 
-# Environment files
-.env
-.env.local
+# Editor/IDE files
+.vscode/
+.idea/
