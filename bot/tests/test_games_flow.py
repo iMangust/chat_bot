@@ -450,3 +450,68 @@ def test_play_hard_cooldown_single_soft_answer_no_edit():
     assert not answers[0]["show_alert"], "кулдаун — мягкий toast, не alert"
     assert "⏳" in (answers[0].get("text") or ""), answers
     assert not any(k == "edit" for k, _ in events), "при отказе экран не трогаем"
+
+
+def test_blackjack_callback_data_within_64_bytes():
+    """Регресс «21 не играет»: снимок колоды НЕ должен попадать в callback_data.
+
+    Telegram режет callback_data длиннее 64 байтов — edit_message_text с
+    такой клавиатурой падает, и тапы «Ещё карту»/«Хватит» выглядят мёртвыми
+    («Не получилось. Попробуй ещё раз»). Кнопки хода обязаны быть короче
+    лимита даже на полной колоде из 52 карт.
+    """
+    from app.handlers import games as G
+
+    deck = G.BJ_DECK[:]
+    player = [deck.pop(), deck.pop()]
+    dealer = [deck.pop(), deck.pop()]
+    token = G._bj_state_b64(deck, player, dealer, 18)
+    kb = G._bj_kb(token, chat_id=123)
+    for row in kb.inline_keyboard:
+        for btn in row:
+            if btn.callback_data:
+                assert len(btn.callback_data.encode()) <= 64, (
+                    f"callback_data too long: {btn.callback_data!r}")
+
+
+def test_blackjack_full_roundtrip_and_single_use():
+    """Партия читается, подписана, одноразова; подделка = 'bad', рестарт = 'stale'."""
+    from app.handlers import games as G
+
+    deck = G.BJ_DECK[:]
+    player = [deck.pop(), deck.pop()]
+    dealer = [deck.pop(), deck.pop()]
+    token = G._bj_state_b64(deck, player, dealer, 18)
+
+    res = G._bj_load_state(f"bj:hit:{token}")
+    assert res[0] == "ok"
+    assert res[1] == deck and res[2] == player and res[3] == dealer and res[4] == 18
+
+    # подделанная подпись
+    forged = token.rsplit(".", 1)[0] + ".deadbe"
+    assert G._bj_load_state(f"bj:hit:{forged}")[0] == "bad"
+
+    # после завершения раунда id умирает -> stale (не тишина!)
+    G._bj_forget(f"bj:stand:{token}")
+    assert G._bj_load_state(f"bj:stand:{token}")[0] == "stale"
+
+
+def test_blackjack_multi_hit_sequence():
+    """Серия «Ещё карту» подряд: каждый следующий токен валиден и короток."""
+    from app.handlers import games as G
+
+    deck = G.BJ_DECK[:]
+    player = [deck.pop(), deck.pop()]
+    dealer = [deck.pop(), deck.pop()]
+    tok = G._bj_state_b64(deck, player, dealer, 18)
+    for _ in range(8):
+        st = G._bj_load_state(f"bj:hit:{tok}")
+        assert st[0] == "ok", st
+        _, dk, pl, dl, stay = st
+        if not dk or G._bj_value(pl) >= 21:
+            break
+        pl.append(dk.pop())
+        new_tok = G._bj_state_b64(dk, pl, dl, stay)
+        assert len(f"bj:hit:{new_tok}".encode()) <= 64
+        G._bj_forget(f"bj:hit:{tok}")
+        tok = new_tok

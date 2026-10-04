@@ -37,8 +37,13 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import random
+import secrets
+import time
 import zlib
+
+from cachetools import TTLCache
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramAPIError
@@ -474,41 +479,68 @@ def _bj_render(cards: list[tuple[int, str]], hidden: bool = False) -> str:
     return _card_str(cards)
 
 
-def _bj_state_b64(deck, player, dealer, stay: int) -> str:
-    """Снимок партии в callback_data кнопки (замена FSM для блэкджека).
+# ── Хранилище партий «Двадцать одно» ──────────────────────────────────────
+# Почему нельзя было прятать колоду в callback_data: Telegram жёстко
+# ограничивает callback_data 64 байтами. Полный снимок колоды весит
+# ~160 байт, поэтому edit_message_text падал сBadRequest («Button
+# callback_data is too long») — игра стартовала, а первый же тап
+# «Ещё карту» / «Хватит» ничего не делал. Это и была причина, по которой
+# КНБ и угадайка работали (их токены ≤ 17 байт), а блэкджек нет.
+#
+# Решение: состояние партии хранится в памяти процесса под коротким
+# подписанным id (8 hex + подпись). В кнопке теперь всегда ≤ 25 байт.
+# Партия живёт 30 минут; после рестарта бота старый экран корректно
+# отправляет в меню («партия завершена»), вместо мёртвых кнопок.
+_BJ_GAMES: TTLCache = TTLCache(maxsize=4096, ttl=30 * 60)
+_BJ_SECRET = os.environ.get("BJ_STATE_SECRET") or secrets.token_hex(16)
 
-    Состояние игры живёт прямо в кнопке: переживает перезапуск бота и
-    потерю любого FSM-storage. Подпись (crc32) защищает от ручного
-    редактирования кнопок; невалидный снимок = «партия закончилась» →
-    возврат в меню игр.
-    """
-    payload = json.dumps([deck, player, dealer, stay], separators=(",", ":"))
-    blob = base64.urlsafe_b64encode(zlib.compress(payload.encode())).decode().rstrip("=")
-    return f"{blob}.{zlib.crc32(blob.encode()) & 0xFFFFFFFF:x}"
+
+def _bj_sign(mid: str) -> str:
+    return f"{zlib.crc32((mid + _BJ_SECRET).encode()) & 0xFFFFFFFF:x}"[:6]
+
+
+def _bj_state_b64(deck, player, dealer, stay: int) -> str:
+    """Сохраняет снимок партии, возвращает КОРОТКИЙ id для callback_data."""
+    while True:
+        mid = secrets.token_hex(4)
+        if mid not in _BJ_GAMES:
+            break
+    _BJ_GAMES[mid] = ([list(c) for c in deck], [list(c) for c in player],
+                      [list(c) for c in dealer], int(stay))
+    return f"{mid}.{_bj_sign(mid)}"
 
 
 def _bj_load_state(data: str):
     """('ok', deck, player, dealer, stay) | ('stale',) | ('bad',).
 
-    Формат кнопки: «bj:<действие>:<токен>». Токен парсится СПРАВА НАЛЕВО
-    (rsplit), а НЕ split(":",1)[1]: раньше из-за split'а в токен попадало
-    слово действия и снимок никогда не совпадал с подписью — любая карта
-    «не работала», игра выглядела зависшей.
+    Формат кнопки: «bj:<действие>:<id>.<подпись>». Парсим СПРАВА НАЛЕВО
+    (rsplit), чтобы действие не съедалось токеном. Несовпадение подписи
+    = «bad» (ручное редактирование кнопки); отсутствие/истечение партии
+    = «stale» (рестарт бота, тап по старому экрану) — оба случая дают
+    явный ответ и возврат в меню, никогда тишину.
     """
     parts = data.rsplit(":", 1)
     token = parts[1] if len(parts) == 2 else ""
-    blob, _, sig = token.rpartition(".")
-    if not blob or len(token) > 4096:
+    mid, _, sig = token.rpartition(".")
+    if not mid or len(token) > 32:
         return ("stale",)
-    if sig != f"{zlib.crc32(blob.encode()) & 0xFFFFFFFF:x}":
+    if sig != _bj_sign(mid):
         return ("bad",)
-    try:
-        raw = base64.urlsafe_b64decode(blob + "=" * (-len(blob) % 4))
-        deck, player, dealer, stay = json.loads(zlib.decompress(raw))
-        return ("ok", [tuple(c) for c in deck], [tuple(c) for c in player],
-                [tuple(c) for c in dealer], int(stay))
-    except Exception:  # noqa: BLE001 — любая порча снимка = stale
+    state = _BJ_GAMES.get(mid)
+    if state is None:
         return ("stale",)
+    deck, player, dealer, stay = state
+    return ("ok", [tuple(c) for c in deck], [tuple(c) for c in player],
+            [tuple(c) for c in dealer], int(stay))
+
+
+def _bj_forget(data: str) -> None:
+    """Удаляет партию по завершении раунда (одноразовость id)."""
+    parts = data.rsplit(":", 1)
+    token = parts[1] if len(parts) == 2 else ""
+    mid, _, sig = token.rpartition(".")
+    if mid and sig == _bj_sign(mid):
+        _BJ_GAMES.pop(mid, None)
 
 
 def _bj_kb(state_token: str, chat_id: int | None) -> InlineKeyboardMarkup:
@@ -577,10 +609,13 @@ async def bj_hit(cb: CallbackQuery, session: AsyncSession) -> None:
     player.append(deck.pop())
     pv = _bj_value(player)
     if pv >= 21:
-        if await _bj_finish(cb, session, pet, player, dealer):
+        finished = await _bj_finish(cb, session, pet, player, dealer)
+        _bj_forget(cb.data or "")   # раунд сыгран — id больше не живёт
+        if finished:
             await cb.answer()
         return
     token = _bj_state_b64(deck, player, dealer, stay)
+    _bj_forget(cb.data or "")       # старый снимок заменён новым
     await safe_edit_or_answer(
         cb.message,
         f"🃏 Твои карты: <b>{_bj_render(player)}</b> ({pv})\n"
@@ -603,7 +638,9 @@ async def bj_stand(cb: CallbackQuery, session: AsyncSession) -> None:
         return
     while _bj_value(dealer) < stay and deck:
         dealer.append(deck.pop())
-    if await _bj_finish(cb, session, pet, player, dealer):
+    finished = await _bj_finish(cb, session, pet, player, dealer)
+    _bj_forget(cb.data or "")   # раунд сыгран — id больше не живёт
+    if finished:
         await cb.answer()
 
 

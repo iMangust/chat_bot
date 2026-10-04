@@ -7,6 +7,7 @@ greenlet>=3.0              # async-стек SQLAlchemy (требование con
 redis>=8.1                  # кулдауны/FSM (RESP2 protocol=2 — совместимо со старым Redis/Memurai)
 APScheduler>=3.11,<4.0      # фоновые задачи (деградация, уведомления)
 loguru>=0.7.3               # логирование
+cachetools>=5.3               # TTL-хранилище партий мини-игры «Двадцать одно» (games.py)
 pydantic>=2.13              # модели
 pydantic-settings>=2.15     # конфигурация из .env
 python-dotenv>=1.2          # загрузка .env
