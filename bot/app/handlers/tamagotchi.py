@@ -394,6 +394,11 @@ async def act_revive(cb: CallbackQuery, session: AsyncSession) -> None:
     if pet is None:
         return await cb.answer()
     await svc.apply_decay(pet)
+    # Страж состояний: спящего не реанимируют (с ним нет контакта),
+    # гуляющего лечат дома. Единый всплывающий отказ.
+    deny = svc.state_deny(pet, "revive")
+    if deny:
+        return await _deny(cb, deny)
     if not svc.is_critical(pet):
         await safe_edit_or_answer(
             cb.message, await svc.render_async(pet),
@@ -545,6 +550,15 @@ async def pet_history_screen(cb: CallbackQuery, session: AsyncSession) -> None:
                                   chat_id=cb.message.chat.id if cb.message else None))
     await cb.answer()
 
+async def _deny(cb: CallbackQuery, text: str | None) -> None:
+    """Единый стиль отказа по действиям питомца: всплывающий alert-тост.
+
+    Экран не трогаем (в отличие от мягких informational-ответов), только
+    ephemeral-уведомление над кнопками — одинаково для «Покормить»,
+    «Прогулка», «Игры», «Погладить» и т.д.
+    """
+    await cb.answer(text or t("pet.sleeping_deny"), show_alert=True)
+
 async def _after_action(cb: CallbackQuery, session: AsyncSession, result_text: str,
                         *, fx: str | None = None, stat: str | None = None) -> None:
     svc = TamagotchiService(session)
@@ -607,7 +621,7 @@ async def act_feed(cb: CallbackQuery, session: AsyncSession) -> None:
     # Страж состояний: спящего не кормят, гуляющего дома нет.
     deny = svc.state_deny(pet, "feed")
     if deny:
-        return await cb.answer(deny, show_alert=True)
+        return await _deny(cb, deny)
     result = await svc.feed(pet, {"hunger": 15})
     fed = "Ням-ням" in result
     if fed:
@@ -622,12 +636,10 @@ async def act_play(cb: CallbackQuery, session: AsyncSession) -> None:
         return await cb.answer()
     deny = svc.state_deny(pet, "play")
     if deny:
-        return await cb.answer(deny, show_alert=True)
+        return await _deny(cb, deny)
     win_chance = 0.45 + pet.agility * 0.01
     won = random.random() < min(win_chance, 0.85)
     result = await svc.play(pet, won)
-    if "😴" in result or "🚶" in result:   # страж сработал внутри svc.play
-        return await _after_action(cb, session, result)
     await PetRepository(session).log_action(pet.id, "play", value=int(won))
     await _after_action(cb, session, result, fx="win" if won else "lose")
 
@@ -640,9 +652,9 @@ async def act_sleep(cb: CallbackQuery, session: AsyncSession) -> None:
     # Страж состояний: гуляющий питомец не ляжет спать (его надо вернуть).
     deny = svc.state_deny(pet, "sleep")
     if deny and pet.is_sleeping:
-        deny = svc.sleeping_hint("wake") or deny  # «уже спит» — мягкая подсказка
+        deny = svc.sleeping_hint("wake") or deny  # «уже спит» — точечная подсказка
     if deny:
-        return await cb.answer(deny, show_alert=True)
+        return await _deny(cb, deny)
     pet_was_sleeping = pet.is_sleeping
     if pet.is_sleeping:
         result = await svc.wake(pet)
@@ -657,6 +669,11 @@ async def act_wake(cb: CallbackQuery, session: AsyncSession) -> None:
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
         return await cb.answer()
+    # Страж состояний: гуляющего не будить (его и так нет дома) —
+    # единый всплывающий отказ. Спящего будить можно (wake в allow-списке).
+    deny = svc.state_deny(pet, "wake")
+    if deny:
+        return await _deny(cb, deny)
     result = await svc.wake(pet)
     await PetRepository(session).log_action(pet.id, "wake")
     await _after_action(cb, session, result, fx="wake")
@@ -670,7 +687,7 @@ async def act_wash(cb: CallbackQuery, session: AsyncSession) -> None:
     # Страж состояний: во сне не купают, гуляющего негде мыть.
     deny = svc.state_deny(pet, "wash")
     if deny:
-        return await cb.answer(deny, show_alert=True)
+        return await _deny(cb, deny)
     result = await svc.wash(pet)
     await PetRepository(session).log_action(pet.id, "wash")
     await _after_action(cb, session, result, fx="wash")
@@ -681,18 +698,11 @@ async def train_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     if pet is None:
         return await cb.answer()
     svc = TamagotchiService(session)
-    # Экран тренировок недоступен, пока питомец спит или гуляет.
+    # Экран тренировок недоступен, пока питомец спит или гуляет —
+    # только всплывающий отказ, экран не перерисовываем (единый стиль).
     deny = svc.state_deny(pet, "train")
     if deny:
-        set_pet_page(cb.message.chat.id, 0)
-        await safe_edit_or_answer(
-            cb.message,
-            await svc.render_async(pet),
-            reply_markup=pet_hub(0, critical=svc.is_critical(pet),
-                                 sleeping=pet.is_sleeping,
-                                 walking=svc.on_walk(pet)),
-        )
-        return await cb.answer(deny, show_alert=True)
+        return await _deny(cb, deny)
     set_pet_page(cb.message.chat.id, 0)
     sp = SPECIES_DATA.get(_species_key(pet), SPECIES_DATA["cat"])
     lines = [
@@ -714,6 +724,11 @@ async def act_train(cb: CallbackQuery, session: AsyncSession) -> None:
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
         return await cb.answer()
+    # Страж состояний (сработает при «гонке»: уснул/ушёл гулять, пока
+    # открыт экран тренировок) — отказ только всплывающим alert-ом.
+    deny = svc.state_deny(pet, "train")
+    if deny:
+        return await _deny(cb, deny)
     result = await svc.train(pet, stat)
     trained = "завершена" in result
     if trained:
@@ -726,6 +741,12 @@ async def act_walk(cb: CallbackQuery, session: AsyncSession) -> None:
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
         return await cb.answer()
+    # Страж состояний: спящего не ведут гулять; если уже гуляет —
+    # надо сначала вернуть домой. Единый всплывающий отказ (alert).
+    deny = svc.state_deny(pet, "walk")
+    if deny:
+        hint = svc.sleeping_hint("walk") if pet.is_sleeping else None
+        return await _deny(cb, hint or deny)
     forecast = await walk_forecast_line()
     result = await svc.start_walk(pet, hours=2)
     walked = "ушёл гулять" in result

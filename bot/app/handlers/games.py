@@ -15,7 +15,7 @@ from app.keyboards.inline import (
 )
 from app.services.achievements import AchievementService
 from app.utils.safe_edit import safe_edit_or_answer
-from app.handlers.tamagotchi import set_pet_page
+from app.handlers.tamagotchi import set_pet_page, _deny
 from app.services.tamagotchi import SPECIES_DATA, TamagotchiService, _species_key
 
 router = Router(name="games")
@@ -47,43 +47,96 @@ async def _get_pet(session: AsyncSession, tg_id: int):
     return await PetRepository(session).get_by_user(tg_id)
 
 
-def _state_deny_screen(svc: TamagotchiService, pet, action: str):
-    """Страж состояний для игровых экранов (FSM-игры).
+GAMES_SCREEN_TEXT = (
+    "🎮 <b>Игровая с {name}</b> {emoji}\n\n"
+    "• 🔢 <i>Угадай число</i> — 🧠 интеллект сужает подсказку\n"
+    "• ✂️ <i>Камень-ножницы-бумага</i> — честный рандом\n"
+    "• 🃏 <i>Двадцать одно</i> — набери ≤21; 🧠 интеллект делает дилера «мягче»\n\n"
+    "Победа: +15 XP и море счастья. Поражение всё равно даёт опыт!"
+)
 
-    Возвращает строку отказа, если действие запрещено (питомец спит или
-    гуляет), иначе None. Если срок прогулки уже истёк, «возвращение»
-    закрывается без награды (награду заберёт обычный путь `_after_action`
-    в хабе питомца) — чтобы игрок мог сразу начать игру.
+
+async def _games_screen_render(cb: CallbackQuery, pet) -> None:
+    """Экран меню игр (единый для входа и выхода из мини-игр)."""
+    sp = SPECIES_DATA.get(_species_key(pet), SPECIES_DATA["cat"])
+    await safe_edit_or_answer(
+        cb.message, GAMES_SCREEN_TEXT.format(name=pet.name, emoji=sp["emoji"]),
+        reply_markup=games_menu(_chat_of(cb)))
+    await cb.answer()
+
+
+async def _game_entry_guard(cb: CallbackQuery, state: FSMContext,
+                            session: AsyncSession):
+    """Единый страж входа в игры (экран меню и все три мини-игры).
+
+    Стиль отказа — всплывающий alert-тост (`_deny`), экран не трогаем.
+    Истёкшую прогулку НЕ молча стираем: отдаём её на «сбор» общему пути
+    `_collect_walk_result` (награды монеты/XP запишет `_game_outcome`,
+    как это делает `_after_action` в хабе питомца) — иначе игрок терял
+    награду прогулки, а кнопка «Прогулка» работала со сбросом состояния.
     """
-    from app.utils.local_time import now as local_now
-    now = local_now()
-    deny = svc.state_deny(pet, action, now)
-    if deny is None and getattr(pet, "walk_until", None) and not svc.on_walk(pet, now):
-        pet.walk_until = None
-        pet.walk_start_at = None
-    return deny
-
-@router.callback_query(F.data == "pet:games")
-async def games_screen(cb: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
         await state.clear()
         await safe_edit_or_answer(cb.message, "🥚 Сначала заведи питомца (/start).",
                                   reply_markup=pet_hub(2))
         await cb.answer()
-        return
-    set_pet_page(cb.message.chat.id, 2)
-    sp = SPECIES_DATA.get(_species_key(pet), SPECIES_DATA["cat"])
+        return None
+    set_pet_page(_chat_of(cb) or 0, 2)
     await state.clear()
-    await safe_edit_or_answer(cb.message, 
-        f"🎮 <b>Игровая с {pet.name}</b> {sp['emoji']}\n\n"
-        "• 🔢 <i>Угадай число</i> — 🧠 интеллект сужает подсказку\n"
-        "• ✂️ <i>Камень-ножницы-бумага</i> — честный рандом\n"
-        "• 🃏 <i>Двадцать одно</i> — набери ≤21; 🧠 интеллект делает дилера «мягче»\n\n"
-        "Победа: +15 XP и море счастья. Поражение всё равно даёт опыт!",
-        reply_markup=games_menu(_chat_of(cb)),
-    )
-    await cb.answer()
+    svc = TamagotchiService(session)
+    deny = svc.state_deny(pet, "game")
+    if deny:
+        await _deny(cb, deny)
+        return None
+    return svc, pet
+
+
+async def _game_outcome(cb: CallbackQuery, session: AsyncSession, pet,
+                        result_text: str, won: bool, draw: bool = False,
+                        *, kind: str = "", meta: dict | None = None) -> None:
+    """Единый обработчик итога мини-игры (все три игры идут через него).
+
+    Порядок один и тот же: собрать просроченную прогулку (награды!) →
+    показать исход + карточку статов → тост `apply_effect` (реакции бот
+    НЕ ставит — это было багом) → log_action → commit.
+    """
+    svc = TamagotchiService(session)
+    prefix = ""
+    res = _collect_walk_result(svc, pet, session)
+    if res:
+        wtext, coins, xp = res
+        pet.walk_until = None
+        pet.walk_start_at = None
+        if coins:
+            user = await UserRepository(session).get(cb.from_user.id)
+            if user:
+                user.coins += coins
+        await svc.add_pet_xp(pet, xp)
+        await PetRepository(session).log_action(pet.id, "walk_done", value=coins)
+        prefix = f"{wtext}\n\n"
+    await safe_edit_or_answer(cb.message,
+        f"{prefix}{result_text}\n\n" + await svc.render_async(pet),
+        reply_markup=games_menu(_chat_of(cb)))
+    from app.utils.fx import apply_effect
+    await apply_effect(cb, "win" if won else ("play" if draw else "lose"),
+                       toast_override=result_text[:200])
+    await PetRepository(session).log_action(
+        pet.id, "game", value=int(won), meta={"kind": kind, **(meta or {})})
+    if won:
+        await bump_games_won(session, cb.from_user.id)
+    await session.commit()
+
+
+@router.callback_query(F.data == "pet:games")
+async def games_screen(cb: CallbackQuery, state: FSMContext,
+                       session: AsyncSession) -> None:
+    """🎮 Игровая — экран выбора мини-игры (тот же страж и тот же стиль отказа)."""
+    entry = await _game_entry_guard(cb, state, session)
+    if entry is None:
+        return
+    _, pet = entry
+    await _games_screen_render(cb, pet)
 
 
 @router.callback_query(F.data.startswith("game:"))
@@ -97,35 +150,22 @@ async def game_noop_guard(cb: CallbackQuery) -> None:
 async def game_exit(cb: CallbackQuery, state: FSMContext,
                     session: AsyncSession) -> None:
     """⬅️ Выйти из мини-игры → экран меню игр (снимает состояние FSM)."""
-    pet = await _get_pet(session, cb.from_user.id)
     await state.clear()
+    pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
         await safe_edit_or_answer(cb.message, "🥚 Сначала заведи питомца (/start).",
                                   reply_markup=pet_hub(2))
         return await cb.answer()
-    set_pet_page(cb.message.chat.id, 2)
-    sp = SPECIES_DATA.get(_species_key(pet), SPECIES_DATA["cat"])
-    await safe_edit_or_answer(
-        cb.message,
-        f"🎮 <b>Игровая с {pet.name}</b> {sp['emoji']}\n\n"
-        "• 🔢 <i>Угадай число</i> — 🧠 интеллект сужает подсказку\n"
-        "• ✂️ <i>Камень-ножницы-бумага</i> — честный рандом\n"
-        "• 🃏 <i>Двадцать одно</i> — набери ≤21; 🧠 интеллект делает дилера «мягче»\n\n"
-        "Победа: +15 XP и море счастья. Поражение всё равно даёт опыт!",
-        reply_markup=games_menu(_chat_of(cb)))
-    await cb.answer()
+    set_pet_page(_chat_of(cb) or 0, 2)
+    await _games_screen_render(cb, pet)
+
 
 @router.callback_query(F.data == "game:guess")
 async def start_guess(cb: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
-    pet = await _get_pet(session, cb.from_user.id)
-    if pet is None:
-        return await cb.answer()
-    svc = TamagotchiService(session)
-    # Страж состояний: спящий/гуляющий питомец не играет.
-    deny = _state_deny_screen(svc, pet, "game")
-    if deny:
-        await state.clear()
-        return await cb.answer(deny, show_alert=True)
+    entry = await _game_entry_guard(cb, state, session)
+    if entry is None:
+        return
+    svc, pet = entry
     secret, (lo, hi) = svc.guess_range(pet)
     await state.set_state(Games.guessing)
     await state.update_data(secret=secret, lo=lo, hi=hi)
@@ -160,7 +200,10 @@ def _bj_kb(chat_id: int | None) -> InlineKeyboardMarkup:
 async def do_guess_cb(cb: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     data = await state.get_data()
     secret = int(data.get("secret", -1))
-    guess = int(cb.data.split(":")[1])
+    try:
+        guess = int(cb.data.split(":")[1])
+    except (ValueError, IndexError):
+        return await cb.answer()
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
         await state.clear()
@@ -169,16 +212,9 @@ async def do_guess_cb(cb: CallbackQuery, state: FSMContext, session: AsyncSessio
     won = guess == secret
     result = await svc.play(pet, won)
     await state.clear()
-    await PetRepository(session).log_action(pet.id, "game", value=int(won),
-                                            meta={"kind": "guess", "guess": guess})
-    if won:
-        await bump_games_won(session, cb.from_user.id)
     hint = "" if won else f" Это было число <b>{secret}</b>."
-    await safe_edit_or_answer(cb.message, f"{result}{hint}\n\n" + await svc.render_async(pet),
-                              reply_markup=games_menu(_chat_of(cb)))
-    # Итог показан в отредактированном сообщении; реакции бот не ставит
-    # (это было багом) — см. app/utils/fx.py.
-    await cb.answer()
+    await _game_outcome(cb, session, pet, f"{result}{hint}", won,
+                        kind="guess", meta={"guess": guess})
 
 @router.message(Games.guessing, F.text & F.text.strip().isdigit())
 async def do_guess_msg(message: Message, state: FSMContext, session: AsyncSession) -> None:
@@ -204,18 +240,15 @@ async def do_guess_msg(message: Message, state: FSMContext, session: AsyncSessio
     await message.answer(f"{result}{hint}",
                          reply_markup=games_menu(message.chat.id),
                          parse_mode="HTML")
+    await session.commit()
 
 
 @router.callback_query(F.data == "game:rps")
 async def start_rps(cb: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
-    pet = await _get_pet(session, cb.from_user.id)
-    if pet is None:
-        return await cb.answer()
-    # Страж состояний: спящий/гуляющий питомец не играет.
-    deny = _state_deny_screen(TamagotchiService(session), pet, "game")
-    if deny:
-        await state.clear()
-        return await cb.answer(deny, show_alert=True)
+    entry = await _game_entry_guard(cb, state, session)
+    if entry is None:
+        return
+    _, pet = entry
     await state.set_state(Games.rps)
     # Ход питомца ЖЕРЕБУЕТСЯ ЗАРАНЕЕ и хранится в FSM: игрок выбирает
     # вслепую («синхронное раскрытие»), а не получает ответ постфактум.
@@ -252,11 +285,6 @@ async def play_rps(cb: CallbackQuery, state: FSMContext, session: AsyncSession) 
     svc = TamagotchiService(session)
     result = await svc.play(pet, won)
     await state.clear()
-    await PetRepository(session).log_action(pet.id, "game", value=int(won),
-                                            meta={"kind": "rps", "mine": mine,
-                                                  "theirs": theirs})
-    if won:
-        await bump_games_won(session, cb.from_user.id)
     # Причина результата — в самих ходах (🪨 > ✂️ > 📄 > 🪨), поэтому строка
     # с ходами объясняет ВСЁ. Ниже — только награда от питомца (без повтора
     # слова «Победа») и карточка статов.
@@ -274,14 +302,9 @@ async def play_rps(cb: CallbackQuery, state: FSMContext, session: AsyncSession) 
     # В строке выше уже написано, ЧЬЙ ход победил — не дублируем слово
     # «Победа» из общего результата play(): оставляем только награду (+XP).
     res_line = result.split("!", 1)[-1].strip() if won and "!" in result else result
-    toast = line[:200]
-    outcome = await safe_edit_or_answer(cb.message,
-        f"{line}\n{reward} {res_line}\n\n" + await svc.render_async(pet),
-        reply_markup=games_menu(_chat_of(cb)),
-    )
-    from app.utils.fx import apply_effect
-    await apply_effect(cb, "win" if won else ("play" if draw else "lose"),
-                       toast_override=toast)
+    await _game_outcome(cb, session, pet, f"{line}\n{reward} {res_line}",
+                        won, draw, kind="rps",
+                        meta={"mine": mine, "theirs": theirs})
 
 BJ_DECK = [(r, s) for r in range(2, 11) for s in ("♠", "♥", "♦", "♣")]
 
@@ -321,14 +344,10 @@ def _card_str(cards: list[tuple[int, str]]) -> str:
 
 @router.callback_query(F.data == "game:blackjack")
 async def start_blackjack(cb: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
-    pet = await _get_pet(session, cb.from_user.id)
-    if pet is None:
-        return await cb.answer()
-    # Страж состояний: спящий/гуляющий питомец не играет.
-    deny = _state_deny_screen(TamagotchiService(session), pet, "game")
-    if deny:
-        await state.clear()
-        return await cb.answer(deny, show_alert=True)
+    entry = await _game_entry_guard(cb, state, session)
+    if entry is None:
+        return
+    _, pet = entry
     rng = random.Random()
     deck = BJ_DECK[:]
     rng.shuffle(deck)
@@ -366,19 +385,10 @@ async def _bj_finish(cb: CallbackQuery, state: FSMContext, session: AsyncSession
         outcome, won = f"😿 Питомец-дилер хитрее: {dv} против {pv}.", False
     result = await svc.play(pet, won)
     await state.clear()
-    await PetRepository(session).log_action(pet.id, "game", value=int(won),
-                                            meta={"kind": "blackjack", "player": pv, "dealer": dv})
-    if won:
-        await bump_games_won(session, cb.from_user.id)
-    await safe_edit_or_answer(cb.message,
-        f"Твои: <b>{_bj_render(player)}</b> ({pv}) · {pet.name}: <b>{_bj_render(dealer)}</b> ({dv})\n"
-        f"{outcome}\n\n{result}",
-        reply_markup=games_menu(_chat_of(cb)),
-    )
-    from app.utils.fx import apply_effect
-    # Тост об итоге (реакции бот не ставит — это было багом).
-    await apply_effect(cb, "win" if won else ("play" if pv == dv else "lose"),
-                       toast_override=outcome[:200])
+    text = (f"Твои: <b>{_bj_render(player)}</b> ({pv}) · "
+            f"{pet.name}: <b>{_bj_render(dealer)}</b> ({dv})\n{outcome}\n\n{result}")
+    await _game_outcome(cb, session, pet, text, won, draw=(pv == dv),
+                        kind="blackjack", meta={"player": pv, "dealer": dv})
 
 @router.callback_query(Games.blackjack, F.data == "bj:hit")
 async def bj_hit(cb: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:

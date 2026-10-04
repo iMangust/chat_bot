@@ -390,6 +390,14 @@ class TamagotchiService:
             return "medicine"
         return a
 
+    def _sleeping_deny(self, action: str) -> str:
+        """Единый текст отказа во сне: точечная подсказка или общий."""
+        from app import i18n
+        key = f"pet.sleeping_deny_{self._state_action(action)}"
+        if key in i18n.STRINGS:
+            return t(key)
+        return t("pet.sleeping_deny")
+
     def sleeping_hint(self, action: str) -> str | None:
         """Точечная подсказка к отказу «питомец спит» (для handlers)."""
         from app import i18n
@@ -397,6 +405,15 @@ class TamagotchiService:
         if key in i18n.STRINGS:
             return t(key)
         return None
+
+    def _walk_deny(self, pet: Pet, action: str) -> str:
+        """Единый текст отказа на прогулке: точечный или общий."""
+        from app import i18n
+        a = self._state_action(action)
+        key = f"pet.walk_deny_{a}"
+        if key in i18n.STRINGS:
+            return t(key, name=pet.name)
+        return t("pet.walk_deny", name=pet.name)
 
     def state_deny(self, pet: Pet, action: str, now=None) -> str | None:
         """Единый страж состояний «сон / прогулка».
@@ -423,11 +440,11 @@ class TamagotchiService:
             # (например «разбуди сначала» для кнопки «💤 Спать»).
             # Нейтральные просмотры (не из _ACTIVE_ACTIONS) разрешены.
             if a in self._ACTIVE_ACTIONS and a not in self._SLEEP_ALLOW:
-                return t("pet.sleeping_deny")
+                return self._sleeping_deny(a)
             return None
         if self.on_walk(pet, now):
             if a in self._WALK_DENY:
-                return t(f"pet.walk_deny_{a}", name=pet.name)
+                return self._walk_deny(pet, a)
         return None
 
     async def feed(self, pet: Pet, effect: dict[str, float]) -> str:
