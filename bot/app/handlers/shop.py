@@ -263,8 +263,6 @@ async def buy_item(cb: CallbackQuery, session: AsyncSession) -> None:
     await session.commit()
     logger.info("user {} bought {} for {}", user.tg_id, item.code, item.price)
     await cb.answer(f"🛒 Куплено: {item.icon} {item.name}!", show_alert=False)
-    from app.utils.fx import EFFECTS, react_to_message
-    await react_to_message(cb, EFFECTS["coin"].primary[0])
     await shop_screen(cb, session, page=_SHOP_PAGE_CTX.get(cb.message.chat.id, 0))
 
 @router.callback_query(F.data == "pet:inv")

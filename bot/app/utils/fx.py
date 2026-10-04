@@ -1,13 +1,17 @@
 from __future__ import annotations
 
-import random
 from dataclasses import dataclass
 
 from aiogram.exceptions import TelegramAPIError
-from aiogram.methods import SetMessageReaction
-from aiogram.types import CallbackQuery, Message, ReactionTypeEmoji
+from aiogram.types import CallbackQuery, Message
 
-_JITTER_POOL = ["✨", "🌟", "💫", "⭐"]
+# ВАЖНО: бот НЕ ставит реакции на сообщения пользователя — это было багом
+# (после мини-игры под итогом «Ты победил!» появлялась реакция 🎉/😿, а в
+# магазине — 🪙). Единственный фидбэк на действия — тост (cb.answer) и
+# текст сообщения-итога. Механика реакций в чатах принадлежит пользователям;
+# их учёт (reactions_given/reactions_received) живёт в group tracking и
+# никак не зависит от этого модуля.
+
 
 @dataclass(frozen=True)
 class Effect:
@@ -43,32 +47,19 @@ def effect_for(action: str, stat: str | None = None) -> Effect | None:
         action = _TRAIN_TOAST.get(stat, "train_str")
     return EFFECTS.get(action)
 
-async def react_to_message(cb: CallbackQuery, emoji: str, *, bot=None,
-                           message: Message | None = None) -> None:
-    msg = message if message is not None else cb.message
-    chat = getattr(msg, "chat", None)
-    if msg is None or chat is None or not emoji:
-        return
-    if bot is None:
-        bot = getattr(cb, "bot", None) or getattr(msg, "bot", None)
-    if bot is None:
-        return
-    try:
-        await bot(
-            SetMessageReaction(
-                chat_id=msg.chat.id,
-                message_id=msg.message_id,
-                reaction=[ReactionTypeEmoji(emoji=emoji)],
-            )
-        )
-    except Exception:
-        pass
-
 async def apply_effect(cb: CallbackQuery, action: str, *,
                        stat: str | None = None,
                        toast_override: str | None = None,
                        bot=None,
+                       message: Message | None = None,
                        react_target: Message | None = None) -> None:
+    """Показать тост об игровом действии (кормёжка, игра, покупка…).
+
+    Реакции на сообщения НЕ ставятся — только ephemeral-уведомление над
+    кнопкой: пользователь не получает никаких изменений в чате. Параметры
+    ``message``/``react_target`` приняты для совместимости со старыми
+    вызовами и намеренно игнорируются.
+    """
     from app import themes
 
     eff = themes.themed_effect(effect_for(action, stat)) \
@@ -79,18 +70,8 @@ async def apply_effect(cb: CallbackQuery, action: str, *,
             await cb.answer(toast[:200])
         except TelegramAPIError:
             pass
-    if not eff or cb.message is None:
         return
-    emoji = list(eff.primary)
-    if eff.extra_pool and random.random() < eff.extra_chance:
-        emoji.append(random.choice(eff.extra_pool))
-    # Реакция = «ответ питомца» на действие пользователя. Ставится на то
-    # сообщение, где находится нажатая кнопка: если результат игры
-    # редактирует это же сообщение (safe_edit_or_answer), реакция остаётся
-    # прямо под итогом — это и есть «реакция после игры». Если же итог
-    # уйдёт в новое сообщение (edit не удался / другой чат), реагируем на
-    # него — цель передаётся через react_target.
-    if react_target is not None:
-        await react_to_message(cb, emoji[0], bot=bot, message=react_target)
-        return
-    await react_to_message(cb, emoji[0], bot=bot)
+    try:
+        await cb.answer()
+    except TelegramAPIError:
+        pass

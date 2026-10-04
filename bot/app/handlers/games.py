@@ -152,12 +152,11 @@ async def do_guess_cb(cb: CallbackQuery, state: FSMContext, session: AsyncSessio
     if won:
         await bump_games_won(session, cb.from_user.id)
     hint = "" if won else f" Это было число <b>{secret}</b>."
-    outcome = await safe_edit_or_answer(cb.message, f"{result}{hint}\n\n" + await svc.render_async(pet),
-                               reply_markup=games_menu(_chat_of(cb)))
-    from app.utils.fx import apply_effect
-    # Реакция питомца на исход: ставим на сообщение с результатом (edit или
-    # новое) — так «🎉/😿 после игры» работает одинаково во всех мини-играх.
-    await apply_effect(cb, "win" if won else "lose", react_target=outcome)
+    await safe_edit_or_answer(cb.message, f"{result}{hint}\n\n" + await svc.render_async(pet),
+                              reply_markup=games_menu(_chat_of(cb)))
+    # Итог показан в отредактированном сообщении; реакции бот не ставит
+    # (это было багом) — см. app/utils/fx.py.
+    await cb.answer()
 
 @router.message(Games.guessing, F.text & F.text.strip().isdigit())
 async def do_guess_msg(message: Message, state: FSMContext, session: AsyncSession) -> None:
@@ -180,13 +179,10 @@ async def do_guess_msg(message: Message, state: FSMContext, session: AsyncSessio
     if won:
         await bump_games_won(session, message.from_user.id)
     hint = "" if won else f" Это было число <b>{secret}</b>."
-    outcome = await message.answer(f"{result}{hint}",
+    await message.answer(f"{result}{hint}",
                          reply_markup=games_menu(message.chat.id),
                          parse_mode="HTML")
-    from app.utils.fx import EFFECTS, react_to_message
-    eff = EFFECTS["win" if won else "lose"]
-    emoji = list(eff.primary)
-    await react_to_message(None, emoji[0], bot=message.bot, message=outcome)
+
 
 @router.callback_query(F.data == "game:rps")
 async def start_rps(cb: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
@@ -258,7 +254,7 @@ async def play_rps(cb: CallbackQuery, state: FSMContext, session: AsyncSession) 
     )
     from app.utils.fx import apply_effect
     await apply_effect(cb, "win" if won else ("play" if draw else "lose"),
-                       toast_override=toast, react_target=outcome)
+                       toast_override=toast)
 
 BJ_DECK = [(r, s) for r in range(2, 11) for s in ("♠", "♥", "♦", "♣")]
 
@@ -342,16 +338,15 @@ async def _bj_finish(cb: CallbackQuery, state: FSMContext, session: AsyncSession
                                             meta={"kind": "blackjack", "player": pv, "dealer": dv})
     if won:
         await bump_games_won(session, cb.from_user.id)
-    outcome_msg = await safe_edit_or_answer(cb.message,
+    await safe_edit_or_answer(cb.message,
         f"Твои: <b>{_bj_render(player)}</b> ({pv}) · {pet.name}: <b>{_bj_render(dealer)}</b> ({dv})\n"
         f"{outcome}\n\n{result}",
         reply_markup=games_menu(_chat_of(cb)),
     )
     from app.utils.fx import apply_effect
-    # Единый эффект для всех мини-игр: тост + реакция питомца на сообщение
-    # с итогом (🎉 победа / 😿 поражение / 🥳 ничья).
+    # Тост об итоге (реакции бот не ставит — это было багом).
     await apply_effect(cb, "win" if won else ("play" if pv == dv else "lose"),
-                       toast_override=outcome[:200], react_target=outcome_msg)
+                       toast_override=outcome[:200])
 
 @router.callback_query(Games.blackjack, F.data == "bj:hit")
 async def bj_hit(cb: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
