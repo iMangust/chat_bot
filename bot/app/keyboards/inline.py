@@ -655,8 +655,17 @@ def games_menu(chat_id: int | None = None) -> InlineKeyboardMarkup:
     b.adjust(1, 2)
     # current_cb='pet:games' — нажатая кнопка входа из хаба: включает режим
     # current_source, «Назад» ведёт на вкладку 'pet:page:N', а не подавляется.
-    append_nav(b, "games", back_cb=_nav_back_cb("games", chat_id,
-                                                current_cb="pet:games"))
+    back_cb = _nav_back_cb("games", chat_id, current_cb="pet:games")
+    if not back_cb or back_cb == "pet:games":
+        # Стек навигации пуст (первый заход, рестарт без Redis и т.п.) —
+        # гарантируем рабочий выход: явная кнопка возврата в хаб питомца.
+        # Иначе на экране игр не оставалось НИ ОДНОЙ рабочей кнопки, и
+        # тапы по играм выглядели как «ничего не происходит».
+        b.button(text="⬅️ Назад в питомцу", callback_data="pet:page:2")
+        b.row()
+        b.adjust(1, 2, 1)
+    else:
+        append_nav(b, "games", back_cb=back_cb)
     return b.as_markup()
 
 

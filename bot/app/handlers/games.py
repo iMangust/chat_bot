@@ -117,9 +117,11 @@ async def _game_outcome(cb: CallbackQuery, session: AsyncSession, pet,
     await safe_edit_or_answer(cb.message,
         f"{prefix}{result_text}\n\n" + await svc.render_async(pet),
         reply_markup=games_menu(_chat_of(cb)))
-    from app.utils.fx import apply_effect
-    await apply_effect(cb, "win" if won else ("play" if draw else "lose"),
-                       toast_override=result_text[:200])
+    # ВАЖНО: здесь НЕЛЬЗЯ вызывать cb.answer()/apply_effect — Telegram
+    # принимает ровно ОДИН answerCallbackQuery на тап; целевые хендлеры игр
+    # отвечают сами в конце (иначе второй ответ падает с QUERY_ID_INVALID,
+    # а при раннем сбое обработчика пользователь видел «ничего не
+    # происходит»). Реакции бот не ставит — это было багом.
     await PetRepository(session).log_action(
         pet.id, "game", value=int(won), meta={"kind": kind, **(meta or {})})
     if won:
@@ -138,10 +140,18 @@ async def games_screen(cb: CallbackQuery, state: FSMContext,
     await _games_screen_render(cb, pet)
 
 
-@router.callback_query(F.data.startswith("game:"))
+_GAME_KNOWN_CB = {"game:exit", "game:guess", "game:rps", "game:blackjack"}
+
+
+@router.callback_query(F.data.startswith("game:") & ~F.data.in_(list(_GAME_KNOWN_CB)))
 async def game_noop_guard(cb: CallbackQuery) -> None:
-    """Защита от «мёртвых» кнопок: любой неизвестный game:-колбэк просто
-    отвечает на тап (иначе Telegram показывает «кнопка неактивна»)."""
+    """Защита от «мёртвых» кнопок: любой НЕИЗВЕСТНЫЙ game:-колбэк просто
+    отвечает на тап (иначе Telegram показывает «кнопка неактивна»).
+
+    ВАЖНО: известные кнопки входа в игры ИСКЛЮЧЕНЫ из фильтра. Раньше этот
+    guard стоял до start_guess/start_rps/start_blackjack и матчил их данные
+    тоже — aiogram останавливался на первом совпадении, и при нажатии любой
+    игры «ничего не происходило» (только гасился спиннер)."""
     await cb.answer()
 
 
@@ -265,6 +275,7 @@ async def do_guess_cb(cb: CallbackQuery, state: FSMContext, session: AsyncSessio
     hint = "" if won else f" Это было число <b>{secret}</b>."
     await _game_outcome(cb, session, pet, f"{result}{hint}", won,
                         kind="guess", meta={"guess": guess})
+    await cb.answer("🎯 Ты выбрал " + str(guess))
 
 @router.message(Games.guessing, F.text & F.text.strip().isdigit())
 async def do_guess_msg(message: Message, state: FSMContext, session: AsyncSession) -> None:
@@ -355,6 +366,7 @@ async def play_rps(cb: CallbackQuery, state: FSMContext, session: AsyncSession) 
     await _game_outcome(cb, session, pet, f"{line}\n{reward} {res_line}",
                         won, draw, kind="rps",
                         meta={"mine": mine, "theirs": theirs})
+    await cb.answer(f"Твой ход: {RPS_EMOJI[mine]}")
 
 BJ_DECK = [(r, s) for r in range(2, 11) for s in ("♠", "♥", "♦", "♣")]
 
@@ -439,6 +451,7 @@ async def _bj_finish(cb: CallbackQuery, state: FSMContext, session: AsyncSession
             f"{pet.name}: <b>{_bj_render(dealer)}</b> ({dv})\n{outcome}\n\n{result}")
     await _game_outcome(cb, session, pet, text, won, draw=(pv == dv),
                         kind="blackjack", meta={"player": pv, "dealer": dv})
+    await cb.answer(f"🃏 У тебя {pv} · у дилера {dv}")
 
 @router.callback_query(Games.blackjack, F.data == "bj:hit")
 async def bj_hit(cb: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:

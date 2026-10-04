@@ -126,3 +126,34 @@ def test_guess_kb_no_duplicate_buttons():
         datas = [b.callback_data for row in kb.inline_keyboard for b in row]
         num_datas = [d for d in datas if d.startswith("guess:")]
         assert len(num_datas) == len(set(num_datas)), (lo, hi, datas)
+
+
+def test_noop_guard_does_not_swallow_game_entries():
+    """Регресс на «игры не работают»: game_noop_guard стоял до хендлеров
+    входа с фильтром startswith("game:") и перехватывал game:guess/rps/
+    blackjack — тап по игре молча гасился. Guard обязан исключать все
+    известные кнопки."""
+    import inspect
+    from app.handlers.games import _GAME_KNOWN_CB
+    for cb_data in ("game:guess", "game:rps", "game:blackjack", "game:exit"):
+        assert cb_data in _GAME_KNOWN_CB, f"{cb_data} должен быть в списке известных"
+    # Фильтр guard'а должен содержать инверсию (исключение известных кнопок)
+    from app.handlers import games as g
+    src_txt = inspect.getsource(g)
+    idx = src_txt.index("async def game_noop_guard")
+    deco = src_txt[max(0, idx - 200):idx]
+    assert "~F.data.in_" in deco or "& ~" in deco, \
+        "game_noop_guard обязан исключать известные game:-кнопки из фильтра"
+
+
+def test_games_menu_always_has_exit_button():
+    """На экране меню игр всегда есть хотя бы один выход (stack-nav или
+    явная кнопка pet:page:2), иначе пользователь застревает без кнопок."""
+    from app.keyboards.inline import games_menu
+    kb = games_menu(chat_id=None)  # пустой стек навигации -> фолбэк/меню
+    datas = [b.callback_data for row in kb.inline_keyboard for b in row if b.callback_data]
+    # Выход обязан быть рабочим: либо вкладка хаба питомца (pet:page:N),
+    # либо хотя бы корневое «🏠 Меню» — пользователь не должен оставаться
+    # на экране игр вообще без кнопок возврата.
+    assert any(d.startswith("pet:page:") or d == "menu:main" for d in datas), \
+        f"нет кнопки выхода из меню игр: {datas}"
