@@ -44,6 +44,20 @@ def set_pet_page(chat_id: int, page: int) -> int:
     _PET_PAGE_CTX[int(chat_id)] = page
     return page
 
+# Снимок последнего игрового экрана чата (callback_data кнопки хода).
+# Нужен только для ТЕКСТОВЫХ ходов угадайки: входящее текстовое сообщение
+# не содержит клавиатуру бота, а активная партия теперь не хранится в FSM.
+_GAME_SCREEN_CTX: dict[int, str] = {}
+
+def set_last_game_screen(chat_id: int, token: str | None) -> None:
+    if token:
+        _GAME_SCREEN_CTX[int(chat_id)] = token
+    else:
+        _GAME_SCREEN_CTX.pop(int(chat_id), None)
+
+def get_last_game_screen(chat_id: int) -> str | None:
+    return _GAME_SCREEN_CTX.get(int(chat_id))
+
 def _collect_walk_result(svc: TamagotchiService, pet: Pet, session: AsyncSession):
     if pet.walk_until is None:
         return None

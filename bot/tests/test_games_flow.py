@@ -55,19 +55,36 @@ def test_deny_style_is_alert(monkeypatch):
 
 # ── Регрессия «Игры не работают: при нажатии ничего не происходит» ────────
 
+def _all_registered_cb_datas():
+    """Собираем callback_data всех кнопок ВСЕХ игровых экранов, включая
+    промежуточные ходы (числа угадайки, Камни/Ножницы/Бумага, «Ещё карту»,
+    состояние блэкджека). Именно отсутствие обработчика у таких кнопок и
+    выглядело как «игра началась, а кнопки ходов молчат»."""
+    from app.keyboards.inline import games_menu
+    from app.handlers.games import _guess_kb, _rps_kb, _bj_kb, _bj_state_b64
+
+    datas = []
+    bj_tok = _bj_state_b64([[(2, "♠")], [(5, "♥"), (6, "♦")]],
+                           [(5, "♥"), (6, "♦")], [(9, "♣")], 17)
+    for kb in (games_menu(1),
+               _guess_kb(secret=7, lo=3, hi=12, chat_id=1),
+               _rps_kb("rock", 1),
+               _bj_kb(bj_tok, 1)):
+        for row in kb.inline_keyboard:
+            datas += [b.callback_data for b in row if b.callback_data]
+    # явные префиксы ходов — на случай, если клавиатура когда-нибудь
+    # перестанет их генерировать (защита от регрессии раскладки)
+    datas += ["guess:7", "guess:new:7", "rps:rock:paper", "bj:hit:tok",
+              "bj:stand:tok"]
+    return datas
+
+
 def test_every_game_button_has_handler():
     """Каждая callback_data игровых клавиатур матчится хотя бы одному
     зарегистрированному хендлеру роутера games (иначе тап молча игнорируется)."""
     import asyncio
     from aiogram.types import CallbackQuery
-    from app.keyboards.inline import games_menu
-    from app.handlers.games import _guess_kb, _rps_kb, _bj_kb
-
-    # Собираем все кнопки всех игровых экранов.
-    datas = []
-    for kb in (games_menu(1), _guess_kb(5, 12, 1), _rps_kb(1), _bj_kb(1)):
-        for row in kb.inline_keyboard:
-            datas += [b.callback_data for b in row if b.callback_data]
+    datas = _all_registered_cb_datas()
     assert datas, "клавиатуры пустые"
 
     # Прогоняем каждую через реальные роутеры (тот же набор, что в main.py).
@@ -88,44 +105,85 @@ def test_every_game_button_has_handler():
         async def answer(self, *a, **k):
             return True
 
-    async def _match(data: str) -> bool:
+    async def _match(data: str):
         cb = FakeCb(data)
         for r in order:
             for h in r.callback_query.handlers:
                 try:
-                    res = await h.check(cb, {})
+                    # aiogram 3.x: check возвращает (bool, kwargs)
+                    matched, _ = await h.check(cb)
                 except Exception:
-                    res = False
-                if res:
-                    return True
-        return False
+                    matched = False
+                if matched:
+                    return h.callback.__name__, r.name
+        return None
 
-    unmatched = [d for d in datas if not asyncio.run(_match(d))]
+    unmatched = [d for d in datas if asyncio.run(_match(d)) is None]
     assert not unmatched, f"кнопки без обработчика (тап = «ничего не происходит»): {unmatched}"
 
 
-def test_stale_guard_registered_before_fsm_handlers():
-    """Ходы guess:/rps:/bj: без FSM-состояния больше не повисают в воздухе:
-    game_stale_guard объявлен в роутере раньше целевых FSM-хендлеров."""
-    from app.handlers.games import router, game_stale_guard, do_guess_cb
-    handlers = router.callback_query.handlers
-    idx_guard = next(i for i, h in enumerate(handlers) if h.callback is game_stale_guard)
-    idx_guess = next(i for i, h in enumerate(handlers) if h.callback is do_guess_cb)
-    assert idx_guard < idx_guess
-    # сам guard матчит все три префикса без состояния
-    src = inspect.getsource(game_stale_guard)
-    assert '"guess:"' in src and '"rps:"' in src and '"bj:"' in src
+def test_moves_not_swallowed_by_earlier_handlers():
+    """Ключевой регресс на «игра началась, но дальнейшие действия не
+    работают»: кнопка хода должна доходить ДО СВОЕГО хендлера. В aiogram
+    диспетчеризация останавливается на первом совпадении — раньше ходы
+    гасились guard'ами, стоявшими в роутере раньше целевых хендлеров
+    (game_noop_guard матчил game:*; game_stale_guard возвращал coroutine
+    вместо falsy). Проверяем порядок: первый матчивший handler — целевой."""
+    import asyncio
+    from app.handlers.games import router
+
+    expected_first = {
+        "guess:7": "do_guess_cb",
+        "guess:new:7": "guess_new",
+        "rps:rock:paper": "play_rps",
+        "rps:rock": "play_rps",          # stale-ход того же хендлера
+        "bj:hit:tok": "bj_hit",
+        "bj:stand:tok": "bj_stand",
+        "game:exit": "game_exit",
+        "game:guess": "start_guess",
+        "game:rps": "start_rps",
+        "game:blackjack": "start_blackjack",
+        "pet:games": "games_screen",
+    }
+
+    class FakeCb:
+        def __init__(self, data):
+            self.data, self.id = data, "x"
+            self.from_user = type("U", (), {"id": 1})()
+            self.message = None
+        async def answer(self, *a, **k):
+            return True
+
+    async def first_match(data: str):
+        cb = FakeCb(data)
+        for h in router.callback_query.handlers:
+            try:
+                # aiogram 3.x: check возвращает (bool, kwargs)
+                matched, _ = await h.check(cb)
+            except Exception:
+                continue
+            if matched:
+                return h.callback.__name__
+        return None
+
+    for data, want in expected_first.items():
+        got = asyncio.run(first_match(data))
+        assert got == want, (
+            f"кнопка {data!r} сначала матчится хендлером {got!r}, а должен "
+            f"{want!r}: предыдущий handler проглотит тап и игра «зависнет»")
 
 
-def test_guess_kb_no_duplicate_buttons():
-    """Дубликаты callback_data в одной клавиатуре недопустимы (Telegram их
-    не различает; при lo==mid старая версия ломала раскладку)."""
-    from app.handlers.games import _guess_kb
-    for lo, hi in ((10, 10), (10, 11), (1, 20), (3, 4)):
-        kb = _guess_kb(lo, hi, 1)
-        datas = [b.callback_data for row in kb.inline_keyboard for b in row]
-        num_datas = [d for d in datas if d.startswith("guess:")]
-        assert len(num_datas) == len(set(num_datas)), (lo, hi, datas)
+def test_games_need_no_fsm_state():
+    """Архитектурная инвариантность: ходы игр самодостаточны (контекст в
+    кнопках экрана), FSM-состояния им не нужны. Если кто-то снова добавит
+    StateFilter к игровым хендлерам — после рестарта бота Redis-состояния
+    теряются и кнопки «молчат» (исторический баг)."""
+    from app.handlers.games import (router, do_guess_cb, play_rps, bj_hit,
+                                    bj_stand, guess_new)
+    for h in router.callback_query.handlers:
+        if h.callback in (do_guess_cb, play_rps, bj_hit, bj_stand, guess_new):
+            src = inspect.getsource(h.callback)
+            assert "get_state" not in src, h.callback.__name__
 
 
 def test_noop_guard_does_not_swallow_game_entries():
@@ -160,58 +218,36 @@ def test_games_menu_always_has_exit_button():
 
 
 # ── Регрессия «игра началась, но дальнейшие действия не работают» ─────────
+# (game_stale_guard удалён из архитектуры: ходы самодостаточны, контекст
+#  живёт в кнопках экрана; порядок матчинга проверяет
+#  test_moves_not_swallowed_by_earlier_handlers выше)
 
-def test_stale_guard_passes_real_moves_to_target_handlers():
-    """game_stale_guard стоит в роутере ДО целевых FSM-хендлеров и матчит
-    ЛЮБЫЕ кнопки хода. Настоящий ход (состояние на месте) он обязан
-    пропустить: callback вернёт falsy (None), иначе aiogram считает update
-    обработанным, диспетчеризация останавливается и тап гасится молча —
-    ровно этот баг ломал все три мини-игры (guard возвращал coroutine из
-    `return await cb.answer()`)."""
-    import asyncio
-    from types import SimpleNamespace
-    from app.handlers.games import game_stale_guard, Games
+def test_guess_kb_no_duplicate_buttons():
+    """Дубликаты callback_data в одной клавиатуре недопустимы (Telegram их
+    не различает; при lo==mid старая версия ломала раскладку)."""
+    from app.handlers.games import _guess_kb
+    for lo, hi in ((10, 10), (10, 11), (1, 20), (3, 4)):
+        kb = _guess_kb(secret=7, lo=lo, hi=hi, chat_id=1)
+        datas = [b.callback_data for row in kb.inline_keyboard for b in row]
+        num_datas = [d for d in datas if d.startswith("guess:")
+                     and not d.startswith("guess:new")]
+        assert len(num_datas) == len(set(num_datas)), (lo, hi, datas)
 
-    class FakeState:
-        def __init__(self, st): self._st = st
-        async def get_state(self): return self._st
 
-    for data, state_str in (("rps:rock", Games.rps.state),
-                            ("guess:7", Games.guessing.state),
-                            ("bj:hit", Games.blackjack.state)):
-        cb = SimpleNamespace(data=data, from_user=SimpleNamespace(id=1))
-        res = asyncio.run(game_stale_guard(cb, FakeState(state_str), None))
-        assert not res, f"ход {data} при активном состоянии должен пропускаться " \
-                        f"(falsy), а guard вернул {res!r} — цель не будет вызвана"
-
-def test_stale_guard_answers_when_state_lost():
-    """Ход без состояния (перезапуск бота/мёртвая кнопка) НЕ зависает:
-    guard сам отвечает на тап и возвращает truthy (update обработан)."""
-    import asyncio
-    from types import SimpleNamespace
-    from app.handlers.games import game_stale_guard
-
-    answered = []
-    class FakeCb:
-        data = "rps:rock"
-        from_user = SimpleNamespace(id=1)
-        message = None
-        async def answer(self, *a, **k):
-            answered.append(a); return True
-
-    class FakeState:
-        async def get_state(self): return None  # состояние потеряно
-
-    class FakeRepo:
-        @staticmethod
-        async def get_by_user(session, tg_id): return None  # нет питомца -> ранний выход
-
-    from app.handlers import games as g
-    orig = g._get_pet
-    g._get_pet = lambda session, tg_id: FakeRepo.get_by_user(session, tg_id)
-    try:
-        res = asyncio.run(game_stale_guard(FakeCb(), FakeState(), None))
-    finally:
-        g._get_pet = orig
-    assert res, "при потерянном состоянии update должен быть обработан (truthy)"
-    assert answered, "тап обязан получить ответ (не молча гаситься)"
+def test_bj_state_roundtrip():
+    """Снимок партии блэкджека в callback_data переживает сериализацию
+    (замена FSM): deck/player/dealer/stay восстанавливаются точно, а
+    подпись отбрасывает подделанные/обрезанные токены."""
+    from app.handlers.games import _bj_state_b64, _bj_load_state
+    deck = [[3, "♠"], [11, "♥"]]
+    player = [[5, "♦"], [6, "♣"]]
+    dealer = [[9, "♠"], [2, "♥"]]
+    tok = _bj_state_b64(deck, player, dealer, 17)
+    st = _bj_load_state(f"bj:hit:{tok}")
+    assert st[0] == "ok"
+    _, d, p, dl, stay = st
+    assert d == [(3, "♠"), (11, "♥")] and p == [(5, "♦"), (6, "♣")]
+    assert dl == [(9, "♠"), (2, "♥")] and stay == 17
+    # битый/поддельный токен → не 'ok' (ход уйдёт на stale-экран, а не упадёт)
+    assert _bj_load_state("bj:hit:notatoken.deadbeef")[0] != "ok"
+    assert _bj_load_state("bj:stand:")[0] == "stale"
