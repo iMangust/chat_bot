@@ -331,6 +331,15 @@ async def use_item(cb: CallbackQuery, session: AsyncSession) -> None:
 
     svc = TamagotchiService(session)
     buff_note = ""
+    # Страж состояний: спящему/гуляющему нельзя использовать вещи из
+    # инвентаря (еда, лекарства, игрушки). Единый отказ + точечная подсказка.
+    use_action = {"food": "feed", "drink": "feed",
+                  "medicine": "heal", "toy": "play"}.get(item.type or "")
+    if use_action:
+        deny = svc.state_deny(pet, use_action)
+        if deny:
+            hint = svc.sleeping_hint(use_action) if pet.is_sleeping else None
+            return await cb.answer(hint or deny, show_alert=True)
     if item.type == "medicine" and svc.on_walk(pet):
         return await cb.answer(t("pet.walk_deny_medicine", name=pet.name),
                                show_alert=True)

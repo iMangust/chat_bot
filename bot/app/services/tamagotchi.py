@@ -364,13 +364,81 @@ class TamagotchiService:
     def _gear_happy_flat(self, pet: Pet) -> float:
         return self.gear_bonuses(pet).get("happy_gain_flat", 0.0)
 
+    # Единая таблица запретов по состояниям. Ключ действия приходит от
+    # handlers/keyboards (feed, wash, play, sleep, train, walk, duel…);
+    # синонимы нормализуются в _state_action().
+    # Активные действия (то, что меняет статы/состояние питомца). Всё, что
+    # НЕ в этом списке — нейтральный просмотр (карточка, стиль, магазин,
+    # инвентарь, друзья, история): он доступен всегда и спящему, и гуляющему.
+    _ACTIVE_ACTIONS = frozenset({"feed", "wash", "sleep", "wake", "train",
+                                 "heal", "medicine", "toy", "item",
+                                 "game", "play", "duel", "walk", "end_walk",
+                                 "revive"})
+    # Сон = нет контакта: из активных действий доступно только пробуждение.
+    _SLEEP_ALLOW = frozenset({"wake"})
+    # На прогулке питомец вне дома: недоступны домашние процедуры, игры,
+    # арена и повторная прогулка; вернуть домой («end_walk») можно.
+    _WALK_DENY = _ACTIVE_ACTIONS - {"end_walk"}
+
+    @staticmethod
+    def _state_action(action: str) -> str:
+        """Нормализация ключа действия для текстов отказов."""
+        a = (action or "").strip().lower()
+        if a == "play":              # игра/игрушка — единый текст отказа
+            return "game"
+        if a == "heal":              # лечение = лекарство
+            return "medicine"
+        return a
+
+    def sleeping_hint(self, action: str) -> str | None:
+        """Точечная подсказка к отказу «питомец спит» (для handlers)."""
+        from app import i18n
+        key = f"pet.sleeping_deny_{self._state_action(action)}"
+        if key in i18n.STRINGS:
+            return t(key)
+        return None
+
+    def state_deny(self, pet: Pet, action: str, now=None) -> str | None:
+        """Единый страж состояний «сон / прогулка».
+
+        Возвращает текст отказа или None, если действие разрешено.
+        Логика запретов:
+        • Спит (😴) — с питомцем вообще нет взаимодействия: нельзя кормить,
+          мыть, играть, тренироваться, лечить, гулять и драться. Разрешены
+          только пробуждение («wake», в т.ч. кнопка «💤 Спать» на экране
+          ухода переключается в разбудить) и нейтральные просмотры
+          (карточка, стиль, инвентарь, магазин, друзья, история).
+        • Гуляет (🚶) — питомец вне дома: недоступны домашние процедуры
+          (мытьё, сон, тренировки, лекарства, кормление, игрушки, игры),
+          повторная прогулка и арена; разрешено вернуть домой («end_walk»),
+          посмотреть карточку/историю и нейтральные экраны.
+        Действия, не перечисленные в таблице, считаются нейтральными
+        (просмотр карточки, стиля, истории и т.п.).
+        """
+        now = now or local_now()
+        a = self._state_action(action)
+        if pet.is_sleeping:
+            # Сон = полное отсутствие контакта: все активные действия
+            # запрещены единым текстом; точечные подсказки дают handlers
+            # (например «разбуди сначала» для кнопки «💤 Спать»).
+            # Нейтральные просмотры (не из _ACTIVE_ACTIONS) разрешены.
+            if a in self._ACTIVE_ACTIONS and a not in self._SLEEP_ALLOW:
+                return t("pet.sleeping_deny")
+            return None
+        if self.on_walk(pet, now):
+            if a in self._WALK_DENY:
+                return t(f"pet.walk_deny_{a}", name=pet.name)
+        return None
+
     async def feed(self, pet: Pet, effect: dict[str, float]) -> str:
         now = local_now()
         await self.apply_decay(pet, now)
         if self.is_critical(pet):
             return t(CRIT_MSG)
-        if pet.is_sleeping:
-            return t("pet.sleeping_deny_feed")
+        # Страж состояний: спящего не кормят, гуляющего дома нет.
+        deny = self.state_deny(pet, "feed", now)
+        if deny:
+            return deny
         ok, wait = self._check_cooldown(pet, "feed", 60, now)
         if not ok:
             return t("pet.cooldown_feed", sec=wait)
@@ -411,8 +479,10 @@ class TamagotchiService:
         await self.apply_decay(pet, now)
         if self.is_critical(pet):
             return t(CRIT_MSG)
-        if pet.is_sleeping:
-            return t("pet.sleeping_deny")
+        # Страж состояний: спящий не играет, гуляющего дома нет.
+        deny = self.state_deny(pet, "play", now)
+        if deny:
+            return deny
         if pet.energy < 15:
             return t("pet.too_tired_play")
         ok, wait = self._check_cooldown(pet, "game", 120, now)
@@ -460,8 +530,10 @@ class TamagotchiService:
         await self.apply_decay(pet, now)
         if self.is_critical(pet):
             return t(CRIT_MSG)
-        if self.on_walk(pet, now):
-            return t("pet.walk_deny_sleep", name=pet.name)
+        # Страж состояний: на прогулке питомец не уснёт дома.
+        deny = self.state_deny(pet, "sleep", now)
+        if deny:
+            return deny
         if pet.is_sleeping:
             return t("pet.already_sleeping")
         pet.is_sleeping = True
@@ -493,10 +565,10 @@ class TamagotchiService:
         await self.apply_decay(pet, now)
         if self.is_critical(pet):
             return t(CRIT_MSG)
-        if self.on_walk(pet, now):
-            return t("pet.walk_deny_wash", name=pet.name)
-        if pet.is_sleeping:
-            return t("pet.sleeping_deny")
+        # Страж состояний: во сне не купают, гуляющего негде мыть.
+        deny = self.state_deny(pet, "wash", now)
+        if deny:
+            return deny
         ok, wait = self._check_cooldown(pet, "wash", 300, now)
         if not ok:
             return f"⏳ Мыться можно раз в 5 минут (осталось {wait} сек)."
@@ -513,10 +585,10 @@ class TamagotchiService:
     async def heal(self, pet: Pet) -> str:
         now = local_now()
         await self.apply_decay(pet, now)
-        if self.on_walk(pet, now):
-            return t("pet.walk_deny_medicine", name=pet.name)
-        if pet.is_sleeping:
-            return t("pet.sleeping_deny_heal")
+        # Страж состояний: лекарство во сне не дают, на прогулке негде лечить.
+        deny = self.state_deny(pet, "heal", now)
+        if deny:
+            return deny
         if pet.sick_since is None and pet.health >= 70:
             return t("pet.not_sick")
         heal_mult = max(0.5, 1.0 + self.gear_bonuses(pet).get("heal_boost", 0.0))
@@ -548,10 +620,10 @@ class TamagotchiService:
         await self.apply_decay(pet, now)
         if self.is_critical(pet):
             return t(CRIT_MSG)
-        if self.on_walk(pet, now):
-            return t("pet.walk_deny_train", name=pet.name)
-        if pet.is_sleeping:
-            return t("pet.sleeping_deny_train")
+        # Страж состояний: спящий не тренируется, гуляющему негде тренироваться.
+        deny = self.state_deny(pet, "train", now)
+        if deny:
+            return deny
         if stat not in ("strength", "agility", "intellect"):
             return "❓ Неизвестная тренировка."
         if pet.energy < 20:
@@ -592,8 +664,10 @@ class TamagotchiService:
             left_min = int((back - now).total_seconds() // 60)
             return t("pet.walk_already", time=f"{back:%H:%M}",
                      minutes=f"{max(0, left_min)} мин")
-        if pet.is_sleeping:
-            return "😴 Сначала разбуди питомца."
+        # Страж состояний: спящий на прогулку не идёт.
+        deny = self.state_deny(pet, "walk", now)
+        if deny:
+            return deny
         pet.walk_until = now + timedelta(hours=hours)
         pet.walk_start_at = now
         pet.settings_extra = {**(pet.settings_extra or {}), "walk_hours": hours}

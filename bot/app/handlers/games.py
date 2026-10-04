@@ -46,6 +46,23 @@ class Games(StatesGroup):
 async def _get_pet(session: AsyncSession, tg_id: int):
     return await PetRepository(session).get_by_user(tg_id)
 
+
+def _state_deny_screen(svc: TamagotchiService, pet, action: str):
+    """Страж состояний для игровых экранов (FSM-игры).
+
+    Возвращает строку отказа, если действие запрещено (питомец спит или
+    гуляет), иначе None. Если срок прогулки уже истёк, «возвращение»
+    закрывается без награды (награду заберёт обычный путь `_after_action`
+    в хабе питомца) — чтобы игрок мог сразу начать игру.
+    """
+    from app.utils.local_time import now as local_now
+    now = local_now()
+    deny = svc.state_deny(pet, action, now)
+    if deny is None and getattr(pet, "walk_until", None) and not svc.on_walk(pet, now):
+        pet.walk_until = None
+        pet.walk_start_at = None
+    return deny
+
 @router.callback_query(F.data == "pet:games")
 async def games_screen(cb: CallbackQuery, state: FSMContext, session: AsyncSession) -> None:
     pet = await _get_pet(session, cb.from_user.id)
@@ -104,6 +121,11 @@ async def start_guess(cb: CallbackQuery, state: FSMContext, session: AsyncSessio
     if pet is None:
         return await cb.answer()
     svc = TamagotchiService(session)
+    # Страж состояний: спящий/гуляющий питомец не играет.
+    deny = _state_deny_screen(svc, pet, "game")
+    if deny:
+        await state.clear()
+        return await cb.answer(deny, show_alert=True)
     secret, (lo, hi) = svc.guess_range(pet)
     await state.set_state(Games.guessing)
     await state.update_data(secret=secret, lo=lo, hi=hi)
@@ -189,6 +211,11 @@ async def start_rps(cb: CallbackQuery, state: FSMContext, session: AsyncSession)
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
         return await cb.answer()
+    # Страж состояний: спящий/гуляющий питомец не играет.
+    deny = _state_deny_screen(TamagotchiService(session), pet, "game")
+    if deny:
+        await state.clear()
+        return await cb.answer(deny, show_alert=True)
     await state.set_state(Games.rps)
     # Ход питомца ЖЕРЕБУЕТСЯ ЗАРАНЕЕ и хранится в FSM: игрок выбирает
     # вслепую («синхронное раскрытие»), а не получает ответ постфактум.
@@ -297,6 +324,11 @@ async def start_blackjack(cb: CallbackQuery, state: FSMContext, session: AsyncSe
     pet = await _get_pet(session, cb.from_user.id)
     if pet is None:
         return await cb.answer()
+    # Страж состояний: спящий/гуляющий питомец не играет.
+    deny = _state_deny_screen(TamagotchiService(session), pet, "game")
+    if deny:
+        await state.clear()
+        return await cb.answer(deny, show_alert=True)
     rng = random.Random()
     deck = BJ_DECK[:]
     rng.shuffle(deck)

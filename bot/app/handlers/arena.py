@@ -51,6 +51,9 @@ async def arena_fight(cb: CallbackQuery, session: AsyncSession) -> None:
                 msg = "😤 Лимит боёв на сегодня исчерпан — приходи завтра!"
             elif reason == "cooldown":
                 msg = f"⏳ Питомец отдыхает. Следующий бой через {result.get('sec', 0)} сек."
+            elif reason == "state":
+                await cb.answer(result.get("msg", ""), show_alert=True)
+                return
             else:
                 msg = "🔍 Равных соперников не нашлось — попробуй позже."
             await cb.answer(msg, show_alert=True)

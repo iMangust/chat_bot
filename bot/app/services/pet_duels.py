@@ -77,6 +77,11 @@ def duel_cooldown_left(pet: Pet, now=None) -> int:
 
 async def fight(session: AsyncSession, pet: Pet) -> dict:
     now = local_now()
+    # Страж состояний: спящий/гуляющий питомец на арену не выходит.
+    from app.services.tamagotchi import TamagotchiService
+    deny = TamagotchiService(session).state_deny(pet, "duel", now)
+    if deny:
+        return {"ok": False, "reason": "state", "msg": deny}
     wk = week_key(now)
     my = await get_or_create_row(session, pet.id, wk)
     extra = pet.settings_extra or {}

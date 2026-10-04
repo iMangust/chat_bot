@@ -205,7 +205,11 @@ PET_PAGES: list[tuple[str, list[tuple[str, str]]]] = [
 def pet_page_count() -> int:
     return len(PET_PAGES)
 
-WALK_BLOCKED_CB = {"pet:wash", "pet:sleep", "pet:train"}
+WALK_BLOCKED_CB = {"pet:wash", "pet:sleep", "pet:train",
+                  # На прогулке питомец вне дома — недоступны и действия
+                  # других вкладок: кормёжка, игры, арена. Прогулка нельзя
+                  # начать повторно («🏠 Вернуть с прогулки» её заменяет).
+                  "pet:feed", "pet:play", "pet:games", "arena:open", "pet:walk"}
 
 def pet_hub(page: int = 0, critical: bool = False,
             sleeping: bool = False, walking: bool = False) -> InlineKeyboardMarkup:
@@ -216,6 +220,9 @@ def pet_hub(page: int = 0, critical: bool = False,
         actions = [(("⏰ Разбудить", "pet:wake") if lbl == "💤 Спать" else (lbl, cb))
                    for lbl, cb in actions]
     if walking:
+        # «Где питомец?» узнаётся по подписи карточки; активные кнопки
+        # скрыты на ВСЕХ вкладках — с гуляющим питомцем нет взаимодействия,
+        # кроме возвращения домой.
         actions = [(("🏠 Вернуть с прогулки", "pet:end_walk")
                     if cb == "pet:walk" else (lbl, cb))
                    for lbl, cb in actions
