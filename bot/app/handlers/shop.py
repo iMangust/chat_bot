@@ -288,10 +288,14 @@ async def inventory_screen(cb: CallbackQuery, session: AsyncSession) -> None:
         page = int(cb.data.split(":")[2]) if cb.data.startswith("inv:page:") else 0
     except (IndexError, ValueError):
         page = 0
+    # Кнопка предмета — короткая подпись «🍞 Хлеб x1»: на мобильных экранах
+    # длинный «Использовать …» обрезался и было непонятно, что внутри; теперь
+    # количество всегда видно. Само использование — через всплывающее окно
+    # подтверждения («use_ok:…»), см. use_confirm_screen.
     content_buttons = []
     for inv, item in rows:
         content_buttons.append(InlineKeyboardButton(
-            text=f"🎯 Использовать {item.icon} {html.escape(item.name)} ×{inv.quantity}",
+            text=f"{item.icon} {html.escape(item.name)} x{inv.quantity}",
             callback_data=f"use:{item.id}"))
     all_pages = paged_pages(content_buttons)
     total_pages = len(all_pages)
@@ -310,7 +314,62 @@ async def inventory_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     await cb.answer()
 
 @router.callback_query(F.data.startswith("use:"))
+async def use_confirm_screen(cb: CallbackQuery, session: AsyncSession) -> None:
+    """Всплывающее окно подтверждения использования предмета из инвентаря.
+
+    Тап по «🍞 Хлеб x1» ничего не тратит: показывается экран-подтверждение
+    с описанием предмета и его эффекта, кнопками «✅ Использовать» (use_ok)
+    и «⬅️ Назад» (возврат в инвентарь). Реальное применение — в use_item.
+    """
+    try:
+        item_id = int(cb.data.split(":")[1])
+    except (IndexError, ValueError):
+        return await cb.answer("Битая кнопка 😅", show_alert=True)
+    pets = PetRepository(session)
+    pet = await pets.get_by_user(cb.from_user.id)
+    if pet is None:
+        return await cb.answer()
+    inv = (await session.execute(
+        select(PetInventory).where(PetInventory.pet_id == pet.id,
+                                   PetInventory.item_id == item_id)
+    )).scalar_one_or_none()
+    if inv is None or inv.quantity <= 0:
+        return await cb.answer("Предмета нет в инвентаре", show_alert=True)
+    item = await session.get(Item, item_id)
+    if item is None:
+        return await cb.answer("Предмет не найден", show_alert=True)
+
+    effect_labels = {"hunger": "🍖 Сытость", "health": "❤️ Здоровье",
+                     "hygiene": "🫧 Гигиена", "happiness": "😀 Счастье",
+                     "strength": "💪 Сила", "intellect": "🧠 Интеллект",
+                     "energy": "⚡ Энергия"}
+    if item.effect:
+        eff = ", ".join(
+            f"{effect_labels.get(k, k)} {'+' if v >= 0 else ''}{v}"
+            for k, v in item.effect.items())
+    else:
+        eff = "—"
+    text = (
+        f"🎒 <b>Использовать предмет?</b>\n\n"
+        f"{item.icon} <b>{html.escape(item.name)}</b> ×{inv.quantity}\n"
+        f"Эффект: {eff}\n"
+    )
+    if item.description:
+        text += f"«{html.escape(item.description)}»\n"
+    text += (f"\nПрименить к питомцу <b>{html.escape(pet.name)}</b>? "
+             f"Один предмет будет потрачен.")
+
+    b = InlineKeyboardBuilder()
+    b.button(text="✅ Использовать", callback_data=f"use_ok:{item_id}")
+    back = _nav_back_cb(cb, "inv") or "pet:inv"
+    b.button(text="⬅️ Назад", callback_data=back)
+    await safe_edit_or_answer(cb.message, text, reply_markup=b.as_markup())
+    await cb.answer()
+
+
+@router.callback_query(F.data.startswith("use_ok:"))
 async def use_item(cb: CallbackQuery, session: AsyncSession) -> None:
+    """Реальное применение предмета — вызывается только после подтверждения."""
     try:
         item_id = int(cb.data.split(":")[1])
     except (IndexError, ValueError):
