@@ -1533,8 +1533,8 @@ class TamagotchiService:
     async def render_async(self, pet: Pet, owner_first_name: str = "") -> str:
         text = self.render(pet, owner_first_name)
         try:
-            from app.services.weather import kamchatka_weather, weather_hint_block
-            w = await kamchatka_weather()
+            from app.services.weather import local_weather, weather_hint_block
+            w = await local_weather()
             line = f"🌦️ Погода: {w['icon']} {w['name']} — {w['note']}"
             hint = weather_hint_block(pet=pet)
             if hint:

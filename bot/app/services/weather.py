@@ -499,7 +499,7 @@ async def _do_fetch() -> dict | None:
 
 # «Окно шторма»: негативный кэш ошибки сети — после неудачной попытки не
 # долбим API до истечения next_try_mono. Модульная функция: используется и
-# _ensure_fresh, и kamchatka_weather (см. там же — никогда не ждать сеть
+# _ensure_fresh, и local_weather (см. там же — никогда не ждать сеть
 # синхронно в callback-хендлере).
 def _storm_window_active(now_m: float | None = None) -> bool:
     if now_m is None:
@@ -1009,8 +1009,12 @@ async def weather_hint_block_fresh(*, walk: bool = False, pet=None,
                                   show_legend=show_legend)
     try:
         await asyncio.wait_for(_ensure_fresh(), timeout=4.0)
-    except (asyncio.TimeoutError, Exception):
-        pass
+    except asyncio.TimeoutError:
+        logger.debug("weather_hint_block_fresh: обновление кэша не успело за 4с — "
+                     "отдаём текущий блок")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("weather_hint_block_fresh: обновление кэша failed ({!r}) — "
+                       "отдаём текущий блок", exc)
     return weather_hint_block(walk=walk, pet=pet, show_legend=show_legend)
 
 def apply_weather_to_pet(pet, dt=None) -> str | None:
@@ -1088,7 +1092,12 @@ def weather_decay_mods() -> dict[str, float]:
         return {}
     return _decay_cache["mods"]
 
-async def kamchatka_weather() -> dict:
+async def local_weather() -> dict:
+    """Погода по настройке пользователя (TZ_OFFSET_HOURS), без блокировки на сеть.
+
+    Исторически называлась kamchatka_weather() — имя осталось как псевдоним
+    ниже для совместимости с внешними monkeypatch/тестами.
+    """
     dt = local_now()
     hol_line = None
     from app.utils.formatting import HOLIDAYS
@@ -1109,8 +1118,12 @@ async def kamchatka_weather() -> dict:
     if not fresh and _cache.get("info") is None and not _storm_window_active():
         try:
             await asyncio.wait_for(_ensure_fresh(), timeout=2.0)
-        except (asyncio.TimeoutError, Exception):
-            pass
+        except asyncio.TimeoutError:
+            logger.debug("weather: фоновое обновление кэша не успело за 2с — "
+                         "отдаём сезонную модель")
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("weather: обновление кэша failed ({!r}) — "
+                           "отдаём сезонную модель", exc)
     real = _cache["info"]
 
     season_key = season_for(dt)
@@ -1138,6 +1151,13 @@ async def kamchatka_weather() -> dict:
     if hol_line:
         info["holiday_icon"], info["holiday_note"] = hol_line
     return info
+
+
+# Совместимость: историческое имя (эпоха жёсткой привязки к Камчатке) —
+# тонкая обёртка, а не алиас, чтобы monkeypatch модуля local_weather
+# гарантированно перехватывался и этим именем.
+async def kamchatka_weather() -> dict:
+    return await local_weather()
 
 
 # ============================================================================

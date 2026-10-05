@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from loguru import logger
+
 from aiogram.utils.keyboard import InlineKeyboardBuilder as _RawIKB
 from aiogram.types import InlineKeyboardButton as _IKB
 from aiogram.types import InlineKeyboardMarkup as _IKM
@@ -68,8 +70,8 @@ class _ThemedInlineKeyboardButton(_IKB):
                         fields = getattr(v, "__pydantic_fields_set__", None)
                         if fields is not None:
                             fields.add("text")
-                    except Exception:  # noqa: BLE001 — не роняем рендер
-                        pass
+                    except Exception as exc:  # noqa: BLE001 — не роняем рендер
+                        logger.debug("theme button relabel skipped for {!r}: {!r}", cb, exc)
             return v
 
         return cs.with_info_after_validator_function(_retheme, schema)

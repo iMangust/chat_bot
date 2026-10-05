@@ -257,12 +257,12 @@ async def _weather_text() -> str:
     из-за чего пользователь видел «Погода временно недоступна (NameError)».
     """
     try:
-        from app.services.weather import kamchatka_weather, weather_hint_block_fresh
-        w = await kamchatka_weather()
+        from app.services.weather import local_weather, weather_hint_block_fresh
+        w = await local_weather()
         hint = await weather_hint_block_fresh(walk=True, show_legend=True)
     except Exception as exc:
         return _weather_error_text(exc)
-    text = f"🌦️ Погода на Камчатке: {w['icon']} {w['name']}\n{w['note']}"
+    text = f"🌦️ Погода рядом с тобой: {w['icon']} {w['name']}\n{w['note']}"
     if hint:
         text += "\n\n📋 Как это влияет на питомца:\n" + hint
     else:
