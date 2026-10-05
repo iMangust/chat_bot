@@ -208,28 +208,28 @@ PET_PAGES: list[tuple[str, list[tuple[str, str]]]] = [
 def pet_page_count() -> int:
     return len(PET_PAGES)
 
-WALK_BLOCKED_CB = {"pet:wash", "pet:sleep", "pet:train",
-                  # На прогулке питомец вне дома — недоступны и действия
-                  # других вкладок: кормёжка, игры, арена. Прогулка нельзя
-                  # начать повторно («🏠 Вернуть с прогулки» её заменяет).
-                  "pet:feed", "pet:play", "pet:games", "arena:open", "pet:walk"}
+# Кнопки-состояния НЕ прячутся и не переключаются: все действия видны
+# всегда, а запрет работает только в момент тапа — единый всплывающий
+# отказ (alert) от стража state_deny в handlers. Это гарантирует, что
+# «🚶 Прогулка» → «🏠 Вернуть с прогулки» доступны одновременно на всех
+# вкладках (раньше кнопка возврата терялась при перерисовке экрана).
+STATE_EXTRA_BUTTONS: list[tuple[str, str]] = [
+    ("⏰ Разбудить", "pet:wake"),
+    ("🏠 Вернуть с прогулки", "pet:end_walk"),
+]
+
+def _state_extra_row(sleeping: bool, walking: bool):
+    """Дополнительная строка кнопок выхода из состояний (если активны)."""
+    row = [InlineKeyboardButton(text=txt, callback_data=cb)
+           for (txt, cb), active in zip(STATE_EXTRA_BUTTONS, (sleeping, walking))
+           if active]
+    return row or None
 
 def pet_hub(page: int = 0, critical: bool = False,
             sleeping: bool = False, walking: bool = False) -> InlineKeyboardMarkup:
     n = len(PET_PAGES)
     page %= n
     title, actions = PET_PAGES[page]
-    if sleeping and page == 0:
-        actions = [(("⏰ Разбудить", "pet:wake") if lbl == "💤 Спать" else (lbl, cb))
-                   for lbl, cb in actions]
-    if walking:
-        # «Где питомец?» узнаётся по подписи карточки; активные кнопки
-        # скрыты на ВСЕХ вкладках — с гуляющим питомцем нет взаимодействия,
-        # кроме возвращения домой.
-        actions = [(("🏠 Вернуть с прогулки", "pet:end_walk")
-                    if cb == "pet:walk" else (lbl, cb))
-                   for lbl, cb in actions
-                   if cb not in WALK_BLOCKED_CB]
     if critical and page == 0:
         buttons = [
             InlineKeyboardButton(text="💖 Реанимация", callback_data="pet:revive"),
@@ -239,6 +239,12 @@ def pet_hub(page: int = 0, critical: bool = False,
         buttons = [InlineKeyboardButton(text=t, callback_data=cb) for t, cb in actions]
     buttons.append(InlineKeyboardButton(text="📜 История питомцев", callback_data="pet:history"))
     kb_rows = _two_per_row(buttons)
+    # Кнопки выхода из состояний — отдельной строкой, на ЛЮБОЙ вкладке,
+    # когда состояние активно. Ничего не прячем: остальные действия
+    # остаются видимыми, а отказ при тапе даёт единый всплывающий alert.
+    extra = _state_extra_row(sleeping, walking)
+    if extra:
+        kb_rows.append(extra)
     kb_rows.append(_page_nav("pet", page, n, title))
     # Хаб питомца — верхний уровень раздела: только «🏠 Меню».
     kb_rows.append([InlineKeyboardButton(text=HOME_LABEL, callback_data="menu:main")])

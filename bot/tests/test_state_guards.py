@@ -83,3 +83,34 @@ def test_play_blocked_on_walk():
         assert "🚶" in msg or "гуляет" in msg.lower()
         assert pet.happiness < 51.0  # без награды за игру — только естественный спад
     asyncio.run(run())
+
+
+# ── UI: кнопки состояний НЕ прячутся, а всегда видны отдельной строкой ──
+def test_hub_kb_shows_state_buttons_on_every_tab():
+    """Гуляющему питомцу кнопка «Вернуть с прогулки» видна на ВСЕХ вкладках,
+    и ни одна обычная кнопка не исчезает (запрет — только alert при тапе)."""
+    from app.handlers.tamagotchi import _hub_kb
+    from app.keyboards.inline import PET_PAGES
+    svc = TamagotchiService(None)
+    pet = _mk_pet(walk_until=local_now() + timedelta(hours=2),
+                  walk_start_at=local_now())
+    assert svc.on_walk(pet)
+    for page in range(len(PET_PAGES)):
+        kb = _hub_kb(svc, pet, chat_id=1, page=page)
+        rows = kb.model_dump()['inline_keyboard']
+        data = [b.get('callback_data') for r in rows for b in r if b.get('callback_data')]
+        texts = [b['text'] for r in rows for b in r]
+        assert 'pet:end_walk' in data, f"вкладка {page}: пропала кнопка возврата!"
+        # ничего не прячем: все кнопки вкладки на месте
+        for lbl, cb in PET_PAGES[page][1]:
+            assert cb in data, f"вкладка {page}: спрятана кнопка {lbl}"
+    # спящий: «Разбудить» виден, обычные кнопки тоже
+    pet2 = _mk_pet(is_sleeping=True)
+    kb = _hub_kb(svc, pet2, chat_id=1, page=0)
+    data = [b.get('callback_data') for r in kb.model_dump()['inline_keyboard'] for b in r]
+    assert 'pet:wake' in data and 'pet:feed' in data
+    # без состояний — лишних строк нет
+    pet3 = _mk_pet()
+    kb = _hub_kb(svc, pet3, chat_id=1, page=0)
+    data = [b.get('callback_data') for r in kb.model_dump()['inline_keyboard'] for b in r]
+    assert 'pet:wake' not in data and 'pet:end_walk' not in data
