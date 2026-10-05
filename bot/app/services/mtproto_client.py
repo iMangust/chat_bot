@@ -350,6 +350,19 @@ def _resolve_numeric_target(chat_id: int | str) -> Any:
         _inner_id(s)
     except ValueError:
         return chat_id
+    # Положительный id канала из MTProto-линейки (без префикса -100, напр.
+    # 1004335857237 или внутренний 4335857237) — приводим к канонической
+    # Bot API форме "-100...". Иначе resolve_channel_entity трактует его как
+    # inner-id и GetChannels получает битый peer → "Invalid channel object"
+    # / ChannelInvalidError, даже когда аккаунт является создателем канала.
+    if s.isdigit():
+        # доводим до "-100..." (или зеркалим знак уже канального id) — иначе
+        # resolve_channel_entity трактует число как inner-id и GetChannels
+        # получает положительный PeerChannel → ChannelInvalidError
+        from app.services.access import numeric_chat_id
+
+        n = numeric_chat_id(s)
+        return str(n) if n is not None else s
     return f"-100{s}" if s.startswith("-") and not s.startswith("-100") else s
 
 

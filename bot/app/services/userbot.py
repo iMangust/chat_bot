@@ -42,9 +42,20 @@ async def start_userbot(bot) -> asyncio.Task | None:
         if msg.out or (msg.sender and getattr(msg.sender, "bot", False)):
             return
         from app.middlewares.gate import required_chats
-        tracked = {abs(int(c)) for c, _ in required_chats()} | {
-            abs(int(c)) for c, _ in __import__("app.services.access", fromlist=["_all_serviceable_chats"])._all_serviceable_chats()
-            if str(c).lstrip("-").isdigit()}
+        from app.services.access import numeric_chat_id
+
+        def _norm(c) -> int | None:
+            n = numeric_chat_id(c)
+            return int(n) if n is not None else None
+
+        # event.chat_id у Telethon для каналов приходит как -100... (Bot API
+        # совместимо); abs() здесь ломал сравнение, нормализуем к -100 форме.
+        tracked = {n for n in (_norm(c) for c, _ in required_chats()) if n is not None} | {
+            n for n in (
+                _norm(c) for c, _ in __import__(
+                    "app.services.access", fromlist=["_all_serviceable_chats"]
+                )._all_serviceable_chats()
+                if str(c).lstrip("-").isdigit()) if n is not None}
         try:
             chat_id = int(event.chat_id)
         except (TypeError, ValueError):

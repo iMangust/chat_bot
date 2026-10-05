@@ -122,8 +122,22 @@ async def _backfill_channel_post(chat_id: int, msg_id: int) -> int | None:
         return None
 
 def _tracked_ids() -> set[int]:
+    """Отслеживаемые чаты в канонической Bot API форме (-100...).
+
+    В настройках id могут быть записаны без знака (1004335857237) —
+    abs() превращал их в положительный peer, который Telethon GetChannels
+    отвергает с "Invalid channel object" / ChannelInvalidError. Нормализуем
+    через numeric_chat_id: знак -100 восстанавливается для каналов, а
+    обычные ЛС-id остаются отрицательными как есть.
+    """
+    from app.services.access import numeric_chat_id
+
     ids = get_settings().tracked_chat_ids
-    return {abs(int(i)) for i in ids} if ids else set()
+    out: set[int] = set()
+    for i in ids or []:
+        n = numeric_chat_id(i)
+        out.add(int(n) if n is not None else int(i))
+    return out
 
 def _chat_id_of(peer) -> int | None:
     try:
@@ -147,7 +161,7 @@ async def handle_message_reactions(update) -> None:
     if chat_id is None:
         return
     tracked = _tracked_ids()
-    if tracked and abs(chat_id) not in tracked:
+    if tracked and chat_id not in tracked:
         return
 
     current: set[tuple[int, str]] = set()
@@ -175,7 +189,7 @@ async def handle_bot_reaction(update) -> None:
     if chat_id is None:
         return
     tracked = _tracked_ids()
-    if tracked and abs(chat_id) not in tracked:
+    if tracked and chat_id not in tracked:
         return
     actor = _peer_uid(getattr(update, "actor", None))
     if actor is None:
