@@ -10,7 +10,7 @@ from loguru import logger
 
 from app.utils.formatting import WEATHER_SEASONS, season_for
 from app.utils.html_text import esc
-from app.utils.local_time import KAMCHATKA_TZ, now as local_now
+from app.utils.local_time import now as local_now, user_tz
 
 def _weather_geo() -> tuple[str, float, float]:
     """Город и координаты берутся из Settings (переменные WEATHER_* в .env),
@@ -1303,7 +1303,7 @@ def _day_rows(points: list[dict], days: int = 7) -> list[dict]:
         dt = _parse_hour_key(p.get("time") or "")
         if dt is None:
             continue
-        d = dt.astimezone(KAMCHATKA_TZ).date()
+        d = dt.astimezone(user_tz()).date()
         by_day.setdefault(d, []).append(p)
     today_ = local_now().date()
     rows: list[dict] = []
@@ -1380,7 +1380,7 @@ def render_today(w: dict, hours: list[dict]) -> str:
         lines += ["", "<b>⏰ Ближайшие часы</b>"]
         row: list[str] = []
         for dth, p in nxt:
-            loc = dth.astimezone(KAMCHATKA_TZ)
+            loc = dth.astimezone(user_tz())
             icon = _DAY_ICON.get(int(p.get("code") or 0), "🌡️")
             row.append(f"{loc:%H}:00 {icon}{_fmt_temp(p.get('temp'))}")
             if len(row) == 3:

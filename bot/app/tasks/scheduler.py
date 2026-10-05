@@ -20,7 +20,8 @@ from app.services.notifications import (build_daily_report, build_pet_sad_text,
 from app.services.pet_social import list_friends
 from app.services.tamagotchi import TamagotchiService, compute_mood
 from app.utils.redis import acquire_lock, release_lock
-from app.utils.local_time import KAMCHATKA_TZ, localize, now as local_now
+from app.utils.html_text import esc
+from app.utils.local_time import KAMCHATKA_TZ, localize, now as local_now, offset_hours, user_tz
 
 async def decay_all_pets(bot: Bot) -> None:
     if not await acquire_lock("decay", ttl_sec=60 * 25):
@@ -360,13 +361,23 @@ async def weather_updater(bot: Bot) -> None:
         logger.warning("weather updater failed: {}: {}", type(exc).__name__, exc)
 
 def build_scheduler(bot: Bot) -> AsyncIOScheduler:
-    # Планировщик живёт в КАМЧАТСКОЙ зоне: в расписании указываются привычные
-    # локальные часы (DAILY_REPORT_HOUR и т.п.), а не UTC.
+    # Планировщик живёт в ЛОКАЛЬНОЙ зоне пользователей (TZ_OFFSET_HOURS):
+    # в расписании указываются привычные локальные часы (DAILY_REPORT_HOUR и
+    # т.п.), а не UTC. Зона берётся из настроек, а не зашита камчатской.
     from zoneinfo import ZoneInfo
-    try:
-        tz = ZoneInfo("Asia/Kamchatka")
-    except Exception:
-        tz = KAMCHATKA_TZ
+    tz = None
+    if offset_hours() == 12:
+        try:
+            tz = ZoneInfo("Asia/Kamchatka")
+        except Exception:
+            tz = None
+    if tz is None:
+        try:
+            # APScheduler принимает datetime.timezone напрямую; строку «UTC+12»
+            # он бы пытался открыть как имя зоны tzdata и упал — поэтому объект.
+            tz = user_tz()
+        except Exception:
+            tz = KAMCHATKA_TZ
     sched = AsyncIOScheduler(timezone=tz)
     # job_defaults: coalesce+max_history — если несколько запусков пропускаются
     # (например, тяжёлый MTProto-скан заблокировал цикл событий на минуту),
@@ -374,7 +385,10 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
     # «Run time of job ... was missed by ...» в консоль. misfire_grace_time —
     # допустимое запаздывание, в пределах которого задача выполняется сразу
     # после разблокировки вместо пропуска.
-    sched.configure(job_defaults={"coalesce": True, "max_instances": 1,
+    # ВНИМАНИЕ: _configure() внутри sched.configure() перезаписывает timezone
+    # значением из конфига (по умолчанию — локальная зона хоста), молча
+    # сбрасывая зону из конструктора. Поэтому зону передаём явно и здесь.
+    sched.configure(timezone=tz, job_defaults={"coalesce": True, "max_instances": 1,
                                   "misfire_grace_time": 300})
     sched.add_job(decay_all_pets, "interval", minutes=30, args=[bot],
                   max_instances=1, coalesce=True, id="decay")

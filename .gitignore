@@ -1,16 +1,8 @@
-# Python compiled files
 __pycache__/
 *.pyc
-
-# Environments & secrets
+*.pyo
 .env
-*.env.local
-
-# Editor/IDE files
-.vscode/
-.idea/
-
-# Local runtime artifacts
-bot/data/
-logs/
-*.log
+*.sqlite3
+*.db
+venv/
+.venv/

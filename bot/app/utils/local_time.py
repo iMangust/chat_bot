@@ -2,12 +2,23 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta, timezone
 
-KAMCHATKA_TZ = timezone(timedelta(hours=12), name="MSK+9 (Камчатка)")
+
+def user_tz() -> timezone:
+    """Фиксированная зона пользователей из настроек (TZ_OFFSET_HOURS от UTC).
+
+    По умолчанию — Камчатка (UTC+12), но зона больше не зашитая: при изменении
+    TZ_OFFSET_HOURS вся временная логика (хранилище, планировщик, дни стриков)
+    следует за настройкой. KAMCHATKA_TZ оставлен как псевдоним для совместимости.
+    """
+    return timezone(timedelta(hours=offset_hours()), name=f"UTC{offset_hours():+d}")
+
+
+KAMCHATKA_TZ = timezone(timedelta(hours=12), name="MSK+9 (Камчатка)")  # псевдоним/фолбэк
 
 
 def now() -> datetime:
-    """Текущий момент в камчатском времени (UTC+12, без летнего перехода)."""
-    return datetime.now(KAMCHATKA_TZ)
+    """Текущий момент в локальном времени пользователей (TZ_OFFSET_HOURS)."""
+    return datetime.now(user_tz())
 
 
 def utc_now() -> datetime:
@@ -20,45 +31,46 @@ def today() -> date:
 
 
 def localize(dt: datetime) -> datetime:
-    """Перевод момента в камчатское отображение.
+    """Перевод момента в локальное отображение (TZ_OFFSET_HOURS).
 
     Aware-значения переводятся штатно. Naive-метки из БД — это текущее
-    хранилище (локальное камчатское время): возвращаем как есть. Эвристика
+    хранилище (локальное время пользователей): возвращаем как есть. Эвристика
     совместимости осталась только для периода UTC-хранения (промежуточные
     сборки писали created_at в UTC): если naive-момент выглядит как
-    «будущее» для Камчатки (например, UTC-полдень при локальных 03:00),
-    считаем его UTC и сдвигаем на +12 ч.
+    «будущее» для локали (например, UTC-полдень при локальных 03:00),
+    считаем его UTC и сдвигаем на +offset часов.
     """
+    tz = user_tz()
     if dt.tzinfo is not None:
-        return dt.astimezone(KAMCHATKA_TZ)
+        return dt.astimezone(tz)
     local_naive = now().replace(tzinfo=None)
     if dt > local_naive + timedelta(hours=6):
-        # явное «будущее» для Камчатки → метка эпохи UTC-хранения
-        return (dt + timedelta(hours=12)).replace(tzinfo=KAMCHATKA_TZ)
-    return dt.replace(tzinfo=KAMCHATKA_TZ)
+        # явное «будущее» для локали → метка эпохи UTC-хранения
+        return (dt + timedelta(hours=offset_hours())).replace(tzinfo=tz)
+    return dt.replace(tzinfo=tz)
 
 
 def as_utc(dt: datetime) -> datetime:
-    """Момент в UTC. Naive-значения считаются камчатскими (см. localize)."""
+    """Момент в UTC. Naive-значения считаются локальными (см. localize)."""
     return localize(dt).astimezone(timezone.utc)
 
 
 def db_bound(dt: datetime) -> datetime:
     """Граница для SQL-сравнений с колонками created_at/last_seen.
 
-    Колонки хранят локальное (камчатское) время (см. models.utcnow), поэтому
-    aware-границы приводим к Камчатке и снимаем зону; naive считаются уже
-    локальными — возвращаем как есть.
+    Колонки хранят локальное время пользователей (TZ_OFFSET_HOURS, см.
+    models.utcnow), поэтому aware-границы приводим к локали и снимаем зону;
+    naive считаются уже локальными — возвращаем как есть.
     """
     if dt.tzinfo is not None:
-        dt = dt.astimezone(KAMCHATKA_TZ)
+        dt = dt.astimezone(user_tz())
     return dt.replace(tzinfo=None)
 
 
 def from_iso(value: str | None) -> datetime | None:
-    """Разбор ISO-метки, приводимый к камчатской зоне.
+    """Разбор ISO-метки, приводимый к локальной зоне пользователей.
 
-    Метку без зоны считаем камчатской (так писалось до унификации), чтобы
+    Метку без зоны считаем локальной (так писалось до унификации), чтобы
     сравнения с aware-«сейчас» не давали сдвига на tz_offset часов.
     """
     if not value:
