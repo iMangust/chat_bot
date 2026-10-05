@@ -1,18 +1,22 @@
-# Python bytecode and cache
+# Python compiled files
 __pycache__/
-*.pyc
+*.py[cod]
 
-# Packaging artifacts
-*.egg-info/
+# Packaging / build artifacts
 build/
 dist/
+*.egg-info/
 
 # Coverage reports
 .coverage
 .coverage.*
+coverage/
 htmlcov/
 coverage.xml
 
 # Local env & test artifacts
 .env
 .env.local
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

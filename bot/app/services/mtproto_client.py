@@ -461,22 +461,44 @@ async def resolve_channel_entity(target: str | int) -> Any:
         if ent is not None:
             return ent
     if want_channel_inner is not None:
-        try:
-            from telethon.errors import ChannelPrivateError
-            from telethon.tl.functions.channels import (
-                GetChannelsRequest as _GetChannels,
-            )
-            from telethon.tl.types import InputChannel as _IC
+        # Fallback для каналов вне списка диалогов (аккаунт давно не активен —
+        # канал «выпадает» из dialogs). GetChannels с access_hash=0 работает
+        # только если TL-кэш Telethon уже знает хеш; иначе сервер отвечает
+        # CHANNEL_INVALID / "Invalid channel object". Тогда прогреваем кэш
+        # через get_input_entity по @username канала и повторяем попытку.
+        from telethon.errors import ChannelPrivateError
+        from telethon.tl.functions.channels import (
+            GetChannelsRequest as _GetChannels,
+        )
+        from telethon.tl.types import InputChannel as _IC
+
+        async def _try_getchannels() -> bool:
             resp = await client(_GetChannels(
                 [_IC(channel_id=want_channel_inner, access_hash=0)]))
             for ent in getattr(resp, "chats", []) or []:
                 if isinstance(ent, Channel) and int(ent.id) == want_channel_inner:
                     _DIALOGS_CACHE[("c", want_channel_inner)] = ent
+                    return True
+            return False
+
+        try:
+            if await _try_getchannels():
+                return _DIALOGS_CACHE[("c", want_channel_inner)]
         except ChannelPrivateError as err:
             raise RuntimeError(f"Чат {target}: аккаунт не имеет доступа "
                                "(приватный канал?)") from err
         except Exception as exc:
             logger.debug(f"MTProto: GetChannels fallback for {target} failed: {exc}")
+        uname = get_settings().channel_username
+        if uname:
+            try:
+                await client.get_input_entity(str(uname).lstrip("@"))
+                if await _try_getchannels():
+                    return _DIALOGS_CACHE[("c", want_channel_inner)]
+            except Exception as exc:
+                logger.debug(
+                    f"MTProto: GetChannels retry after entity warm-up "
+                    f"({uname}) for {target} failed: {type(exc).__name__}")
         ent = _DIALOGS_CACHE.get(("c", want_channel_inner))
         if ent is not None:
             return ent

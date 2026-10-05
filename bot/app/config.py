@@ -7,6 +7,7 @@ from pathlib import Path
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings.sources import EnvSettingsSource
 
 __version__ = "1.0.1"
 
@@ -126,6 +127,29 @@ def _alias_short_mtproto_keys() -> None:
 
 _alias_short_mtproto_keys()
 
+
+class EnvListSafeSource(EnvSettingsSource):
+    """Списки id из os.environ (TRACKED_CHAT_IDS/ADMIN_IDS) могут быть в CSV
+    формате "a,b" — штатный источник парсит сложные поля строго как JSON и
+    падает с SettingsError. Нормализуем через _normalize_int_list (поддержаны
+    оба формата).
+
+    Это же чинит hot-apply настроек из панели: write_env() пишет новые значения
+    в .env И в os.environ, а кэшированный get_settings() после cache_clear()
+    перечитывает конфигурацию именно отсюда — раньше CSV из os.environ ронял
+    перезагрузку конфига, и новые списки чатов применялись только после
+    рестарта процесса.
+    """
+
+    _LIST_KEYS = {"tracked_chat_ids", "admin_ids"}
+
+    def prepare_field_value(self, field_name, field, value, value_is_complex):
+        if field_name in self._LIST_KEYS and isinstance(value, str):
+            return _normalize_int_list(_strip_inline_comment(value))
+        return super().prepare_field_value(
+            field_name, field, value, value_is_complex)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=_env_files(), env_file_encoding="utf-8-sig", extra="ignore")
@@ -143,7 +167,8 @@ class Settings(BaseSettings):
                         continue
                 out[k] = v
             return out
-        return (init_settings, env_settings, sanitized_dotenv,
+        safe_env = EnvListSafeSource(settings_cls)
+        return (init_settings, safe_env, sanitized_dotenv,
                 file_secret_settings)
 
     bot_token: str = ""
@@ -300,6 +325,15 @@ def get_settings() -> Settings:
     # ещё нет в списке отслеживаемых — добавляем автоматически, чтобы учёт
     # статистики/реакций работал без ручной синхронизации двух переменных.
     if s.chat_discussion_group is not None:
+        merged = list(s.tracked_chat_ids or [])
+        if int(s.chat_discussion_group) not in [int(x) for x in merged]:
+            merged.append(int(s.chat_discussion_group))
+            object.__setattr__(s, "tracked_chat_ids", merged)
+    # PANEL-настройки (списки id) пишутся в .env и os.environ; перечитка
+    # через EnvListSafeSource уже обработана выше. Здесь синхронизируем
+    # CHAT_DISCUSSION_GROUP поверх значения из os.environ (см. комментарий
+    # над предыдущим блоком — merge нужен и для hot-apply тоже).
+    if s.chat_discussion_group is not None and os.environ.get("TRACKED_CHAT_IDS"):
         merged = list(s.tracked_chat_ids or [])
         if int(s.chat_discussion_group) not in [int(x) for x in merged]:
             merged.append(int(s.chat_discussion_group))
