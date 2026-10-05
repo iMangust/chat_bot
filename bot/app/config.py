@@ -206,6 +206,9 @@ class Settings(BaseSettings):
     dashboard_token: str = ""
 
     tz_offset_hours: int = 0  # смещение локального времени от UTC (0 = UTC)
+    # Именованная IANA-зона (например Europe/Berlin): включает честный DST
+    # вместо жёсткого смещения. Пусто — работать по TZ_OFFSET_HOURS.
+    tz_name: str = ""
     # Часы отправки в ЛОКАЛЬНОМ времени (TZ_OFFSET_HOURS), а не в UTC:
     # раньше назывались *_utc, но планировщик работал в MSK+9 — путаница.
     daily_report_hour: int = 21

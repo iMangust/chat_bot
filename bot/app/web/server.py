@@ -353,7 +353,7 @@ HOT_KEYS = {
     "PET_WARNING_MIN_HOURS", "STREAK_WARN_THRESHOLD_SEC",
     "INVITE_REWARD_COINS", "DAILY_REPORT_HOUR_UTC",
     "MORNING_REMINDER_HOUR_UTC", "EVENING_REMINDER_HOUR_UTC",
-    "TZ_OFFSET_HOURS", "CHANNEL_SCAN_MINUTES", "MIN_MESSAGE_LENGTH",
+    "TZ_OFFSET_HOURS", "TZ_NAME", "CHANNEL_SCAN_MINUTES", "MIN_MESSAGE_LENGTH",
     "ACTIVITY_COOLDOWN_SEC", "REACTIONS_CAP_PER_DAY", "XP_PER_MESSAGE",
     "COINS_PER_MESSAGE_CAP", "XP_LEVEL_BASE", "MTPROTO_SYNC_MINUTES",
     "MTPROTO_AUTOSYNC",
@@ -379,6 +379,11 @@ async def save_settings(body: SettingsPatch) -> dict:
     except OSError as exc:
         raise HTTPException(500, f"не удалось записать .env: {exc}") from exc
     get_settings.cache_clear()
+    try:  # TZ_* применяются без рестарта (кэш зоны в local_time)
+        from app.utils.local_time import reset_tz_cache
+        reset_tz_cache()
+    except Exception as exc:
+        logger.warning("tz cache reset after config save failed: %s", exc)
     try:  # WEATHER_* применяются без рестарта
         from app.services import weather as _w
         _w.refresh_geo()

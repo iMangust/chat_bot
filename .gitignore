@@ -2,11 +2,17 @@
 __pycache__/
 *.pyc
 
+# Packaging artifacts
+*.egg-info/
+build/
+dist/
+
 # Coverage reports
 .coverage
-# Local env & test artifacts
-.env
-htmlcov/
 .coverage.*
+htmlcov/
 coverage.xml
 
+# Local env & test artifacts
+.env
+.env.local
