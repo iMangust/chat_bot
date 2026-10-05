@@ -72,8 +72,8 @@ def openweather_key() -> str:
             tok = str(extra.get(key, "") or "").strip()
             if tok:
                 return tok
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("weather: settings key lookup failed: {}", exc)
     return ""
 
 def weather_source_line() -> str:
@@ -952,8 +952,8 @@ def weather_effects_lines(eff: dict | None = None, *, walk: bool = False,
         try:
             stamp = _effects_window_stamp(pet, window_end)
             lines.append(f"   ⏳ Следующий тик погоды — {stamp}.")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("weather: next-tick stamp failed: {}", exc)
 
     if walk:
         wm = WALK_MODS.get(wtype) or {}
@@ -1051,8 +1051,9 @@ def apply_weather_to_pet(pet, dt=None) -> str | None:
         from app.services.tamagotchi import TamagotchiService
         g = TamagotchiService(None).gear_bonuses(pet)
         chance = max(0.0, chance * (1.0 + g.get("sick_chance_pct", 0.0)))
-    except Exception:
-        pass
+    except Exception as exc:
+        # болезнь считается без модификатора экипировки — но поломку видно в логе
+        logger.debug("weather tick: gear sick-chance modifier failed: {}", exc)
     if chance and getattr(pet, "sick_since", None) is None and _random.random() < chance:
         pet.sick_since = dt
         pet.health = max(5, pet.health - 10)

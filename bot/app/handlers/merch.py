@@ -558,8 +558,11 @@ async def merch_admin_action(cb: CallbackQuery, session) -> None:  # noqa: C901
                 f"{html.escape(v.size or '—')} · {_color_label(v.color)} — {v.price_rub:,} ₽\n\n"
                 "Спасибо, что ты с нами! Мерч уже едет к тебе 🚀",
                 parse_mode="HTML")
-        except Exception:
-            pass
+        except Exception as exc:
+            # покупатель может заблокировать бота — продажа от этого не отменяется,
+            # но недоставленное уведомление должно быть видно в логе
+            logger.info("merch notify buyer {} (sale confirm) failed: {}",
+                        buyer, type(exc).__name__)
         back_kb = InlineKeyboardBuilder()
         back_kb._vb("📋 К списку броней", "merch:myres")
         back_kb._vb("🏠 Управление мерчем", "madmin:home")
@@ -581,8 +584,9 @@ async def merch_admin_action(cb: CallbackQuery, session) -> None:  # noqa: C901
                 f"❌ Резерв отменён по позиции «{html.escape(pname)}».\n"
                 "Если хочешь — забронируй заново в разделе «🧢 Наш мерч» 🧢",
                 parse_mode="HTML")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.info("merch notify buyer {} (reserve cancel) failed: {}",
+                        buyer, type(exc).__name__)
         back_kb = InlineKeyboardBuilder()
         back_kb._vb("📋 К списку броней", "merch:myres")
         back_kb._vb("🏠 Управление мерчем", "madmin:home")

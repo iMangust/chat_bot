@@ -45,8 +45,10 @@ class UiLogHandler:
         if cb is not None:
             try:
                 cb(line)
-            except Exception:
-                pass
+            except Exception as exc:
+                # колбэк GUI не должен ронять лог-поток, но и молча терять
+                # его поломку нельзя — пишем один раз в debug
+                logger.debug("ui log callback failed: {}", exc)
 
 ui_log_handler = UiLogHandler()
 
@@ -253,8 +255,8 @@ class BotRuntime:
         if self._scheduler is not None:
             try:
                 self._scheduler.shutdown(wait=False)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("scheduler shutdown failed: {}", exc)
             self._scheduler = None
         if self._polling_task is not None:
             self._polling_task.cancel()
@@ -279,13 +281,13 @@ class BotRuntime:
         try:
             await close_redis()
             await engine.dispose()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("partial cleanup (redis/engine) failed: {}", exc)
         if self.bot is not None:
             try:
                 await self.bot.session.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("bot session close failed: {}", exc)
             self.bot = None
         if self.dp is not None:
             _reset_router_state(self.dp)

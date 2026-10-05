@@ -419,8 +419,9 @@ async def _backfill_subscriber_chats_v202(engine) -> None:
                     WHERE chat_id IN ({placeholders})
                     GROUP BY from_user, chat_id"""), params)
             rows += list(res.fetchall())
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.info("backfill chats v2.0.2: reactions_log недоступны "
+                        "({}), пропускаем", type(exc).__name__)
         if not rows:
             return
         import json as _json

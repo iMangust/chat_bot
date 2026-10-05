@@ -217,7 +217,11 @@ async def _api_membership_verdict(bot, user_id: int):
 async def _api_confirms_member(bot, user_id: int) -> bool | None:
     try:
         verdict = await _api_membership_verdict(bot, user_id)
-    except Exception:
+    except Exception as exc:
+        # Bot API недоступен/ошибся — не считаем это «не подписчиком»,
+        # но и молча глотать нельзя (может ложно блокировать доступ)
+        logger.debug("gate: Bot API membership check failed for {}: {}",
+                     user_id, exc)
         return None
     if verdict is True:
         return True
@@ -523,7 +527,8 @@ async def _mtproto_and_scan_fallback(bot, user_id: int,
     try:
         from app.handlers.access import last_scan_stats as _lss
         seen, total = _lss()
-    except Exception:
+    except Exception as exc:
+        logger.debug("gate: last_scan_stats недоступен: {}", exc)
         seen = total = None
     gate_last_reason.clear()
     gate_last_reason.update({

@@ -127,8 +127,8 @@ async def _bot_api_confirmed_members(chat_id: int, uids: set[int]) -> set[int]:
             uname = (get_settings().channel_username or "").strip().lstrip("@")
             if uname and f"@{uname}" not in targets:
                 targets.append(f"@{uname}")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("MTProto sync: channel_username lookup failed: {}", exc)
         for uid in uids:
             confirmed = False
             chat_not_found = False
@@ -158,8 +158,8 @@ async def _bot_api_confirmed_members(chat_id: int, uids: set[int]) -> set[int]:
     finally:
         try:
             await bot.session.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("MTProto sync: bot session close failed: {}", exc)
     return out
 
 async def sync_subscribers(first_run: bool = False) -> dict:

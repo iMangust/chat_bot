@@ -385,8 +385,8 @@ async def get_chat_member_status(chat_id: int | str, user_id: int) -> str | None
             if ent is not None:
                 entity = ent
                 access_hash = getattr(ent, "access_hash", 0) or 0
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("MTProto: cached channel entity lookup failed: {}", exc)
         if entity is None:
             s = str(chat_id).strip()
             if s.startswith("-100") or s.isdigit():
@@ -479,8 +479,9 @@ async def resolve_channel_entity(target: str | int) -> Any:
         except ChannelPrivateError:
             raise RuntimeError(f"Чат {target}: аккаунт не имеет доступа "
                                "(приватный канал?)")
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug("MTProto: GetChannels fallback for {} failed: {}",
+                         target, exc)
         ent = _DIALOGS_CACHE.get(("c", want_channel_inner))
         if ent is not None:
             return ent

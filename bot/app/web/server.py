@@ -41,8 +41,8 @@ def _has_configured_panel_token() -> bool:
         sec = str(getattr(s, "webhook_secret_token", "") or "")
         if sec and sec != DEFAULT_WEBHOOK_SECRET:
             return True
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("config check for auth tokens failed: %s", exc)
     for key in ("DASHBOARD_TOKEN", "WEBHOOK_SECRET_TOKEN"):
         v = os.environ.get(key) or _env_value(key)
         if v and v != DEFAULT_WEBHOOK_SECRET:
@@ -163,8 +163,9 @@ def _resolve_bind(host_cli: str | None, port_cli: int | None) -> tuple[str, int]
             s = get_settings_cached()
             host = host or s.dashboard_host
             port_raw = port_raw or str(s.dashboard_port)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("settings unavailable for dashboard host/port "
+                           "(falling back to defaults): %s", exc)
     host = (host or "127.0.0.1").strip()
     try:
         port = int(port_raw or 8765)
@@ -376,8 +377,9 @@ async def save_settings(body: SettingsPatch) -> dict:
     try:  # WEATHER_* применяются без рестарта
         from app.services import weather as _w
         _w.refresh_geo()
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("weather geo refresh after config save failed "
+                       "(new WEATHER_* apply after restart): %s", exc)
     new = get_settings()
     changed_fields = [name for name in new.model_fields
                       if old is None or getattr(new, name) != getattr(old, name)]
@@ -423,8 +425,8 @@ def _open_browser(url: str) -> None:
     import webbrowser
     try:
         webbrowser.open(url)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("could not auto-open browser: %s", exc)
 
 async def amain(host: str | None, port: int | None, autostart: bool, open_browser: bool) -> int:
     host, port = _resolve_bind(host, port)

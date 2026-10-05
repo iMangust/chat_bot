@@ -123,8 +123,8 @@ def _api_tokens() -> set[str]:
             v = _env_value(key)
             if v:
                 env_vals[key] = v
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("admin API: .env token lookup failed: %s", exc)
     try:
         from app.config import get_settings
         settings = get_settings()
@@ -893,8 +893,8 @@ async def broadcast(body: BroadcastBody) -> dict:
     try:
         from app.console.runtime import runtime
         running = runtime.state == "running"
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("admin API: runtime state lookup failed: %s", exc)
     return {"ok": True, "queued": len(ids), "botRunning": running}
 
 
