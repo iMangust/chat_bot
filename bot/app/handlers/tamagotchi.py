@@ -22,9 +22,22 @@ from app.keyboards.inline import (
     pet_page_count,
     train_menu,
 )
+from app.services.pet_data import SPECIES_START_PRICE
 from app.services.tamagotchi import (
+    COOLDOWN_FEED_SEC,
+    COOLDOWN_PLAY_SEC,
+    COOLDOWN_TRAIN_SEC,
+    COOLDOWN_WASH_SEC,
+    DECAY_PER_HOUR,
+    HEAL_BASE_HEALTH,
+    LOW_STAT_SICK_RISK,
+    PLAY_ENERGY_MIN,
+    SLEEP_DEFAULT_HOURS,
     SPECIES_DATA,
     TamagotchiService,
+    TRAIN_ENERGY_MIN,
+    WALK_DEFAULT_HOURS,
+    WASH_BASE_HYGIENE,
     _aware,
     _species_key,
 )
@@ -102,14 +115,21 @@ def _collect_walk_result(svc: TamagotchiService, pet: Pet, session: AsyncSession
     text, coins, xp = svc.finish_walk_event(pet)
     return text, coins, xp
 
+COOLDOWN_WASH_MIN = COOLDOWN_WASH_SEC // 60
+COOLDOWN_TRAIN_MIN = COOLDOWN_TRAIN_SEC // 60
+SLEEP_REGEN_BASE = int(DECAY_PER_HOUR["energy_sleep"])
+
 HELP_TEXT = (
     "🐾 <b>Как устроен бот: полный гид</b>\n\n"
 
     "<b>📌 Основные команды</b>\n"
     "/start — главное меню (здесь все разделы)\n"
     "/pet — карточка питомца с поведением, статами и погодными эффектами\n"
+    "/manual — 📖 гид по уходу: живые цифры из настроек баланса,\n"
+"  разбор каждого вида, показателей и мини-игр\n"
     "/weather — живая погода Камчатки + разбор плюсов/минусов для питомца\n"
     "/stats — твоя статистика: уровень, XP, монеты, стрик\n"
+    "/balance — 🔎 разбор баланса: текущие настройки экономики\n"
     "/ach — 🏆 достижения (листать кнопками ◀️/▶️)\n"
     "/top — 🏅 топы чатов по активности\n"
     "/arena — ⚔️ арена питомцев (дуэли)\n"
@@ -129,18 +149,22 @@ HELP_TEXT = (
     "<b>🐱 Питомец: базовые механики</b>\n"
     f"Пять статов: {_STAT_LEGEND}\n"
     "Они падают со временем (зимой быстрее, летом веселее). Если сытость или\n"
-    "гигиена уйдут ниже 20 — питомец болеет; при критических значениях help\n"
-    "падает, а ты получишь напоминание. Лечится предметом «💊 Лекарство» из магазина.\n\n"
+    f"гигиена уйдут ниже {LOW_STAT_SICK_RISK} — питомец может заболеть 🤒;\n"
+    "при критических значениях help\n"
+    "падает, а ты получишь напоминание. Лечится «💊 Лечить» на странице ухода\n"
+    f"(аптечка из инвентаря, +{HEAL_BASE_HEALTH} ❤️). Больному питомцу —\n"
+    "постельный режим: он не играет, не тренируется и не гуляет, пока его не\n"
+    "вылечишь. Кормить, мыть и давать спать можно и нужно.\n\n"
     "<b>Действия в хабе питомца (кнопки листаются ◀️/▶️):</b>\n"
-    "• 🍎 Покормить — бесплатно (хлеб) или едой из инвентаря; кулдаун 60 сек;\n"
-    "• 🛁 Помыть — восстанавливает гигиену;\n"
-    "• 🎮 Игры — мини-игры (камни-ножницы-бумага, угадайка, «21»): +😊 Счастье, −⚡ Энергия;\n"
-    "• 🏋️ Тренировки — качают 💪 силу, 🐾 ловкость или 🧠 интеллект (нужна энергия);\n"
-    "• 🌳 Прогулка — уходит на 2 часа, вернётся с монетами, XP и случайным событием;\n"
-    "• 😴 Сон — восстанавливает энергию (+8/час), разбудить можно досрочно.\n"
+    f"• 🍎 Покормить — бесплатно (хлеб) или едой из инвентаря; кулдаун {COOLDOWN_FEED_SEC} сек;\n"
+    f"• 🛁 Помыть — гигиена +{WASH_BASE_HYGIENE}, раз в {COOLDOWN_WASH_SEC // 60} мин;\n"
+    f"• 🎮 Игры — мини-игры (камни-ножницы-бумага, угадайка, «21»): +😊 Счастье, −⚡ Энергия (нужно ⚡≥{PLAY_ENERGY_MIN});\n"
+    f"• 🏋️ Тренировки — качают 💪 силу, 🏃 ловкость или 🧠 интеллект (нужно ⚡≥{TRAIN_ENERGY_MIN});\n"
+    f"• 🌳 Прогулка — уходит на {WALK_DEFAULT_HOURS} ч, вернётся с монетами, XP и случайным событием;\n"
+    f"• 😴 Сон — восстанавливает энергию (+{SLEEP_REGEN_BASE}/час по умолчанию {SLEEP_DEFAULT_HOURS} ч), разбудить можно досрочно.\n"
     "Питомец растёт: 🥚 яйцо → 👶 малыш → 🧑 подросток → 🐉 взрослый → 👑 легенда.\n"
     "Вид важен: 🐈 кот любит игры, 🐕 пёс — прогулки, 🦊 лиса приносит больше монет,\n"
-    "🦉 сова получает больше XP с тренировок, 🐉 дракон — универсал (500 🪙).\n\n"
+    f"🦉 сова получает больше XP с тренировок, 🐉 дракон — универсал ({SPECIES_START_PRICE['dragon']} 🪙).\n\n"
 
     "<b>🛒 Магазин и 🎒 инвентарь</b>\n"
     "Открывается из хаба питомца (страница «🎒 Вещи»). Там еда и энергетики,\n"
@@ -709,7 +733,7 @@ async def act_sleep(cb: CallbackQuery, session: AsyncSession) -> None:
     if pet.is_sleeping:
         result = await svc.wake(pet)
     else:
-        result = await svc.sleep(pet, hours=8)
+        result = await svc.sleep(pet, hours=SLEEP_DEFAULT_HOURS)
     await PetRepository(session).log_action(pet.id, "sleep")
     await _after_action(cb, session, result, fx="wake" if pet_was_sleeping else "sleep")
 
@@ -797,7 +821,7 @@ async def act_walk(cb: CallbackQuery, session: AsyncSession) -> None:
         hint = svc.sleeping_hint("walk") if pet.is_sleeping else None
         return await _deny(cb, hint or deny)
     forecast = await walk_forecast_line()
-    result, walked = await svc.start_walk(pet, hours=2, with_result=True)
+    result, walked = await svc.start_walk(pet, hours=WALK_DEFAULT_HOURS, with_result=True)
     if walked:
         await PetRepository(session).log_action(pet.id, "walk")
         if forecast:

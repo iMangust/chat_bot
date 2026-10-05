@@ -58,7 +58,55 @@ DECAY_PER_HOUR = {
 # Награда за победу в игре (к happiness, до множителей) и штраф энергии.
 PLAY_WIN_HAPPY = 12.0
 PLAY_LOSE_HAPPY = 5.0
-FREE_ACTION_USES = 3
+
+# ── Константы ухода — ЕДИНЫЙ источник правды ──────────────────────────────
+# Значения механик, которые раньше были разбросаны хардкодом по телу
+# методов и текстам справки/помощи (из-за чего руководство расходилось с
+# кодом). Действия читают эти константы; тексты (pet_manual, HELP_TEXT,
+# i18n) — строят сообщения от них же. Изменил механику — поправь число
+# здесь, и все экраны подтянутся автоматически.
+COOLDOWN_FEED_SEC = 60      # перерыв между кормлениями
+COOLDOWN_WASH_SEC = 300     # мыться можно раз в 5 минут
+COOLDOWN_PLAY_SEC = 120     # «питомец запыхался» между играми
+COOLDOWN_TRAIN_SEC = 180    # перерыв между тренировками
+WASH_BASE_HYGIENE = 40      # 🫧 базовый прирост гигиены за мытьё (до экипировки)
+WASH_MOOD_COST = 3          # 😊 «не всякой купание в радость»: база −3 + реакция вида
+HEAL_BASE_HEALTH = 35       # ❤️ базовое лечение за 💊 (множитель — от экипировки)
+SICK_THRESHOLD = 50         # ниже этого здоровья питомец считается больным (mood «sick»)
+SICK_RECOVER_THRESHOLD = SICK_THRESHOLD + 10  # выше этого болезнь снимается лечением
+LOW_STAT_SICK_RISK = 20     # 🍎 или 🫧 ниже этого запускает риск-тик болезни ❤️
+PLAY_ENERGY_MIN = 15        # ⚡ минимум для игр («питомец слишком устал»)
+TRAIN_ENERGY_MIN = 20       # ⚡ минимум для тренировок
+HUNGER_GRUEL_THRESHOLD = 25  # 🍎 ниже этого питомец объявляет голод
+WALK_DEFAULT_HOURS = 2      # 🚶 длительность прогулки по умолчанию (UI сейчас фиксирует её)
+SLEEP_DEFAULT_HOURS = 8     # 😴 план сна по умолчанию (будильник, можно разбудить раньше)
+GUESS_RANGE_MAX = 20        # 🔢 верхняя граница «угадай число» (диапазон подсказки — guess_range)
+SICK_CONFIRM_CHANCE_MIN = 0.05  # минимальный шанс заболеть при тике низкого здоровья
+CRIT_BLOCK_NOTE = ("Блокирует обычный уход только критическое состояние "
+                   "(❤️=0 И один из статов на нуле) — тогда нужна 💖 реанимация.")
+
+
+def wash_hygiene_gain(svc: "TamagotchiService", pet) -> int:
+    """🫧 Реальный прирост гигиены за мытьё (для текстов и механики).
+
+    Формула идентична ветке начисления в TamagotchiService.wash() — оба
+    места читают WASH_BASE_HYGIENE, поэтому цифры в руководстве, i18n-
+    строках и фактического эффекта не могут разойтись.
+    """
+    return round(WASH_BASE_HYGIENE * max(
+        0.5, 1.0 + svc.gear_bonuses(pet).get("hygiene_wash_pct", 0.0)))
+
+
+def wash_mood_delta(svc: "TamagotchiService", pet) -> int:
+    """Изменение 😊 от мытья: −WASH_MOOD_COST + реакция вида + экипировка."""
+    return (-WASH_MOOD_COST + species_pref_delta(pet, "wash")
+            + svc._gear_happy_flat(pet))
+
+
+def heal_health_gain(svc: "TamagotchiService", pet) -> int:
+    """❤️ Реальный прирост здоровья за лечение (формула как в heal())."""
+    return round(HEAL_BASE_HEALTH * max(
+        0.5, 1.0 + svc.gear_bonuses(pet).get("heal_boost", 0.0)))
 
 
 def sleep_regen_per_hour(sp: dict | None = None) -> float:
@@ -177,10 +225,10 @@ def compute_stage(level: int) -> PetStage:
 def compute_mood(pet: Pet) -> str:
     if pet.is_sleeping:
         return "sleeping"
-    if pet.health < 50:
+    if pet.health < SICK_THRESHOLD:
         return "sick"
     avg = (pet.hunger + pet.happiness + pet.energy + pet.hygiene) / 4
-    if pet.hunger < 25:
+    if pet.hunger < HUNGER_GRUEL_THRESHOLD:
         return "hungry"
     if avg >= 80:
         return "great"
@@ -389,13 +437,14 @@ class TamagotchiService:
             pet.settings_extra = {**(pet.settings_extra or {}),
                                   "bored_penalty": now.isoformat()}
 
-        if pet.hunger < 20 or pet.hygiene < 20:
+        if pet.hunger < LOW_STAT_SICK_RISK or pet.hygiene < LOW_STAT_SICK_RISK:
             g = self.gear_bonuses(pet)
             hp_mult = max(0.1, 1.0 + g.get("health_decay_pct", 0.0))
             from app.services import balance
             pet.health = clamp(pet.health - balance.get_mult("health_decay") * hours * hp_mult)
-            if pet.health < 50 and pet.sick_since is None:
-                sick_chance = max(0.05, 1.0 + g.get("sick_chance_pct", 0.0))
+            if pet.health < SICK_THRESHOLD and pet.sick_since is None:
+                sick_chance = max(SICK_CONFIRM_CHANCE_MIN,
+                                  1.0 + g.get("sick_chance_pct", 0.0))
                 if random.random() <= sick_chance:
                     pet.sick_since = now
         elif pet.health < 100 and pet.sick_since is None:
@@ -513,11 +562,32 @@ class TamagotchiService:
             return t(key, name=pet.name)
         return t("pet.walk_deny", name=pet.name)
 
+    # 🤒 Больной питомец соблюдает постельный режим: как в жизни, игра,
+    # тренировка и прогулка только ослабят его — сначала лечение (💊 heal
+    # из инвентаря) и здоровый сон. Кормление, мытьё и сон остаются
+    # доступными: выздоравливающему нужны силы и чистота.
+    _SICK_DENY = frozenset({"play", "game", "train", "walk", "duel"})
+
+    def is_sick(self, pet: Pet) -> bool:
+        """Болен ли питомец (диагноз ставит apply_decay по порогу SICK_THRESHOLD)."""
+        return getattr(pet, "sick_since", None) is not None
+
+    def sick_deny(self, action: str) -> str:
+        """Текст отказа для больного питомца (по ключу темы/i18n)."""
+        from app import i18n
+        key = f"pet.sick_deny_{self._state_action(action)}"
+        if key in i18n.STRINGS:
+            return t(key)
+        return t("pet.sick_deny")
+
     def state_deny(self, pet: Pet, action: str, now=None) -> str | None:
-        """Единый страж состояний «сон / прогулка».
+        """Единый страж состояний «болезнь / сон / прогулка».
 
         Возвращает текст отказа или None, если действие разрешено.
         Логика запретов:
+        • Болен (🤒) — постельный режим: нельзя играть, тренироваться,
+          гулять и драться; нужно лечить (💊) и давать спать. Кормить,
+          мыть и укладывать спать можно.
         • Спит (😴) — с питомцем вообще нет взаимодействия: нельзя кормить,
           мыть, играть, тренироваться, лечить, гулять и драться. Разрешены
           только пробуждение («wake», в т.ч. кнопка «💤 Спать» на экране
@@ -532,6 +602,8 @@ class TamagotchiService:
         """
         now = now or local_now()
         a = self._state_action(action)
+        if self.is_sick(pet) and a in self._SICK_DENY:
+            return self.sick_deny(a)
         if pet.is_sleeping:
             # Сон = полное отсутствие контакта: все активные действия
             # запрещены единым текстом; точечные подсказки дают handlers
@@ -562,7 +634,7 @@ class TamagotchiService:
         deny = self.state_deny(pet, "feed", now)
         if deny:
             return _out(deny, False)
-        ok, wait = self._check_cooldown(pet, "feed", 60, now)
+        ok, wait = self._check_cooldown(pet, "feed", COOLDOWN_FEED_SEC, now)
         if not ok:
             return _out(t("pet.cooldown_feed", sec=wait), False)
         self._set_cooldown(pet, "feed", now)
@@ -611,9 +683,9 @@ class TamagotchiService:
         deny = self.state_deny(pet, "play", now)
         if deny:
             return _out(deny, False)
-        if pet.energy < 15:
+        if pet.energy < PLAY_ENERGY_MIN:
             return _out(t("pet.too_tired_play"), False)
-        ok, wait = self._check_cooldown(pet, "game", 120, now)
+        ok, wait = self._check_cooldown(pet, "game", COOLDOWN_PLAY_SEC, now)
         if not ok:
             return _out(f"⏳ Питомец запыхался! Подожди {wait} сек.", False)
         self._set_cooldown(pet, "game", now)
@@ -649,11 +721,11 @@ class TamagotchiService:
 
     def guess_range(self, pet: Pet) -> tuple[int, int]:
         half = max(3, 10 - pet.intellect // 2)
-        secret = random.randint(1, 20)
-        lo, hi = max(1, secret - half), min(20, secret + half)
+        secret = random.randint(1, GUESS_RANGE_MAX)
+        lo, hi = max(1, secret - half), min(GUESS_RANGE_MAX, secret + half)
         return secret, (lo, hi)
 
-    async def sleep(self, pet: Pet, hours: int = 8) -> str:
+    async def sleep(self, pet: Pet, hours: int = SLEEP_DEFAULT_HOURS) -> str:
         now = local_now()
         await self.apply_decay(pet, now)
         if self.is_critical(pet):
@@ -683,7 +755,7 @@ class TamagotchiService:
         if pet.sleep_started_at:
             slept_h = max(0.0, (now - _aware(pet.sleep_started_at)).total_seconds() / 3600.0)
         elif pet.sleep_until:
-            planned = 8
+            planned = SLEEP_DEFAULT_HOURS
             left = max(0.0, (_aware(pet.sleep_until) - now).total_seconds() / 3600.0)
             slept_h = max(0.0, planned - left)
         pet.is_sleeping = False
@@ -706,18 +778,22 @@ class TamagotchiService:
         deny = self.state_deny(pet, "wash", now)
         if deny:
             return _out(deny, False)
-        ok, wait = self._check_cooldown(pet, "wash", 300, now)
+        ok, wait = self._check_cooldown(pet, "wash", COOLDOWN_WASH_SEC, now)
         if not ok:
-            return _out(f"⏳ Мыться можно раз в 5 минут (осталось {wait} сек).", False)
+            return _out(f"⏳ Мыться можно раз в {COOLDOWN_WASH_SEC // 60} минут "
+                        f"(осталось {wait} сек).", False)
         self._set_cooldown(pet, "wash", now)
         self._mark_care(pet, now)
-        pet.hygiene = clamp(pet.hygiene + round(
-            40 * max(0.5, 1.0 + self.gear_bonuses(pet).get("hygiene_wash_pct", 0.0))))
-        pet.happiness = clamp(pet.happiness - 3 + species_pref_delta(pet, "wash")
-                              + self._gear_happy_flat(pet))
+        gain = wash_hygiene_gain(self, pet)
+        mood = wash_mood_delta(self, pet)
+        pet.hygiene = clamp(pet.hygiene + gain)
+        pet.happiness = clamp(pet.happiness + mood)
         xp = int(4 * _species(pet)["bonus"]["xp_mult"] * self.action_modifier(pet, "xp"))
         await self.add_pet_xp(pet, xp)
-        return _out(t("pet.washed"), True)
+        # Честная сводка вместо зашитого «+40»: вид, боящийся воды, должен
+        # видеть реальные цифры (например 🐱 кот: гигиена +40, счастье −7).
+        return _out(t("pet.washed", hygiene=gain,
+                      happy=("+" if mood >= 0 else "") + str(mood)), True)
 
     async def heal(self, pet: Pet, *, with_result: bool = False):
         now = local_now()
@@ -731,14 +807,14 @@ class TamagotchiService:
         deny = self.state_deny(pet, "heal", now)
         if deny:
             return _out(deny, False)
-        if pet.sick_since is None and pet.health >= 70:
+        if pet.sick_since is None and pet.health >= SICK_RECOVER_THRESHOLD:
             return _out(t("pet.not_sick"), False)
-        heal_mult = max(0.5, 1.0 + self.gear_bonuses(pet).get("heal_boost", 0.0))
-        pet.health = clamp(pet.health + round(35 * heal_mult))
-        if pet.health >= 60:
+        gain = heal_health_gain(self, pet)
+        pet.health = clamp(pet.health + gain)
+        if pet.health >= SICK_RECOVER_THRESHOLD:
             pet.sick_since = None
         await self.add_pet_xp(pet, 5)
-        return _out(t("pet.healed"), True)
+        return _out(t("pet.healed", health=gain), True)
 
     def on_walk(self, pet: Pet, dt=None) -> bool:
         if not getattr(pet, "walk_until", None):
@@ -772,9 +848,9 @@ class TamagotchiService:
             return _out(deny, False)
         if stat not in ("strength", "agility", "intellect"):
             return _out("❓ Неизвестная тренировка.", False)
-        if pet.energy < 20:
+        if pet.energy < TRAIN_ENERGY_MIN:
             return _out("😩 Мало энергии для тренировки.", False)
-        ok, wait = self._check_cooldown(pet, "train", 180, now)
+        ok, wait = self._check_cooldown(pet, "train", COOLDOWN_TRAIN_SEC, now)
         if not ok:
             return _out(f"⏳ Перерыв между тренировками: {wait} сек.", False)
         self._set_cooldown(pet, "train", now)
@@ -800,7 +876,7 @@ class TamagotchiService:
                  "intellect": t("pet.train_int")}[stat]
         return _out(t("pet.train_done", label=label, gain=gain), True)
 
-    async def start_walk(self, pet: Pet, hours: int = 2, *,
+    async def start_walk(self, pet: Pet, hours: int = WALK_DEFAULT_HOURS, *,
                          with_result: bool = False):
         def _out(text: str, succeeded: bool):
             # См. feed(): структурированный результат вместо подстрок.
@@ -838,7 +914,7 @@ class TamagotchiService:
             return f"{text}\n⏱ Питомец уже вернулся — вот итог прогулки."
         started = _aware(pet.walk_start_at) if getattr(pet, "walk_start_at", None) else None
         back = _aware(pet.walk_until)
-        planned_h = float((pet.settings_extra or {}).get("walk_hours", 2)) or 2.0
+        planned_h = float((pet.settings_extra or {}).get("walk_hours", WALK_DEFAULT_HOURS)) or WALK_DEFAULT_HOURS
         frac = 1.0
         if started is not None and back > started:
             elapsed = (now - started).total_seconds()
@@ -912,7 +988,7 @@ class TamagotchiService:
             # Баланс: награда прогулки масштабируется от её длительности —
             # раньше 2ч и 8ч давали одинаковые монеты, что делало долгие
             # прогулки строго хуже (двойной декей за те же 🪙).
-            planned_h = float((pet.settings_extra or {}).get("walk_hours", 2)) or 2.0
+            planned_h = float((pet.settings_extra or {}).get("walk_hours", WALK_DEFAULT_HOURS)) or WALK_DEFAULT_HOURS
             dur_mult = max(1.0, min(2.0, planned_h / 2.0))
             c = max(1, int(random.randint(5, 15) * coin_mult * w_mult * dur_mult))
             wl = f" ☀️ Солнечная прогулка ×{w_mult:.1f}" if w_mult > 1 else ""

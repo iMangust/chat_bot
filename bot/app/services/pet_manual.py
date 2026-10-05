@@ -21,9 +21,25 @@ import html as _html
 from app.services import balance
 from app.services.pet_data import SPECIES_DATA, SPECIES_START_PRICE
 from app.services.tamagotchi import (
+    COOLDOWN_FEED_SEC,
+    COOLDOWN_PLAY_SEC,
+    COOLDOWN_WASH_SEC,
+    DECAY_PER_HOUR,
+    GUESS_RANGE_MAX,
+    HEAL_BASE_HEALTH,
+    HUNGER_GRUEL_THRESHOLD,
+    LOW_STAT_SICK_RISK,
+    SICK_RECOVER_THRESHOLD,
+    PLAY_ENERGY_MIN,
     SEASON_DECAY_MULT,
+    SICK_THRESHOLD,
     SPECIES_SEASON_DECAY_MULT,
+    SLEEP_DEFAULT_HOURS,
     SPRING_ALL_HAPPY_MULT,
+    TRAIN_ENERGY_MIN,
+    WALK_DEFAULT_HOURS,
+    WASH_BASE_HYGIENE,
+    WASH_MOOD_COST,
 )
 
 PREF_LABELS = {
@@ -71,9 +87,10 @@ def stats_guide_text() -> str:
                     "им опуститься ниже критических порогов.", ""]
 
     L.append(f"<b>🍎 Сытость</b> — падает ~{_fmt(d['hunger_decay'])}/час.")
-    L.append("  Поднимают: кормёжка из магазина (60 с между приёмами).")
+    L.append(f"  Поднимают: кормёжка из магазина ({COOLDOWN_FEED_SEC} с между приёмами).")
     L.append("  Вкусная еда (🍰 тортик, 🍩 пончик) даёт бонус к счастью;")
-    L.append("  ниже 25 питомец объявляет голод, ниже 20 начинает болеть ❤️.")
+    L.append(f"  ниже {HUNGER_GRUEL_THRESHOLD} питомец объявляет голод, "
+             f"ниже {LOW_STAT_SICK_RISK} начинает болеть ❤️.")
     L.append("")
     L.append(f"<b>😊 Счастье</b> — самое «медленное»: ~{_fmt(d['happy_decay'])}/час,")
     L.append("  но его сильнее всего меняют вид, сезон и погода.")
@@ -89,15 +106,21 @@ def stats_guide_text() -> str:
     L.append(f"<b>⚡ Энергия</b> — падает ~{_fmt(d['energy_decay'])}/час днём.")
     L.append("  Восстанавливает только сон (~"
              + _fmt(d["sleep_regen"]) + "/час, у совёнка и шиншиллы быстрее).")
-    L.append("  Ниже 15 — игры недоступны, ниже 20 — тренировки.")
+    L.append(f"  Ниже {PLAY_ENERGY_MIN} — игры недоступны, "
+             f"ниже {TRAIN_ENERGY_MIN} — тренировки.")
     L.append("")
     L.append(f"<b>🫧 Гигиена</b> — падает ~{_fmt(d['hygiene_decay'])}/час.")
-    L.append("  Поднимает ⛲ мытьё (+40, раз в 5 минут). Ниже 20 — риск болезни.")
+    L.append(f"  Поднимает 🫧 мытьё (+{WASH_BASE_HYGIENE}, раз в "
+             f"{COOLDOWN_WASH_SEC // 60} минут). Ниже {LOW_STAT_SICK_RISK} — риск болезни.")
     L.append("  У шиншиллы пачкается вдвое медленнее, у щенка/лисёнка — быстрее.")
     L.append("")
     L.append(f"<b>❤️ Здоровье</b> — тикает вниз ({_fmt(d['health_decay'])}/час) только")
-    L.append("  когда 🍎 или 🫧 ниже 20. health &lt; 50 — питомец болеет,")
-    L.append("  все действия заблокированы до 💊 лечения.")
+    L.append(f"  когда 🍎 или 🫧 ниже {LOW_STAT_SICK_RISK}. При health &lt; "
+             f"{SICK_THRESHOLD} питомец может заболеть 🤒 (не мгновенно —")
+    L.append("  с каждым часом растёт шанс), тогда нужна 💊 аптечка.")
+    L.append(f"  Лечение снимает болезнь при health ≥ {SICK_RECOVER_THRESHOLD}")
+    L.append(f"  (+{HEAL_BASE_HEALTH} ❤️ за аптечку). Больной питомец не играет,")
+    L.append("  не тренируется и не гуляет, пока его не вылечишь.")
     L.append("")
     L.append("🛟 <b>Страховка от забвения:</b> если питомец не получал заботу")
     L.append(f"  более {_fmt(d['boredom_hours'])} часов — однократный штраф")
@@ -108,7 +131,8 @@ def stats_guide_text() -> str:
 
 GAME_TIPS: list[tuple[str, str]] = [
     ("🔢 Угадай число",
-     "Число 1–20. Интеллект питомца сужает диапазон подсказки — качай 🧠"),
+     f"Число 1–{GUESS_RANGE_MAX}. Интеллект питомца сужает диапазон "
+     "подсказки — качай 🧠"),
     ("✂️ Камень-ножницы-бумага",
      "Классика против питомца. Исход идёт в зачёт игры (победа/поражение)."),
     ("🃏 Двадцать одно",
@@ -124,9 +148,10 @@ def games_guide_text() -> str:
                     "поражение → +" + _fmt(d["play_lose"]) + " 😊.",
                     "Проигрывать НЕ страшно — счастье растёт в любом исходе,",
                     "плюс XP питомцу.", "",
-                    f"⏱ Кулдаун 120 секунд; {int(d['free_actions'])} первых игр —",
-                    "бесплатно, дальше по правилам магазина.",
-                    "⚡ Нужно минимум 15 энергии.", "",
+                    f"⏱ Кулдаун {COOLDOWN_PLAY_SEC} секунд — дальше по кнопочке",
+                    "«Играть» питомец скажет «запыхался» и попросит подождать.",
+                    f"⚡ Нужно минимум {PLAY_ENERGY_MIN} энергии; игра также тратит",
+                    "6 ⚡ и 5 🫧 — после игры полезно помыть.", "",
                     "Множители счастья за победу по видам:"]
     for _code, sp in SPECIES_DATA.items():
         m = sp["bonus"]["play_happy"]
@@ -142,25 +167,29 @@ def games_guide_text() -> str:
 # ── Карточка вида ──────────────────────────────────────────────────────────
 
 def species_season_notes(code: str) -> list[str]:
+    """Сезонные поправки к падению статов — честно из SEASON_DECAY_MULT.
+
+    Множитель >1 = стат «тратится» быстрее; <1 = медленнее. Весна отдельно:
+    её коэффициент happiness живёт в SPRING_ALL_HAPPY_MULT, а не в словаре.
+    """
     notes: list[str] = []
     for season, mods in SEASON_DECAY_MULT.items():
-        if season == "happy":
-            continue
-        for stat_key, mult in mods.items():
-            label = {"hunger": "🍎", "energy": "⚡", "hygiene": "🫧",
-                     "happy": "😊"}.get(stat_key, stat_key)
-            notes.append(f"{SEASON_RU[season]}: {label} ×{_fmt(mult)} (у всех)")
-    happy_winter = SEASON_DECAY_MULT.get("winter", {}).get("happy")
-    if happy_winter:  # сейчас зимних happy-модов нет — защита на будущее
-        pass
-    notes.append(f"🌸 весной 😊 у всех падает быстрее (×{_fmt(SPRING_ALL_HAPPY_MULT)})"
-                 .replace("быстрее", "медленнее"))
-    for season, mods in SPECIES_SEASON_DECAY_MULT.get(code, {}).items():
-        for stat_key, mult in mods.items():
-            label = {"happy": "😊", "hunger": "🍎", "energy": "⚡",
-                     "hygiene": "🫧"}.get(stat_key, stat_key)
-            verdict = "быстрее грустнеет" if mult > 1 else "спокойнее"
-            notes.append(f"{SEASON_RU[season]} (этот вид): {label} ×{_fmt(mult)} — {verdict}")
+        for stat_key, mult in sorted(mods.items()):
+            label = STAT_EMOJI.get({"happy": "happiness"}.get(stat_key, stat_key),
+                                   stat_key)
+            verdict = "быстрее" if mult > 1 else "медленнее"
+            notes.append(f"{SEASON_RU[season]}: {label} падает {verdict} "
+                         f"(×{_fmt(mult)}, у всех)")
+    _sp_m = SPRING_ALL_HAPPY_MULT
+    notes.append(f"🌸 весну: 😊 грустнеет {'быстрее' if _sp_m > 1 else 'медленнее'} "
+                 f"(×{_fmt(_sp_m)}, у всех)")
+    for season, mods in sorted(SPECIES_SEASON_DECAY_MULT.get(code, {}).items()):
+        for stat_key, mult in sorted(mods.items()):
+            label = STAT_EMOJI.get({"happy": "happiness"}.get(stat_key, stat_key),
+                                   stat_key)
+            verdict = f"{label} тратится быстрее" if mult > 1 \
+                else f"{label} бережётся"
+            notes.append(f"{SEASON_RU[season]} (этот вид): ×{_fmt(mult)} — {verdict}")
     return notes
 
 
@@ -171,7 +200,8 @@ def tactics_for(code: str, sp: dict) -> list[str]:
     decay = sp["decay"]
     t: list[str] = []
     if prefers.get("play", 0) > 0 and bonus["play_happy"] >= 1.0:
-        t.append("🎾 Играй часто (кулдаун 2 мин) — главный источник 😊 для него.")
+        t.append(f"🎾 Играй часто (кулдаун {COOLDOWN_PLAY_SEC // 60} мин) — "
+                 "главный источник 😊 для него.")
     if bonus["play_happy"] < 1.0 or prefers.get("play", 0) < 0:
         t.append("🎾 Игры он любит умеренно: не трать кулдауны зря, лучше другие")
         t.append("   занятия — там доход выше.")
@@ -186,7 +216,8 @@ def tactics_for(code: str, sp: dict) -> list[str]:
         t.append("   всё равно падает медленно, держи её высокой ради здоровья.")
     if prefers.get("wash", 0) <= -2:
         t.append("⛲ Воды не любит: после мытья −" + str(-prefers["wash"]) + " 😊.")
-        t.append("   Мой только когда 🫧 угрожает здоровью (<20), иначе терпи.")
+        t.append(f"   Мой только когда 🫧 угрожает здоровью "
+                 f"(<{LOW_STAT_SICK_RISK}), иначе терпи.")
     if prefers.get("train", 0) >= 4:
         t.append("🏋️ Тренировки — его стихия (+6 😊). Качай профильный стат:")
         t.append("   сова — 🧠 интеллекту, щенок — 💪 силу, лиса/шиншилла — 🦋 ловкость.")
@@ -194,7 +225,8 @@ def tactics_for(code: str, sp: dict) -> list[str]:
         t.append(f"😴 Сон — его топливо (+{_fmt(bonus['sleep_bonus'])} ⚡/ч сверх нормы):")
         t.append("   спи чаще, энергии хватает на больше активностей в день.")
     if decay.get("energy", 1.0) >= 1.2:
-        t.append("⚡ Быстро устаёт — следи за энергией, не давай ей упасть ниже 20.")
+        t.append(f"⚡ Быстро устаёт — следи за энергией, не давай ей упасть "
+                 f"ниже {TRAIN_ENERGY_MIN}.")
     if decay.get("hygiene", 1.0) >= 1.2:
         t.append("🫧 Пачкается быстро — закладывай мытьё в рутину заранее.")
     if decay.get("happiness", 1.0) >= 1.2:

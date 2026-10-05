@@ -51,7 +51,8 @@ from app.handlers.tamagotchi import _deny, set_pet_page
 from app.i18n import t
 from app.keyboards.inline import games_menu, inline_back_kb, pet_hub
 from app.services.achievements import AchievementService
-from app.services.tamagotchi import SPECIES_DATA, TamagotchiService, _species_key
+from app.services.tamagotchi import (COOLDOWN_PLAY_SEC, PLAY_ENERGY_MIN,
+                                  SPECIES_DATA, TamagotchiService, _species_key)
 from app.utils.local_time import now as local_now
 from app.utils.safe_edit import safe_edit_or_answer
 
@@ -161,10 +162,10 @@ async def _finish_game(cb: CallbackQuery, session: AsyncSession, pet,
     if deny:
         await _deny(cb, deny)          # сон/прогулка (гонка состояний)
         return False
-    if pet.energy < 15:
+    if pet.energy < PLAY_ENERGY_MIN:
         await _deny(cb, t("pet.too_tired_play"))
         return False
-    ok, wait = svc._check_cooldown(pet, "game", 120, local_now())
+    ok, wait = svc._check_cooldown(pet, "game", COOLDOWN_PLAY_SEC, local_now())
     if not ok:
         # РОВНО ОДИН ответ на тап: мягкий toast (не перекрывает экран),
         # награду не начисляем, экран не трогаем.
