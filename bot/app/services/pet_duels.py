@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import random
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -9,7 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import Pet, PetDuel, User
 from app.services.notifications import queue_notification
 from app.utils.html_text import esc
-from app.utils.local_time import localize, now as local_now
+from app.utils.local_time import localize
+from app.utils.local_time import now as local_now
 
 DUEL_XP_WIN = 12
 DUEL_XP_LOSS = 3
@@ -109,7 +110,7 @@ async def fight(session: AsyncSession, pet: Pet) -> dict:
     my = await get_or_create_row(session, pet.id, wk)
     extra = pet.settings_extra or {}
     today = now.date().isoformat()
-    done_today = extra.get("duel_day") == today and extra.get("duel_count", 0) or 0
+    done_today = (extra.get("duel_day") == today and extra.get("duel_count", 0)) or 0
     if done_today >= DAILY_FIGHT_LIMIT:
         return {"ok": False, "reason": "limit"}
     cd = duel_cooldown_left(pet, now)

@@ -2,27 +2,32 @@ from __future__ import annotations
 
 import asyncio
 import functools
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 
 from aiogram import Bot
 from aiogram.exceptions import TelegramAPIError
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from sqlalchemy import select
 from loguru import logger
+from sqlalchemy import select
 
 from app.config import get_settings
-from app.db.models import (NotificationQueue, NotificationSetting, Pet, User)
+from app.db.models import NotificationQueue, NotificationSetting, Pet, User
 from app.db.repositories import ActivityRepository
 from app.db.session import session_factory
 from app.services.leaderboard import snapshot_weekly
-from app.services.notifications import (build_daily_report, build_pet_sad_text,
-                                        build_streak_warning, has_recent,
-                                        queue_notification)
+from app.services.notifications import (
+    build_daily_report,
+    build_pet_sad_text,
+    build_streak_warning,
+    has_recent,
+    queue_notification,
+)
 from app.services.pet_social import list_friends
 from app.services.tamagotchi import TamagotchiService, compute_mood
-from app.utils.redis import acquire_lock, release_lock
 from app.utils.html_text import esc
-from app.utils.local_time import localize, now as local_now, user_tz
+from app.utils.local_time import localize, user_tz
+from app.utils.local_time import now as local_now
+from app.utils.redis import acquire_lock, release_lock
 
 
 def _safe(fn):
@@ -52,7 +57,7 @@ async def decay_all_pets(bot: Bot) -> None:
         return
     try:
         try:
-            from app.services.weather import kamchatka_weather, apply_weather_to_pet
+            from app.services.weather import apply_weather_to_pet, kamchatka_weather
             await kamchatka_weather()
         except Exception as exc:
             logger.debug("weather refresh in decay tick failed: {}", exc)
@@ -122,7 +127,8 @@ async def flush_notifications(bot: Bot) -> None:
                 # если бот заблокирован в ЛС, приз всё равно будет виден
                 chat_fallback = None
                 if n.kind == "reward":
-                    from app.db.models import ChatMessageLog, User as _U
+                    from app.db.models import ChatMessageLog
+                    from app.db.models import User as _U
                     chat_fallback = (await session.execute(
                         select(ChatMessageLog.chat_id)
                         .where(ChatMessageLog.user_id == n.user_id)
@@ -140,7 +146,7 @@ async def flush_notifications(bot: Bot) -> None:
                     try:
                         from aiogram.types import InlineKeyboardMarkup
                         kb = InlineKeyboardMarkup.model_validate_json(n.payload_json)
-                    except Exception as exc:  # noqa: BLE001 — без кнопок лучше, чем мимо
+                    except Exception as exc:
                         logger.debug("notification {} kb parse failed: {}", n.id, exc)
                 try:
                     await bot.send_message(n.user_id, n.text, parse_mode="HTML",
@@ -304,7 +310,7 @@ async def weekly_arena_finish(bot: Bot) -> None:
 
 async def scan_channel_members(bot: Bot) -> None:
     st = get_settings()
-    from app.middlewares.gate import required_chats, serviceable_chats
+    from app.middlewares.gate import serviceable_chats
     if not serviceable_chats():
         return
     if not await acquire_lock("channel_scan", ttl_sec=max(60, st.channel_scan_minutes * 60 - 30)):
@@ -344,8 +350,7 @@ async def mtproto_delta_sync(bot: Bot | None = None) -> None:
     if not await acquire_lock("mtproto_sync", ttl_sec=60 * 50):
         return
     try:
-        from app.services.mtproto_sync import (mtproto_configured,
-                                               sync_subscribers)
+        from app.services.mtproto_sync import mtproto_configured, sync_subscribers
         if not mtproto_configured():
             return
         full = False

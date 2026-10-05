@@ -33,7 +33,8 @@ os.environ["ADMIN_IDS"] = "[42]"          # пользователь id=42 — �
 
 # Сброс lru-кеша настроек: иначе get_settings() вернёт кеш другого теста
 # из этого же pytest-процесса (например, с ADMIN_IDS=[]).
-from app.config import get_settings as _gs  # noqa: E402
+from app.config import get_settings as _gs
+
 _gs.cache_clear()
 os.environ["MERCH_ENABLED"] = "true"
 
@@ -42,17 +43,18 @@ os.environ["MERCH_ENABLED"] = "true"
 # указывал бы на чужую базу и видел её данные (регрессия: «Встреча» из
 # теста admin_api попадала в экран мероприятий). Принудительно пересоздаём
 # engine/session_factory на настройки ЭТОГО теста (:memory:).
-import app.db.session as _dbs  # noqa: E402
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+import app.db.session as _dbs
 
 _s = _gs()
 _dbs.engine = create_async_engine(_s.database_url)
 _dbs.session_factory = async_sessionmaker(
     _dbs.engine, class_=_dbs.AsyncSession, expire_on_commit=False)
 
-from aiogram.client.session.base import BaseSession  # noqa: E402
-from aiogram.methods import GetMe, SendChatAction  # noqa: E402
-from aiogram.types import CallbackQuery, Chat, Message, Update, User  # noqa: E402
+from aiogram.client.session.base import BaseSession
+from aiogram.methods import GetMe, SendChatAction
+from aiogram.types import CallbackQuery, Chat, Message, Update, User
 
 USER_ID = 42
 
@@ -119,9 +121,22 @@ async def _build_dp_and_bot():
     import app.db.session as dbs
     from app.config import get_settings
     from app.db.models import Base
-    from app.handlers import (access as access_handlers, admin, arena, errors,
-                              events, games, merch, settings as settings_h,
-                              shop, social, start, stats, tamagotchi, tracker)
+    from app.handlers import access as access_handlers
+    from app.handlers import (
+        admin,
+        arena,
+        errors,
+        events,
+        games,
+        merch,
+        shop,
+        social,
+        start,
+        stats,
+        tamagotchi,
+        tracker,
+    )
+    from app.handlers import settings as settings_h
     from app.main import _make_fsm_storage, probe_fsm_storage
 
     engine = dbs.engine
@@ -156,7 +171,7 @@ async def _build_dp_and_bot():
 
 def _all_callbacks(session: FakeSession) -> list[str]:
     out = []
-    for name, data in session.record:
+    for _name, data in session.record:
         kb = data.get("reply_markup")
         if not kb:
             continue
@@ -168,8 +183,8 @@ def _all_callbacks(session: FakeSession) -> list[str]:
 
 
 async def _run() -> None:
-    from app.db.repositories import MerchRepository
     import app.db.session as dbs
+    from app.db.repositories import MerchRepository
 
     dp, bot, session = await _build_dp_and_bot()
 

@@ -34,8 +34,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sqlalchemy import text  # noqa: E402
-from app.config import get_settings  # noqa: E402
+from sqlalchemy import text
+
+from app.config import get_settings
 
 # таблица -> список колонок с метками времени, писавшихся по-старому
 TZ_COLUMNS: dict[str, list[str]] = {

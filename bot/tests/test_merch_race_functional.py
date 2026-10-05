@@ -28,12 +28,14 @@ os.environ.setdefault("ADMIN_IDS", "[42]")
 
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
 
-from app.config import get_settings as _gs  # noqa: E402
+from app.config import get_settings as _gs
+
 _gs.cache_clear()
 
-import app.db.session as _dbs  # noqa: E402
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
-from sqlalchemy.pool import StaticPool  # noqa: E402
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import StaticPool
+
+import app.db.session as _dbs
 
 _s = _gs()
 

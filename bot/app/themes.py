@@ -36,7 +36,7 @@ CURRENT_THEME: contextvars.ContextVar[str] = contextvars.ContextVar(
 # первый же /start до get_or_create заморозил бы тему как standard навсегда.
 # OrderedDict с ручным LRU: обычный dict рос бы без ограничений вместе с
 # числом когда-либо виденных пользователей (утечка памяти на аптайме).
-_THEME_CACHE: "OrderedDict[int, str]" = OrderedDict()
+_THEME_CACHE: OrderedDict[int, str] = OrderedDict()
 _THEME_CACHE_MAX = 50_000
 
 
@@ -141,8 +141,8 @@ async def load_theme_key(tg_id: int) -> str | None:
         return cached
     theme_key: str | None = None
     try:
-        from app.db.session import session_factory
         from app.db.models import User
+        from app.db.session import session_factory
 
         async with session_factory() as s:
             db_user = await s.get(User, tg_id)
@@ -431,9 +431,9 @@ def standard_main_menu_std() -> str:
         ch, visual = channel_link()
         if ch:
             ch_line = f"\n\n📢 Новости канала: {visual} (t.me/{ch})"
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.debug("Главное меню: не удалось подставить строку канала: %s", exc)
-    return (f"🏠 <b>Главное меню · {{title}}</b>\n\n"
+    return ("🏠 <b>Главное меню · {title}</b>\n\n"
             "{{stats}}\n\n📌 Что делать:\n" + body + ch_line)
 
 
@@ -442,7 +442,7 @@ def _build_main_menu_template() -> str:
     return _map_emoji(standard_main_menu_std(), GOTHIC.emoji_map)
 
 
-def _active_theme() -> "Theme | None":
+def _active_theme() -> Theme | None:
     """Тема текущего контекста с подстраховкой против «потерянного» contextvar.
 
     aiogram 3.x может вызвать рендер вне задачи апдейта (error-handler'ы,

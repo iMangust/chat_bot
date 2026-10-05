@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Pet, PetFriend
 
+
 async def list_friends(session: AsyncSession, pet_id: int) -> list[Pet]:
     rows = (await session.execute(
         select(Pet).join(PetFriend, or_(PetFriend.pet_id == Pet.id,

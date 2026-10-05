@@ -22,7 +22,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import sys
 import uuid
@@ -37,21 +36,23 @@ os.environ["REDIS_URL"] = ""
 os.environ["CHANNELS"] = "[]"
 os.environ["ADMIN_IDS"] = "[]"
 
-from app.config import get_settings as _gs  # noqa: E402
+from app.config import get_settings as _gs
+
 _gs.cache_clear()
 
 # Изоляция движка БД этого теста (см. комментарий в test_events_menu_functional)
-import app.db.session as _dbs  # noqa: E402
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+import app.db.session as _dbs
 
 _s = _gs()
 _dbs.engine = create_async_engine(_s.database_url)
 _dbs.session_factory = async_sessionmaker(
     _dbs.engine, class_=_dbs.AsyncSession, expire_on_commit=False)
 
-from aiogram.client.session.base import BaseSession  # noqa: E402
-from aiogram.methods import GetMe, SendChatAction  # noqa: E402
-from aiogram.types import CallbackQuery, Chat, Message, Update, User  # noqa: E402
+from aiogram.client.session.base import BaseSession
+from aiogram.methods import GetMe, SendChatAction
+from aiogram.types import CallbackQuery, Chat, Message, Update, User
 
 _captured_logs: list[str] = []
 
@@ -140,9 +141,22 @@ async def _build_dp():
     import app.db.session as dbs
     from app.config import get_settings
     from app.db.models import Base
-    from app.handlers import (access as access_handlers, admin, arena, errors,
-                              events, games, merch, settings as settings_h,
-                              shop, social, start, stats, tamagotchi, tracker)
+    from app.handlers import access as access_handlers
+    from app.handlers import (
+        admin,
+        arena,
+        errors,
+        events,
+        games,
+        merch,
+        shop,
+        social,
+        start,
+        stats,
+        tamagotchi,
+        tracker,
+    )
+    from app.handlers import settings as settings_h
     from app.main import _make_fsm_storage, probe_fsm_storage
 
     async with dbs.engine.begin() as conn:
@@ -202,7 +216,7 @@ def _assert_handled(data: str, marker: str) -> None:
     async def run():
         session, texts, _alerts = await _press(data)
         joined = "\n".join(texts)
-        assert any("AnswerCallbackQuery" == m for m, _ in session.record), \
+        assert any(m == "AnswerCallbackQuery" for m, _ in session.record), \
             f"{data}: callback не answer'нут"
         assert "устарела" not in joined, \
             f"{data}: вместо экрана показан текст про устаревшую кнопку: {texts}"

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-
 from loguru import logger
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,13 +14,14 @@ from app.db.models import (
 )
 from app.services.tamagotchi import (
     SPECIES_DATA,
-    compute_mood,
-    pet_xp_needed,
     _aware,
     _species_key,
+    compute_mood,
+    pet_xp_needed,
 )
 from app.utils.formatting import xp_needed_for_level
 from app.utils.local_time import now as local_now
+
 
 def _fmt_age(dt) -> str:
     dt = _aware(dt)
@@ -118,7 +118,7 @@ async def collect(session: AsyncSession, tg_id: int) -> dict | None:
     data: dict = {"user": user, "pet": pet}
 
     try:
-        from app.services.activity import ActivityService, ActivityRepository
+        from app.services.activity import ActivityRepository, ActivityService
         stats = await ActivityService(session).personal_stats(tg_id)
         daily = await ActivityRepository(session).daily_counts(tg_id, days=7)
     except Exception as exc:

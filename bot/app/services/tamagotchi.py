@@ -8,11 +8,17 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Pet, PetStage, User
-from app.utils.local_time import now as local_now, localize
 from app.i18n import t
-from app.utils.formatting import (clamp, holiday_effect_mults, season_for,
-                                  stat_bar, weather_info)
+from app.utils.formatting import (
+    clamp,
+    holiday_effect_mults,
+    season_for,
+    stat_bar,
+    weather_info,
+)
 from app.utils.html_text import esc
+from app.utils.local_time import localize
+from app.utils.local_time import now as local_now
 
 CRIT_MSG = "pet.critical_deny"
 
@@ -78,8 +84,8 @@ STAGE_BY_LEVEL = [
 # SPECIES_DATA / SPECIES_START_PRICE / SPECIES_BONUS вынесены в
 # app.services.pet_data (легковесный модуль для UI-справок); реэкспорт
 # сохраняет обратную совместимость всех импортов.
-from app.services.pet_data import (SPECIES_BONUS, SPECIES_DATA,
-                                    SPECIES_START_PRICE)
+from app.services.pet_data import SPECIES_DATA
+
 
 def _species_key(pet) -> str:
     return getattr(pet.species, "value", str(pet.species))
@@ -201,7 +207,7 @@ def mood_text(mood: str) -> str:
     return t(key) if key else MOOD_TEXT.get(mood, "")
 
 def _mood_value(pet: Pet) -> int:
-    return int(round((pet.hunger + pet.happiness + pet.energy + pet.hygiene) / 4))
+    return round((pet.hunger + pet.happiness + pet.energy + pet.hygiene) / 4)
 
 def render_mood_line(pet: Pet, mood: str | None = None) -> str:
     mood = mood or compute_mood(pet)
@@ -534,9 +540,8 @@ class TamagotchiService:
             if a in self._ACTIVE_ACTIONS and a not in self._SLEEP_ALLOW:
                 return self._sleeping_deny(a)
             return None
-        if self.on_walk(pet, now):
-            if a in self._WALK_DENY:
-                return self._walk_deny(pet, a)
+        if self.on_walk(pet, now) and a in self._WALK_DENY:
+            return self._walk_deny(pet, a)
         return None
 
     async def feed(self, pet: Pet, effect: dict[str, float],
@@ -684,7 +689,7 @@ class TamagotchiService:
         pet.is_sleeping = False
         pet.sleep_until = None
         pet.sleep_started_at = None
-        gained = int(round(slept_h * sleep_regen_per_hour(sp=_species(pet))))
+        gained = round(slept_h * sleep_regen_per_hour(sp=_species(pet)))
         return t("pet.woken", hours=f"{slept_h:.1f}".rstrip("0").rstrip("."), energy=gained)
 
     async def wash(self, pet: Pet, *, with_result: bool = False):
@@ -706,8 +711,8 @@ class TamagotchiService:
             return _out(f"⏳ Мыться можно раз в 5 минут (осталось {wait} сек).", False)
         self._set_cooldown(pet, "wash", now)
         self._mark_care(pet, now)
-        pet.hygiene = clamp(pet.hygiene + int(round(
-            40 * max(0.5, 1.0 + self.gear_bonuses(pet).get("hygiene_wash_pct", 0.0)))))
+        pet.hygiene = clamp(pet.hygiene + round(
+            40 * max(0.5, 1.0 + self.gear_bonuses(pet).get("hygiene_wash_pct", 0.0))))
         pet.happiness = clamp(pet.happiness - 3 + species_pref_delta(pet, "wash")
                               + self._gear_happy_flat(pet))
         xp = int(4 * _species(pet)["bonus"]["xp_mult"] * self.action_modifier(pet, "xp"))
@@ -729,7 +734,7 @@ class TamagotchiService:
         if pet.sick_since is None and pet.health >= 70:
             return _out(t("pet.not_sick"), False)
         heal_mult = max(0.5, 1.0 + self.gear_bonuses(pet).get("heal_boost", 0.0))
-        pet.health = clamp(pet.health + int(round(35 * heal_mult)))
+        pet.health = clamp(pet.health + round(35 * heal_mult))
         if pet.health >= 60:
             pet.sick_since = None
         await self.add_pet_xp(pet, 5)
@@ -783,7 +788,7 @@ class TamagotchiService:
                 stat_pref if isinstance(stat_pref, tuple) else (stat_pref,)):
             gain += 1
         train_mult = self.action_modifier(pet, "train_yield")
-        gain = max(1, int(round(gain * train_mult))
+        gain = max(1, round(gain * train_mult)
                    + int(self.gear_bonuses(pet).get("flat_train", 0)))
         setattr(pet, stat, getattr(pet, stat) + gain)
         sp = _species(pet)
@@ -874,8 +879,8 @@ class TamagotchiService:
         except Exception:
             wm = {}
         w_mult = float(wm.get("mult", 1.0))
-        w_happy = int(round(float(wm.get("happy_add", 0))))
-        w_energy = int(round(float(wm.get("energy_add", 0))))
+        w_happy = round(float(wm.get("happy_add", 0)))
+        w_energy = round(float(wm.get("energy_add", 0)))
         w_stat = float(wm.get("stat_add", 0.0))
         w_sick = float(wm.get("sick_pct", 0.0))
         coin_mult = (sp["bonus"]["coin_mult"] * hol.get("walk_coins", 1.0)
@@ -910,8 +915,8 @@ class TamagotchiService:
             planned_h = float((pet.settings_extra or {}).get("walk_hours", 2)) or 2.0
             dur_mult = max(1.0, min(2.0, planned_h / 2.0))
             c = max(1, int(random.randint(5, 15) * coin_mult * w_mult * dur_mult))
-            wl = " ☀️ Солнечная прогулка ×{:.1f}".format(w_mult) if w_mult > 1 else ""
-            dl = " 🕗 долгая прогулка ×{:.1f}".format(dur_mult) if dur_mult > 1 else ""
+            wl = f" ☀️ Солнечная прогулка ×{w_mult:.1f}" if w_mult > 1 else ""
+            dl = f" 🕗 долгая прогулка ×{dur_mult:.1f}" if dur_mult > 1 else ""
             return (f"🪙 Нашёл монетки на прогулке! +{c} монет{wl}{dl}{energy_line}"
                     + grow_line), c, int(10 * xp_mult * w_mult * dur_mult)
         if roll < 0.45:
@@ -1209,7 +1214,7 @@ class TamagotchiService:
 
     @staticmethod
     def _fmt_dur(sec: int) -> str:
-        m = int(round(sec / 60))
+        m = round(sec / 60)
         return f"{m} мин" if m < 60 else f"{m // 60} ч" + (f" {m % 60} мин" if m % 60 else "")
 
     def active_buffs(self, pet: Pet) -> dict[str, float]:
@@ -1380,7 +1385,7 @@ class TamagotchiService:
             slots = list(self.GEAR_SLOTS.keys())
             gear = {slots[i]: e for i, e in enumerate(legacy)
                     if e in self.PET_ACCESSORIES}
-            owned |= {e for e in gear.values()}
+            owned |= set(gear.values())
         worn_emojis = set(gear.values())
         if emoji in worn_emojis:
             gear = {k: v for k, v in gear.items() if v != emoji}
@@ -1594,7 +1599,7 @@ class TamagotchiService:
             bonus_bits.append(f"⚔️+{int(g['duel_power'])}")
         coin_pct = g.get("coin_mult", 0.0) + g.get("walk_coin_pct", 0.0)
         if coin_pct > 0:
-            bonus_bits.append(f"🪙+{int(round(coin_pct * 100))}%")
+            bonus_bits.append(f"🪙+{round(coin_pct * 100)}%")
         if g.get("xp_pct", 0.0) > 0:
             bonus_bits.append(f"XP+{int(g['xp_pct'] * 100)}%")
         if g.get("feed_bonus_pct", 0.0) > 0:

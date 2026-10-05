@@ -30,7 +30,7 @@ TTL_SEC = 24 * 3600    # стек живёт сутки без активнос�
 # Локальный фолбэк, если Redis недоступен (сбрасывается при рестарте).
 # LRU с лимитом: обычный dict рос бы без ограничений на долгих аптаймах
 # (запись на каждый когда-либо навигировавший чат — утечка памяти).
-_mem: "OrderedDict[int, deque[str]]" = OrderedDict()
+_mem: OrderedDict[int, deque[str]] = OrderedDict()
 _MEM_MAX_CHATS = 4096
 
 
@@ -71,7 +71,7 @@ async def _load(chat_id: int) -> deque[str]:
                 items = deque(json.loads(raw))
                 if items:
                     return items
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.debug("nav stack load failed: {}", type(exc).__name__)
     return _mem_get(chat_id)
 
@@ -86,7 +86,7 @@ async def _save(chat_id: int, stack: deque[str]) -> None:
         return
     try:
         await r.set(_key(chat_id), json.dumps(list(stack)), ex=TTL_SEC)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.debug("nav stack save failed: {}", type(exc).__name__)
 
 
@@ -118,9 +118,7 @@ def _is_noise(cb: str) -> bool:
     # в разделы ('menu:merch', 'menu:events', ...): это настоящие переходы,
     # они и есть точки возврата.
     parts = cb.split(":")
-    if len(parts) >= 2 and parts[-1] in ("back", "next") and parts[0] != "menu":
-        return True
-    return False
+    return bool(len(parts) >= 2 and parts[-1] in ("back", "next") and parts[0] != "menu")
 
 
 async def remember(chat_id: int | None, from_cb: str | None) -> None:
@@ -181,5 +179,5 @@ async def forget(chat_id: int | None) -> None:
         return
     try:
         await r.delete(_key(chat_id))
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.debug("nav stack clear failed: {}", type(exc).__name__)

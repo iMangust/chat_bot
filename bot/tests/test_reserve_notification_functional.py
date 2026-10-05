@@ -35,20 +35,22 @@ os.environ["ADMIN_IDS"] = "[42]"          # админ мерча = Test User (i
 os.environ["MERCH_ADMIN_ID"] = "42"
 os.environ["BOT_USERNAME"] = "test_bot"   # для deep-link кнопок уведомлений
 
-from app.config import get_settings as _gs  # noqa: E402
+from app.config import get_settings as _gs
+
 _gs.cache_clear()
 
-import app.db.session as _dbs  # noqa: E402
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+import app.db.session as _dbs
 
 _s = _gs()
 _dbs.engine = create_async_engine(_s.database_url)
 _dbs.session_factory = async_sessionmaker(
     _dbs.engine, class_=_dbs.AsyncSession, expire_on_commit=False)
 
-from aiogram.client.session.base import BaseSession  # noqa: E402
-from aiogram.methods import GetMe, SendChatAction  # noqa: E402
-from aiogram.types import CallbackQuery, Chat, Message, Update, User  # noqa: E402
+from aiogram.client.session.base import BaseSession
+from aiogram.methods import GetMe, SendChatAction
+from aiogram.types import CallbackQuery, Chat, Message, Update, User
 
 
 class FakeSession(BaseSession):
@@ -128,9 +130,22 @@ async def _build_dp():
     import app.db.session as dbs
     from app.config import get_settings
     from app.db.models import Base
-    from app.handlers import (access as access_handlers, admin, arena, errors,
-                              events, games, merch, settings as settings_h,
-                              shop, social, start, stats, tamagotchi, tracker)
+    from app.handlers import access as access_handlers
+    from app.handlers import (
+        admin,
+        arena,
+        errors,
+        events,
+        games,
+        merch,
+        shop,
+        social,
+        start,
+        stats,
+        tamagotchi,
+        tracker,
+    )
+    from app.handlers import settings as settings_h
     from app.main import _make_fsm_storage, probe_fsm_storage
 
     async with dbs.engine.begin() as conn:
@@ -228,6 +243,7 @@ async def _reserve_full(buyer_uid: int = 777):
     dp = await _build_dp()
     session = FakeSession()
     from aiogram import Bot
+
     from app.config import get_settings
     bot = Bot(token=get_settings().bot_token, session=session)
     await dp.feed_update(bot, _build_cb_update(
@@ -275,15 +291,17 @@ def test_deep_link_opens_reserve_card_with_actions():
         # cmd_start → _handle_nav_payload (его покрытие — ниже, smoke-тестом).
         s2 = FakeSession()
         from aiogram import Bot
+
         from app.config import get_settings
         bot = Bot(token=get_settings().bot_token, session=s2)
         chat = Chat(id=42, type="private", first_name="Test", last_name="User")
         msg = Message(message_id=5, date=datetime.now(), chat=chat,
                       from_user=_user(42, "Test", "testuser"),
                       text=f"/start nav_rescard_{vid}").as_(bot)
-        from app.handlers.merch import merch_reserve_card_open
-        from app.db.models import User
         from datetime import datetime as _dt
+
+        from app.db.models import User
+        from app.handlers.merch import merch_reserve_card_open
         async with _dbs.session_factory() as s_:
             if not await s_.get(User, 777):
                 s_.add(User(tg_id=777, first_name="Mangust", username="jMangust",
@@ -357,6 +375,7 @@ def test_myres_lists_reserves_without_direct_actions():
         _session, vid = await _reserve_and_capture()
         dp = await _build_dp()
         from aiogram import Bot
+
         from app.config import get_settings
         s2 = FakeSession()
         bot = Bot(token=get_settings().bot_token, session=s2)

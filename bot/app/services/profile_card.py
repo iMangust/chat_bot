@@ -346,6 +346,7 @@ class ProfileCardRenderer:
 
     def _activity_chart(self, data: dict, y0: int) -> None:
         from datetime import timedelta
+
         from app.utils.local_time import now as local_now
         d, put = self.d, self.put
         daily = data.get("daily") or {}
@@ -395,7 +396,7 @@ async def render_profile_card(session: AsyncSession, tg_id: int) -> bytes | None
     pet = data.get("pet")
     if pet is not None and data.get("pet_info"):
         try:
-            from app.services.card_data import vitals, stat_contribs
+            from app.services.card_data import stat_contribs, vitals
             data["vitals"] = vitals(pet)
             data["stat_contribs"] = stat_contribs(pet)
         except Exception as exc:

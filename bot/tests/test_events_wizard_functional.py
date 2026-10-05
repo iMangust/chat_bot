@@ -30,22 +30,30 @@ os.environ["CHANNELS"] = "[]"
 # Админ = id 42, чтобы проходить проверки _is_event_admin.
 os.environ["ADMIN_IDS"] = "[42]"
 
-from app.config import get_settings as _gs  # noqa: E402
+from app.config import get_settings as _gs
+
 _gs.cache_clear()
 
-import app.db.session as _dbs  # noqa: E402
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+import app.db.session as _dbs
 
 _s = _gs()
 _dbs.engine = create_async_engine(_s.database_url)
 _dbs.session_factory = async_sessionmaker(
     _dbs.engine, class_=_dbs.AsyncSession, expire_on_commit=False)
 
-from aiogram import Bot, Dispatcher  # noqa: E402
-from aiogram.client.session.base import BaseSession  # noqa: E402
-from aiogram.methods import GetMe, SendChatAction  # noqa: E402
-from aiogram.types import (CallbackQuery, Chat, Message, PhotoSize, Update,  # noqa: E402
-                           User)
+from aiogram import Bot, Dispatcher
+from aiogram.client.session.base import BaseSession
+from aiogram.methods import GetMe, SendChatAction
+from aiogram.types import (
+    CallbackQuery,
+    Chat,
+    Message,
+    PhotoSize,
+    Update,
+    User,
+)
 
 
 class FakeSession(BaseSession):
@@ -138,9 +146,22 @@ async def _build_dp() -> tuple[Dispatcher, Bot, FakeSession]:
     import app.db.session as dbs
     from app.config import get_settings
     from app.db.models import Base
-    from app.handlers import (access as access_handlers, admin, arena, errors,
-                              events, games, merch, settings as settings_h,
-                              shop, social, start, stats, tamagotchi, tracker)
+    from app.handlers import access as access_handlers
+    from app.handlers import (
+        admin,
+        arena,
+        errors,
+        events,
+        games,
+        merch,
+        shop,
+        social,
+        start,
+        stats,
+        tamagotchi,
+        tracker,
+    )
+    from app.handlers import settings as settings_h
     from app.main import _make_fsm_storage, probe_fsm_storage
 
     engine = dbs.engine

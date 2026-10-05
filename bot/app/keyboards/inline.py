@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from loguru import logger
-
-from aiogram.utils.keyboard import InlineKeyboardBuilder as _RawIKB
 from aiogram.types import InlineKeyboardButton as _IKB
 from aiogram.types import InlineKeyboardMarkup as _IKM
+from aiogram.utils.keyboard import InlineKeyboardBuilder as _RawIKB
+from loguru import logger
 
 
 def _themed(values: dict) -> dict:
@@ -70,7 +69,7 @@ class _ThemedInlineKeyboardButton(_IKB):
                         fields = getattr(v, "__pydantic_fields_set__", None)
                         if fields is not None:
                             fields.add("text")
-                    except Exception as exc:  # noqa: BLE001 — не роняем рендер
+                    except Exception as exc:
                         logger.debug("theme button relabel skipped for {!r}: {!r}", cb, exc)
             return v
 
@@ -105,6 +104,7 @@ InlineKeyboardButton = _ThemedInlineKeyboardButton
 
 InlineKeyboardMarkup = _ThemedInlineKeyboardMarkup
 from app.config import get_settings
+
 
 def _two_per_row(buttons: list[InlineKeyboardButton]) -> list[list[InlineKeyboardButton]]:
     return [buttons[i:i + 2] for i in range(0, len(buttons), 2)]
@@ -308,10 +308,7 @@ def _is_own_section_entry(cb: str, section: str | None) -> bool:
     # (листание/повторный вход), а не выход наружу. Для прочих секций
     # 'menu:...' — это обычные точки возврата из истории (их фильтрует
     # поиск по индексу точки входа, а не этот предикат).
-    if (head == "menu" and cb == "menu:pet"
-            and sec in _PET_SUB_SECTIONS):
-        return True
-    return False
+    return bool(head == "menu" and cb == "menu:pet" and sec in _PET_SUB_SECTIONS)
 
 
 def _nav_back_cb(section: str | None, chat_id: int | None,
@@ -535,11 +532,7 @@ def _nav_back_cb(section: str | None, chat_id: int | None,
         # 'pet:*' — «свои» записи только для подразделов хаба питомца;
         # для прочих секций (например, корневой хаб 'menu:pet', где эти
         # кнопки и живут) они валидные точки возврата.
-        if section in _PET_SUB_SECTIONS and e.startswith(
-                ("pet:page:", "pet:games", "pet:arena", "pet:friends",
-                 "pet:shop", "pet:inv", "pet:style")):
-            return True
-        return False
+        return bool(section in _PET_SUB_SECTIONS and e.startswith(("pet:page:", "pet:games", "pet:arena", "pet:friends", "pet:shop", "pet:inv", "pet:style")))
 
     def _pick(candidates: list[str]) -> str | None:
         """Первая подходящая запись снизу вверх + коррекция через корень."""
@@ -578,7 +571,7 @@ def _nav_back_cb(section: str | None, chat_id: int | None,
     #  • self-model (вершина = кнопка текущего экрана: перерисовка после
     #    своего коллбэка, прямые записи в тестах): эту запись скипаем —
     #    candidates = stack[entry_i:-1]; если она одна — fallback к корню.
-    entry_cb = f"menu:{section}" if not subpage_cb else subpage_cb
+    entry_cb = subpage_cb if subpage_cb else f"menu:{section}"
     entry_i = _find_last(stack, entry_cb)
     pet_sub_entry = False
     if entry_i is None and not subpage_cb and section in _PET_SUB_SECTIONS:

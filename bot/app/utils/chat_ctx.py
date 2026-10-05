@@ -24,7 +24,7 @@ class BoundedChatCtx:
     """
 
     def __init__(self, maxsize: int = 4096) -> None:
-        self._d: "OrderedDict[int, object]" = OrderedDict()
+        self._d: OrderedDict[int, object] = OrderedDict()
         self._max = maxsize
 
     def get(self, chat_id: int, default=None):

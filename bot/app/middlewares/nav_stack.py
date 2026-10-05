@@ -14,7 +14,8 @@ include_routers): перед обработкой коллбэка кладём 
 """
 from __future__ import annotations
 
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from aiogram import BaseMiddleware
 from aiogram.types import CallbackQuery, TelegramObject
@@ -46,6 +47,6 @@ class NavStackMiddleware(BaseMiddleware):
         # Перезеркалируем синхронное зеркало (обработчик мог вызвать
         # pop_until/forget внутри себя).
         if chat_id is not None:
-            stack = await nav._load(int(chat_id))  # noqa: SLF001
-            nav._mem[int(chat_id)] = stack  # noqa: SLF001
+            stack = await nav._load(int(chat_id))
+            nav._mem[int(chat_id)] = stack
         return result

@@ -29,19 +29,21 @@ os.environ["REDIS_URL"] = ""
 os.environ["CHANNELS"] = "[]"
 os.environ["ADMIN_IDS"] = "[]"
 
-from app.config import get_settings as _gs  # noqa: E402
+from app.config import get_settings as _gs
+
 _gs.cache_clear()
 
-import app.db.session as _dbs  # noqa: E402
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+import app.db.session as _dbs
 
 _s = _gs()
 
-from aiogram import Bot, Dispatcher  # noqa: E402
-from aiogram.client.session.base import BaseSession  # noqa: E402
-from aiogram.methods import GetMe, SendChatAction  # noqa: E402
-from aiogram.types import CallbackQuery, Chat, Message, Update, User  # noqa: E402
-from sqlalchemy.pool import StaticPool  # noqa: E402
+from aiogram import Bot, Dispatcher
+from aiogram.client.session.base import BaseSession
+from aiogram.methods import GetMe, SendChatAction
+from aiogram.types import CallbackQuery, Chat, Message, Update, User
+from sqlalchemy.pool import StaticPool
 
 
 def _fresh_engine():
@@ -139,8 +141,9 @@ async def _prepare_db() -> int:
                   last_update=local_now().astimezone(_tz.utc).replace(tzinfo=None),
                   hunger=80, happiness=70, hygiene=70, energy=80, health=100)
         await PetRepository(s).create(pet)
-        from app.db.models import Item
         from sqlalchemy import select
+
+        from app.db.models import Item
         bread = (await s.execute(
             select(Item).where(Item.code == "food_bread"))).scalar_one()
         s.add(PetInventory(pet_id=pet.id, item_id=bread.id, quantity=1))
@@ -191,8 +194,9 @@ def test_inventory_button_shows_item_and_quantity():
 def test_tap_opens_confirmation_without_spending():
     """Тап по предмету → окно подтверждения; предмет НЕ списан."""
     async def run():
-        from app.db.models import PetInventory
         from sqlalchemy import select
+
+        from app.db.models import PetInventory
         item_id = await _prepare_db()
         _session, texts, kb_dump = await _press(f"use:{item_id}")
         joined = "\n".join(texts)
@@ -210,8 +214,9 @@ def test_tap_opens_confirmation_without_spending():
 def test_use_ok_spends_item():
     """Подтверждение «use_ok» применяет предмет и списывает одну штуку."""
     async def run():
-        from app.db.models import PetInventory
         from sqlalchemy import select
+
+        from app.db.models import PetInventory
         item_id = await _prepare_db()
         _session, texts, _kb = await _press(f"use_ok:{item_id}")
         joined = "\n".join(texts)

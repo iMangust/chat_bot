@@ -4,6 +4,7 @@ import math
 
 from app.config import get_settings
 
+
 def xp_needed_for_level(level: int) -> int:
     base = get_settings().xp_level_base
     return max(int(base * (level ** 1.5)), 1)

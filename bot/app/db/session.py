@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 
-from sqlalchemy.ext.asyncio import (
-    AsyncSession, async_sessionmaker, create_async_engine,
-)
-
 from aiogram.types import CallbackQuery, Message
+from sqlalchemy.ext.asyncio import (
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 from app.config import get_settings
 
@@ -49,9 +50,8 @@ class DbMiddleware:
             def _mount(obj) -> None:
                 if isinstance(obj, Message):
                     obj._bot = bot
-                elif isinstance(obj, CallbackQuery):
-                    if obj.message is not None:
-                        obj.message._bot = bot
+                elif isinstance(obj, CallbackQuery) and obj.message is not None:
+                    obj.message._bot = bot
 
             for key in ("message", "edited_message", "channel_post",
                         "edited_channel_post", "callback_query",

@@ -4,6 +4,7 @@
 скобок (CSV) бот вообще не запускался (ValueError у pydantic-settings).
 """
 import pytest
+
 from app.config import Settings, _normalize_int_list
 
 

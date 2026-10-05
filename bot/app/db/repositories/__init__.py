@@ -9,11 +9,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db.models import (
-    ChatMessageLog, NotificationSetting, Pet, PetActionLog, PetFriend,
-    ReactionLog, User, UserAchievement, UserStat, utcnow,
+    ChatMessageLog,
+    NotificationSetting,
+    Pet,
+    PetActionLog,
+    PetFriend,
+    ReactionLog,
+    User,
+    UserAchievement,
+    UserStat,
+    utcnow,
 )
 from app.services.access import numeric_chat_id
-from app.utils.local_time import db_bound, now as local_now
+from app.utils.local_time import db_bound
+from app.utils.local_time import now as local_now
+
 
 class UserRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -224,7 +234,7 @@ class ActivityRepository:
         return (await self.session.execute(stmt)).scalar_one()
 
     async def daily_counts(self, tg_id: int, days: int = 7,
-                           since: datetime | None = None) -> "dict[str, int]":
+                           since: datetime | None = None) -> dict[str, int]:
         # created_at хранится в локальном (камчатском) времени, поэтому день
         # режем func.date() напрямую — без сдвига на UTC.
         now = since or local_now()
@@ -350,7 +360,7 @@ class PetRepository:
                                       value=value, meta=meta or {}))
         await self.session.flush()
 
-    async def friends(self, pet_id: int) -> list["PetFriend"]:
+    async def friends(self, pet_id: int) -> list[PetFriend]:
         stmt = select(PetFriend).where(PetFriend.pet_id == pet_id)
         return list((await self.session.execute(stmt)).scalars())
 
@@ -632,7 +642,7 @@ class MerchRepository:
         return cat
 
     async def delete_category(self, code: str) -> bool:
-        from app.db.models import MerchCategory, MerchProduct, MerchVariant
+        from app.db.models import MerchProduct, MerchVariant
         cat = await self.get_category(code)
         if cat is None:
             return False
@@ -671,7 +681,7 @@ class MerchRepository:
         return p
 
     async def delete_product(self, product_id: int) -> bool:
-        from app.db.models import MerchProduct, MerchVariant
+        from app.db.models import MerchVariant
         p = await self.get_product(product_id)
         if p is None:
             return False
@@ -729,7 +739,6 @@ class MerchRepository:
         return v, True
 
     async def delete_variant(self, variant_id: int) -> bool:
-        from app.db.models import MerchVariant
         v = await self.get_variant(variant_id)
         if v is None:
             return False
@@ -797,6 +806,7 @@ class MerchRepository:
 
 async def seed_merch_catalog(session: AsyncSession) -> int:
     from sqlalchemy import func as _func
+
     from app.db.models import MerchCategory
     existing = (await session.execute(select(_func.count(MerchCategory.id)))).scalar() or 0
     if existing:
@@ -885,7 +895,6 @@ class EventRepository:
         return True
 
     async def delete(self, event_id: int) -> bool:
-        from app.db.models import Event
         ev = await self.get(event_id)
         if ev is None:
             return False

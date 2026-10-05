@@ -4,25 +4,18 @@ import contextlib
 import html
 
 from aiogram import Bot, F, Router
+from aiogram.enums import ChatType
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.enums import ChatType
-from aiogram.types import (CallbackQuery,
-                          InputMediaPhoto, Message)
-from app.keyboards.inline import InlineKeyboardButton, InlineKeyboardBuilder
+from aiogram.types import CallbackQuery, InputMediaPhoto, Message
 from loguru import logger
 
 from app.config import get_settings
 from app.db.repositories import MerchRepository
-from app.keyboards.inline import nav_row
+from app.keyboards.inline import InlineKeyboardBuilder, InlineKeyboardButton, nav_row
 from app.utils import nav
 from app.utils.safe_edit import safe_edit_or_answer
-
-
-
-
-
 
 
 def _chat_of(cb) -> int | None:
@@ -185,8 +178,9 @@ async def merch_product(cb: CallbackQuery, session) -> None:
     product = await repo.get_product(pid)
     if product is None:
         return await cb.answer("Товар не найден 😅", show_alert=True)
-    from app.db.models import MerchCategory
     from sqlalchemy import select as _select
+
+    from app.db.models import MerchCategory
     cat = (await session.execute(
         _select(MerchCategory).where(MerchCategory.id == product.category_id)
     )).scalar_one_or_none()
@@ -502,7 +496,7 @@ async def merch_reserve_card_open(message: Message, session, vid: int,
 
 
 @router.callback_query(F.data.startswith("merch:sold:") | F.data.startswith("merch:cancel:"))
-async def merch_admin_action(cb: CallbackQuery, session) -> None:  # noqa: C901
+async def merch_admin_action(cb: CallbackQuery, session) -> None:
     if not _is_merch_admin(cb.from_user.id):
         return await cb.answer("Это действие только для админов мерча 🙅", show_alert=True)
     parts = cb.data.split(":")
@@ -522,7 +516,7 @@ async def merch_admin_action(cb: CallbackQuery, session) -> None:  # noqa: C901
     if v is None:
         return await cb.answer("Позиция не найдена 😅", show_alert=True)
     product = await repo.get_product(v.product_id)
-    pname = product.name if product else f"#vid"
+    pname = product.name if product else "#vid"
 
     # Шаг 1 (или отказ на шаге 2): ничего не меняем в базе.
     if not confirm or confirm == "no":
@@ -684,7 +678,7 @@ COLOR_PALETTE = [
 ]
 ALL_COLORS = [name for name, _ in COLOR_PALETTE]
 DEFAULT_COLORS = ALL_COLORS[:4]
-COLOR_EMOJI = {name: emo for name, emo in COLOR_PALETTE}
+COLOR_EMOJI = dict(COLOR_PALETTE)
 
 def _color_label(color: str | None) -> str:
     if not color:
@@ -1020,7 +1014,7 @@ async def madmin_addprod_start(cb: CallbackQuery, session, state: FSMContext) ->
     await cb.answer()
 
 @router.callback_query(F.data.startswith("madmin:prod:"))
-async def madmin_product_menu(cb: CallbackQuery, session) -> None:  # noqa: C901
+async def madmin_product_menu(cb: CallbackQuery, session) -> None:
     if not _is_merch_admin(cb.from_user.id):
         return await cb.answer("Только для админов мерча 🙅", show_alert=True)
     try:
@@ -1046,8 +1040,9 @@ async def madmin_product_menu(cb: CallbackQuery, session) -> None:  # noqa: C901
     _vbtn(b, "🖼 Фото товара", f"madmin:img:{pid}")
     _vbtn(b, "🗑 Удалить товар", f"madmin:prodel:{pid}")
     _vsplit(b)
-    from app.db.models import MerchCategory
     from sqlalchemy import select as _select
+
+    from app.db.models import MerchCategory
     cat = (await session.execute(
         _select(MerchCategory).where(MerchCategory.id == product.category_id)
     )).scalar_one_or_none()
@@ -1740,7 +1735,7 @@ async def merch_admin_cmd(message: Message, session) -> None:
             res = sum(1 for v in variants if v.reserved_by is not None)
             lines.append(f"   • id={p.id} {html.escape(p.name)} — позиций {len(variants)}, "
                          f"остаток {stock}, броней {res}")
-    lines += ["", "Ниже — управление кнопками 👇 (команды тоже работают):"] + HELP_LINES
+    lines += ["", "Ниже — управление кнопками 👇 (команды тоже работают):", *HELP_LINES]
     b = _admin_kb()
     await message.answer("\n".join(lines), parse_mode="HTML", reply_markup=b.as_markup())
 

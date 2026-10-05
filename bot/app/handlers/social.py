@@ -4,30 +4,34 @@ import html
 
 from aiogram import F, Router
 from aiogram.filters import Command
-from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardMarkup, Message
-from app.keyboards.inline import InlineKeyboardBuilder
+from aiogram.types import (
+    BufferedInputFile,
+    CallbackQuery,
+    InlineKeyboardMarkup,
+    Message,
+)
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Pet
 from app.db.repositories import PetRepository
-from app.keyboards.inline import (back_to_main, nav_row, with_nav)
-from app.services.achievements import AchievementService
-from app.services.pet_social import (MAX_FRIENDS, list_friends, make_friends,
-                                     render_friend_list, suggest_friend)
-from app.services.profile_card import get_or_render_card
 from app.handlers.tamagotchi import set_pet_page
+from app.keyboards.inline import InlineKeyboardBuilder, nav_row, with_nav
+from app.services.achievements import AchievementService
+from app.services.pet_social import (
+    MAX_FRIENDS,
+    list_friends,
+    make_friends,
+    render_friend_list,
+    suggest_friend,
+)
+from app.services.profile_card import get_or_render_card
 from app.services.tamagotchi import SPECIES_DATA
 from app.utils.safe_edit import safe_edit_or_answer
 
 
-
-
-
-
-
 def _vrow(b):
-    b._markup = [list([btn]) for btn in list(b.buttons)]
+    b._markup = [[btn] for btn in list(b.buttons)]
     b.max_width = 1
 
 

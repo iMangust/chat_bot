@@ -57,7 +57,7 @@ def _env_default(key: str) -> float:
             import os
             raw = os.environ.get(env_name)
         return float(raw) if raw is not None else base
-    except Exception as exc:  # noqa: BLE001 — настройки могут ещё не грузиться
+    except Exception as exc:
         logger.debug("balance env default {} failed: {}", key, type(exc).__name__)
         return base
 

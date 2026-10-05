@@ -74,8 +74,8 @@ def _all_registered_cb_datas():
     промежуточные ходы (числа угадайки, Камни/Ножницы/Бумага, «Ещё карту»,
     состояние блэкджека). Именно отсутствие обработчика у таких кнопок и
     выглядело как «игра началась, а кнопки ходов молчат»."""
+    from app.handlers.games import _bj_kb, _bj_state_b64, _guess_kb, _rps_kb
     from app.keyboards.inline import games_menu
-    from app.handlers.games import _guess_kb, _rps_kb, _bj_kb, _bj_state_b64
 
     datas = []
     bj_tok = _bj_state_b64([[(2, "♠")], [(5, "♥"), (6, "♦")]],
@@ -97,14 +97,27 @@ def test_every_game_button_has_handler():
     """Каждая callback_data игровых клавиатур матчится хотя бы одному
     зарегистрированному хендлеру роутера games (иначе тап молча игнорируется)."""
     import asyncio
-    from aiogram.types import CallbackQuery
+
     datas = _all_registered_cb_datas()
     assert datas, "клавиатуры пустые"
 
     # Прогоняем каждую через реальные роутеры (тот же набор, что в main.py).
-    from app.handlers import (admin, access, settings, start, tracker,
-                              tamagotchi, games, shop, merch, manual, social,
-                              arena, stats, events)
+    from app.handlers import (
+        access,
+        admin,
+        arena,
+        events,
+        games,
+        manual,
+        merch,
+        settings,
+        shop,
+        social,
+        start,
+        stats,
+        tamagotchi,
+        tracker,
+    )
     order = [admin.router, access.router, settings.router, start.router,
              tracker.router, tamagotchi.router, games.router, shop.router,
              merch.router, manual.router, social.router, arena.router,
@@ -144,6 +157,7 @@ def test_moves_not_swallowed_by_earlier_handlers():
     (game_noop_guard матчил game:*; game_stale_guard возвращал coroutine
     вместо falsy). Проверяем порядок: первый матчивший handler — целевой."""
     import asyncio
+
     from app.handlers.games import router
 
     expected_first = {
@@ -192,8 +206,14 @@ def test_games_need_no_fsm_state():
     кнопках экрана), FSM-состояния им не нужны. Если кто-то снова добавит
     StateFilter к игровым хендлерам — после рестарта бота Redis-состояния
     теряются и кнопки «молчат» (исторический баг)."""
-    from app.handlers.games import (router, do_guess_cb, play_rps, bj_hit,
-                                    bj_stand, guess_new)
+    from app.handlers.games import (
+        bj_hit,
+        bj_stand,
+        do_guess_cb,
+        guess_new,
+        play_rps,
+        router,
+    )
     for h in router.callback_query.handlers:
         if h.callback in (do_guess_cb, play_rps, bj_hit, bj_stand, guess_new):
             src = inspect.getsource(h.callback)
@@ -264,7 +284,7 @@ def test_bj_state_roundtrip():
     """Снимок партии блэкджека в callback_data переживает сериализацию
     (замена FSM): deck/player/dealer/stay восстанавливаются точно, а
     подпись отбрасывает подделанные/обрезанные токены."""
-    from app.handlers.games import _bj_state_b64, _bj_load_state
+    from app.handlers.games import _bj_load_state, _bj_state_b64
     deck = [[3, "♠"], [11, "♥"]]
     player = [[5, "♦"], [6, "♣"]]
     dealer = [[9, "♠"], [2, "♥"]]
@@ -344,7 +364,8 @@ def _make_cb(data, tg_id, events):
 
 
 def _pet_row(**kw):
-    from datetime import datetime, timezone
+    from datetime import timezone
+
     from app.db.models import Pet
     from app.services.tamagotchi import local_now
     # last_update = «сейчас»: apply_decay не должен превращать свежую
@@ -359,12 +380,12 @@ def _pet_row(**kw):
 
 def _rps_two_taps(mine1, theirs1, mine2, theirs2):
     """Одна сессия (общий cooldown на объекте Pet) — два реальных тапа КНБ."""
-    from app.handlers import games as g
     from app.db.models import User
+    from app.handlers import games as g
 
     async def run():
-        from sqlalchemy.ext.asyncio import (async_sessionmaker,
-                                            create_async_engine)
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
         from app.db.models import Base
         # ВАЖНО: не диспозим движок до конца теста — in-memory sqlite живёт
         # в пуле соединений, dispose() уничтожает саму базу («no such table»).
@@ -418,8 +439,8 @@ def test_play_hard_cooldown_single_soft_answer_no_edit():
     from app.services.tamagotchi import local_now
 
     async def run():
-        from sqlalchemy.ext.asyncio import (async_sessionmaker,
-                                            create_async_engine)
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
         from app.db.models import Base, User
         from app.handlers import games as g
         engine = create_async_engine(

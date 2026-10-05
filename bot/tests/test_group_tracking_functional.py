@@ -20,7 +20,6 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
-from datetime import timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -37,6 +36,7 @@ def _session_factory(tmp_path, name):
     from app.config import get_settings
     get_settings.cache_clear()
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
     from app.db.models import Base
     engine = create_async_engine(os.environ["DATABASE_URL"])
     sf = async_sessionmaker(engine, expire_on_commit=False)

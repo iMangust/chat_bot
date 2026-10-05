@@ -8,6 +8,7 @@ from loguru import logger
 
 from app.config import get_settings
 
+
 async def collect_participant_ids() -> list[int]:
     from telethon.tl.functions.channels import GetFullChannelRequest
 
@@ -33,7 +34,10 @@ async def collect_participant_ids() -> list[int]:
             continue
         users: set[int] = set()
         total_count = None
-        async def _collect() -> int:
+
+        async def _collect(entity=entity, users=users) -> int:
+            # явная привязка loop-переменных через дефолты аргументов (B023):
+            # вызывается синхронно внутри той же итерации цикла, но так надёжнее
             n = 0
             async for p in client.iter_participants(entity, aggressive=True):
                 if not getattr(p, "bot", False):
@@ -163,7 +167,8 @@ async def _bot_api_confirmed_members(chat_id: int, uids: set[int]) -> set[int]:
     return out
 
 async def sync_subscribers(first_run: bool = False) -> dict:
-    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
     from app.db.repositories import SubscriberRepository
 
     per_chat = await collect_participants_by_chat()
@@ -244,10 +249,11 @@ async def full_rescan_subscribers() -> dict:
             existing_rows = set()
             async with session_factory() as s0:
                 from sqlalchemy import select as _select
+
                 from app.db.models import ChannelSubscriber as _CS
                 rows0 = (await s0.execute(
                     _select(_CS.user_id, _CS.chats))).all()
-                for uid0, chats0 in rows0:
+                for uid0, _chats0 in rows0:
                     if int(uid0) in new_uids:
                         existing_rows.add(int(uid0))
             to_verify = {u for u in new_uids if u not in existing_rows}
@@ -300,6 +306,7 @@ async def autosync_if_configured(first_run: bool | None = None) -> dict | None:
     if not mtproto_configured():
         return None
     from sqlalchemy.ext.asyncio import async_sessionmaker
+
     from app.db.repositories import SubscriberRepository
     from app.db.session import engine
     factory = async_sessionmaker(engine, expire_on_commit=False)

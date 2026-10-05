@@ -13,13 +13,12 @@ def telethon_available() -> bool:
     global _TELETHON_IMPORT_ERROR
     if _TELETHON_IMPORT_ERROR is not None:
         return _TELETHON_IMPORT_ERROR == ""
-    try:
-        import telethon
-        _TELETHON_IMPORT_ERROR = ""
-        return True
-    except ImportError:
+    import importlib.util
+    if importlib.util.find_spec("telethon") is None:
         _TELETHON_IMPORT_ERROR = "no"
         return False
+    _TELETHON_IMPORT_ERROR = ""
+    return True
 
 def credentials_configured() -> bool:
     st = get_settings()
@@ -428,7 +427,7 @@ async def get_chat_member_status(chat_id: int | str, user_id: int) -> str | None
         return None
 
 async def resolve_channel_entity(target: str | int) -> Any:
-    from telethon.tl.types import Channel, Chat, PeerChannel, PeerChat
+    from telethon.tl.types import Channel, Chat
     client = await holder.get()
     s = str(target).strip()
     want_channel_inner: int | None = None
@@ -466,19 +465,19 @@ async def resolve_channel_entity(target: str | int) -> Any:
             return ent
     if want_channel_inner is not None:
         try:
-            from telethon.tl.types import InputChannel as _IC
+            from telethon.errors import ChannelPrivateError
             from telethon.tl.functions.channels import (
                 GetChannelsRequest as _GetChannels,
             )
-            from telethon.errors import ChannelPrivateError
+            from telethon.tl.types import InputChannel as _IC
             resp = await client(_GetChannels(
                 [_IC(channel_id=want_channel_inner, access_hash=0)]))
             for ent in getattr(resp, "chats", []) or []:
                 if isinstance(ent, Channel) and int(ent.id) == want_channel_inner:
                     _DIALOGS_CACHE[("c", want_channel_inner)] = ent
-        except ChannelPrivateError:
+        except ChannelPrivateError as err:
             raise RuntimeError(f"Чат {target}: аккаунт не имеет доступа "
-                               "(приватный канал?)")
+                               "(приватный канал?)") from err
         except Exception as exc:
             logger.debug("MTProto: GetChannels fallback for {} failed: {}",
                          target, exc)

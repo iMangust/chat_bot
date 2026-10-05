@@ -4,10 +4,22 @@ import enum
 from datetime import datetime
 
 from sqlalchemy import (
-    BigInteger, Boolean, DateTime, Enum, Float, ForeignKey, Index,
-    Integer, JSON, String, Text, TypeDecorator, UniqueConstraint,
+    JSON,
+    BigInteger,
+    Boolean,
+    DateTime,
+    Enum,
+    Float,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    TypeDecorator,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
 
 def utcnow() -> datetime:
     """Текущий момент для колонок created_at/last_seen.
@@ -101,7 +113,7 @@ class User(Base):
     reactions_given: Mapped[int] = mapped_column(Integer, default=0)
     reactions_received: Mapped[int] = mapped_column(Integer, default=0)
 
-    pet: Mapped["Pet | None"] = relationship(back_populates="owner", uselist=False)
+    pet: Mapped[Pet | None] = relationship(back_populates="owner", uselist=False)
 
 class ChatMessageLog(Base):
     __tablename__ = "chat_messages_log"
@@ -188,7 +200,7 @@ class Achievement(Base):
         Enum(AchievementRarity, native_enum=False), default=AchievementRarity.common
     )
 
-    unlocks: Mapped[list["UserAchievement"]] = relationship(back_populates="achievement")
+    unlocks: Mapped[list[UserAchievement]] = relationship(back_populates="achievement")
 
 class UserAchievement(Base):
     __tablename__ = "user_achievements"
@@ -200,7 +212,7 @@ class UserAchievement(Base):
     progress: Mapped[int] = mapped_column(Integer, default=0)
     unlocked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    achievement: Mapped["Achievement"] = relationship(back_populates="unlocks")
+    achievement: Mapped[Achievement] = relationship(back_populates="unlocks")
 
 class PetStage(str, enum.Enum):
     egg = "egg"
@@ -255,8 +267,8 @@ class Pet(Base):
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     archive_reason: Mapped[str | None] = mapped_column(String(32))
 
-    owner: Mapped["User"] = relationship(back_populates="pet")
-    inventory: Mapped[list["PetInventory"]] = relationship(back_populates="pet", cascade="all, delete-orphan")
+    owner: Mapped[User] = relationship(back_populates="pet")
+    inventory: Mapped[list[PetInventory]] = relationship(back_populates="pet", cascade="all, delete-orphan")
 
 class Item(Base):
     __tablename__ = "items"
@@ -279,8 +291,8 @@ class PetInventory(Base):
     item_id: Mapped[int] = mapped_column(Integer, ForeignKey("items.id", ondelete="CASCADE"))
     quantity: Mapped[int] = mapped_column(Integer, default=1)
 
-    pet: Mapped["Pet"] = relationship(back_populates="inventory")
-    item: Mapped["Item"] = relationship()
+    pet: Mapped[Pet] = relationship(back_populates="inventory")
+    item: Mapped[Item] = relationship()
 
 class PetActionLog(Base):
     __tablename__ = "pet_actions_log"

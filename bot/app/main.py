@@ -10,25 +10,43 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.redis import RedisStorage
-from aiogram.types import BotCommand, BotCommandScopeAllChatAdministrators, BotCommandScopeAllGroupChats, BotCommandScopeAllPrivateChats
+from aiogram.types import (
+    BotCommand,
+    BotCommandScopeAllChatAdministrators,
+    BotCommandScopeAllGroupChats,
+    BotCommandScopeAllPrivateChats,
+)
 from loguru import logger
-
 from sqlalchemy import inspect as sa_inspect
 
 from app.config import get_settings
 from app.db.models import Base, utcnow
+from app.db.repositories import seed_merch_catalog
 from app.db.session import DbMiddleware, engine, session_factory
-from app.handlers import (access as access_handlers, admin, arena, errors,
-                          events, games, manual, merch, shop, social,
-                          start, stats, tamagotchi, tracker)
+from app.handlers import access as access_handlers
+from app.handlers import (
+    admin,
+    arena,
+    errors,
+    events,
+    games,
+    manual,
+    merch,
+    shop,
+    social,
+    start,
+    stats,
+    tamagotchi,
+    tracker,
+)
+from app.handlers.shop import seed_items
 from app.middlewares.gate import AccessGateMiddleware
 from app.middlewares.nav_stack import NavStackMiddleware
 from app.middlewares.throttle import ThrottleMiddleware
-from app.db.repositories import seed_merch_catalog
-from app.handlers.shop import seed_items
 from app.services.achievements import seed_achievements
 from app.tasks.scheduler import build_scheduler
 from app.utils.redis import close_redis, init_redis
+
 
 def setup_logging(level: str) -> None:
     logger.remove()
@@ -767,7 +785,7 @@ async def _sync_bot_commands(bot: Bot) -> None:
             if res is not None:
                 logger.info("🔄 MTProto autosync: {}", res)
         else:
-            asyncio.create_task(autosync_guard())
+            _autosync_guard_task = asyncio.create_task(autosync_guard())  # noqa: RUF006 — strong ref held until done-callback
     except Exception as exc:
         logger.info("MTProto autosync недоступен ({}) — работаю только на Bot API",
                     type(exc).__name__)
@@ -798,15 +816,18 @@ async def main() -> None:
             me = await bot.get_me()
             if me.username:
                 settings.bot_username = me.username
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("get_me for bot_username failed: %s", exc)
     storage = _make_fsm_storage(settings.redis_url)
     storage = await probe_fsm_storage(storage)
 
     dp = Dispatcher(storage=storage)
     dp.update.outer_middleware(DbMiddleware())
-    from app.middlewares.theme import (ThemeMiddleware, ThemeErrorMiddleware,
-                                       ThemeGuardMiddleware)
+    from app.middlewares.theme import (
+        ThemeErrorMiddleware,
+        ThemeGuardMiddleware,
+        ThemeMiddleware,
+    )
     dp.update.outer_middleware(ThemeMiddleware())
     dp.errors.middleware(ThemeErrorMiddleware())
     # Inner-гарант: прямо перед каждым хендлером убеждаемся, что в контексте
@@ -896,8 +917,8 @@ async def main() -> None:
             await dp.start_polling(
                 bot,
                 timeout=settings.polling_timeout,
-                
-                allowed_updates=dp.resolve_used_update_types() + ["message_reaction", "message_reaction_count", "chat_member"],
+
+                allowed_updates=[*dp.resolve_used_update_types(), "message_reaction", "message_reaction_count", "chat_member"],
                 handle_signals=False,
             )
             stop.set()
@@ -908,7 +929,7 @@ async def main() -> None:
             await bot.set_webhook(
                 url=f"{settings.webhook_url}/webhook",
                 secret_token=settings.webhook_secret_token,
-                allowed_updates=dp.resolve_used_update_types() + ["message_reaction", "message_reaction_count", "chat_member"],
+                allowed_updates=[*dp.resolve_used_update_types(), "message_reaction", "message_reaction_count", "chat_member"],
             )
             app = web.Application()
             app.router.add_route("POST", "/webhook",

@@ -2,17 +2,19 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 
+from loguru import logger
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from loguru import logger
 
 from app.config import get_settings
 from app.db.models import ChatMessageLog, User
 from app.db.repositories import ActivityRepository, UserRepository
 from app.services.achievements import AchievementService
 from app.utils.html_text import esc
+from app.utils.local_time import db_bound
+from app.utils.local_time import now as local_now
 from app.utils.redis import set_cooldown
-from app.utils.local_time import db_bound, now as local_now
+
 
 def _aware(dt: datetime) -> datetime:
     from app.utils.local_time import localize
@@ -230,7 +232,7 @@ class ActivityService:
         try:
             from app.services.access import numeric_chat_id
             norm_chat = numeric_chat_id(chat_id) or chat_id
-        except Exception:  # noqa: BLE001
+        except Exception:
             norm_chat = chat_id
         entry = ReactionLog(from_user=from_user, to_user=to_user, chat_id=norm_chat,
                             message_id=message_id, emoji=emoji, is_counted=counted)

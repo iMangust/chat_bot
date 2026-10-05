@@ -97,7 +97,7 @@ async def cmd_manual(message: Message, session: AsyncSession) -> None:
 def _is_admin(user_id: int) -> bool:
     try:
         return user_id in set(get_settings().admin_ids or [])
-    except Exception:  # noqa: BLE001
+    except Exception:
         return False
 
 

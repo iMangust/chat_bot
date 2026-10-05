@@ -83,6 +83,7 @@ async def test_multiple_failures_are_all_logged_and_survived(monkeypatch):
     ошибок делается через временный sink loguru.
     """
     import io
+
     from loguru import logger as _logger
 
     executed = _patch_steps(monkeypatch, failing_names={"schema", "seed"})

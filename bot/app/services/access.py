@@ -2,16 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import html as _html_mod
 import time
 from collections import OrderedDict
-import html as _html_mod
-from typing import Iterable
+from collections.abc import Iterable
 
 from loguru import logger
 
 from app.config import get_settings
 
-_celebrated: "OrderedDict[int, float]" = OrderedDict()
+_celebrated: OrderedDict[int, float] = OrderedDict()
 _CELEBRATE_COOLDOWN_SEC = 3 * 3600
 _CELEBRATED_MAX = 8192   # LRU-лимит: dict рос бы без ограничений
 _celebrate_tasks: set[asyncio.Task] = set()
@@ -57,6 +57,7 @@ async def celebrate_subscription(bot, user_id: int, first_name: str = "") -> Non
     kb = None
     with contextlib.suppress(Exception):
         from aiogram.types import InlineKeyboardMarkup
+
         from app.keyboards.inline import InlineKeyboardButton
         kb = InlineKeyboardMarkup(inline_keyboard=[[
             InlineKeyboardButton(text="▶️ Начать", callback_data="onb:start")]])

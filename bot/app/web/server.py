@@ -24,8 +24,12 @@ app = FastAPI(title="TamaBot Control Panel", docs_url=None, redoc_url=None)
 # получал 404 на data_views.js — все вкладки с данными оставались пустыми.
 app.mount("/static", StaticFiles(directory=str(WEB_DIR / "static")), name="static")
 
-from app.web.admin_api import (DEFAULT_WEBHOOK_SECRET, router as admin_router,
-                               set_ephemeral_token)  # noqa: E402
+from app.web.admin_api import (
+    DEFAULT_WEBHOOK_SECRET,
+    set_ephemeral_token,
+)
+from app.web.admin_api import router as admin_router
+
 app.include_router(admin_router)
 
 
@@ -210,6 +214,7 @@ class LogHub:
     def __init__(self) -> None:
         self.clients: set[WebSocket] = set()
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._broadcast_tasks: set[asyncio.Task] = set()
 
     def attach(self) -> None:
         from app.console.runtime import ui_log_handler
@@ -221,7 +226,9 @@ class LogHub:
             self._loop.call_soon_threadsafe(self._schedule, line)
 
     def _schedule(self, line: str) -> None:
-        asyncio.ensure_future(self._broadcast(line))
+        # keep strong refs to in-flight broadcast tasks (RUF006)
+        self._broadcast_tasks.add(t := asyncio.ensure_future(self._broadcast(line)))
+        t.add_done_callback(self._broadcast_tasks.discard)
 
     async def _broadcast(self, line: str) -> None:
         dead = []
@@ -391,7 +398,6 @@ async def save_settings(body: SettingsPatch) -> dict:
             "warnings": warns, "restartRequired": restart_required}
 
 def _apply_log_level(level: str) -> None:
-    from loguru import logger
     from app.console.runtime import setup_file_logging
     setup_file_logging(level)
 

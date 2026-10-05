@@ -35,30 +35,25 @@ from __future__ import annotations
   и возврат в меню игр — никогда тишина.
 """
 
-import base64
-import json
 import logging
 import os
 import random
 import secrets
-import time
 import zlib
 
-from cachetools import TTLCache
-
 from aiogram import F, Router
-from aiogram.exceptions import TelegramAPIError
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
+from cachetools import TTLCache
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.repositories import PetRepository, UserRepository
+from app.handlers.tamagotchi import _deny, set_pet_page
 from app.i18n import t
-from app.utils.local_time import now as local_now
 from app.keyboards.inline import games_menu, inline_back_kb, pet_hub
 from app.services.achievements import AchievementService
-from app.utils.safe_edit import safe_edit_or_answer
-from app.handlers.tamagotchi import set_pet_page, _deny
 from app.services.tamagotchi import SPECIES_DATA, TamagotchiService, _species_key
+from app.utils.local_time import now as local_now
+from app.utils.safe_edit import safe_edit_or_answer
 
 router = Router(name="games")
 logger = logging.getLogger(__name__)
@@ -197,8 +192,8 @@ async def _finish_game(cb: CallbackQuery, session: AsyncSession, pet,
             await svc.add_pet_xp(pet, xp)
             await PetRepository(session).log_action(pet.id, "walk_done", value=coins)
             prefix = f"{wtext}\n\n"
-    except Exception as exc:  # noqa: BLE001 — сбор прогулки не должен ломать итог игры
-        logger.debug("Итоги игры: сбор прогулки не удался ({!r}) — пропускаем", exc)
+    except Exception as exc:
+        logger.debug("Итоги игры: сбор прогулки не удался (%r) — пропускаем", exc)
     text = f"{prefix}{line}{result}\n\n{await svc.render_async(pet)}"
     markup = games_menu(_chat_of(cb))
     # Единый безопасный рендер: edit при возможности, иначе новое сообщение;
@@ -284,6 +279,7 @@ def _guess_kb(lo: int, hi: int, secret: int, chat_id: int | None) -> InlineKeybo
 # текстовых ходов (callback-ходы самодостаточны и его не читают).
 # LRU с лимитом: обычный dict оставлял бы запись каждого чата навсегда.
 from app.utils.chat_ctx import BoundedChatCtx
+
 _CHAT_GUESS_SECRET = BoundedChatCtx(maxsize=4096)
 
 

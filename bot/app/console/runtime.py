@@ -11,21 +11,40 @@ from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.fsm.state import State
-from aiogram.types import BotCommand, BotCommandScopeAllChatAdministrators, BotCommandScopeAllGroupChats, BotCommandScopeAllPrivateChats
+from aiogram.types import (
+    BotCommand,
+    BotCommandScopeAllChatAdministrators,
+    BotCommandScopeAllGroupChats,
+    BotCommandScopeAllPrivateChats,
+)
 from loguru import logger
 
 from app.config import get_settings
 from app.db.models import Base
 from app.db.session import DbMiddleware, engine, session_factory
-from app.handlers import (access as access_handlers, admin, arena, errors,
-                          events, games, manual, merch,
-                          settings as settings_handlers, shop, social, start,
-                          stats, tamagotchi, tracker)
+from app.handlers import access as access_handlers
+from app.handlers import (
+    admin,
+    arena,
+    errors,
+    events,
+    games,
+    manual,
+    merch,
+    shop,
+    social,
+    start,
+    stats,
+    tamagotchi,
+    tracker,
+)
+from app.handlers import settings as settings_handlers
 from app.handlers.shop import seed_items
 from app.middlewares.throttle import ThrottleMiddleware
 from app.services.achievements import seed_achievements
 from app.tasks.scheduler import build_scheduler
 from app.utils.redis import close_redis, init_redis
+
 
 class UiLogHandler:
 
@@ -72,8 +91,8 @@ def _reset_router_state(dp: Dispatcher) -> None:
         if chain is not None:
             with contextlib.suppress(Exception):
                 chain.unresolvable_handlers.clear()
-    for cls in getattr(State, "__subclasses__", lambda: [])():
-        for name, val in list(vars(cls).items()):
+    for cls in getattr(State, "__subclasses__", list)():
+        for _name, val in list(vars(cls).items()):
             if isinstance(val, dict):
                 for f in val.values():
                     with contextlib.suppress(Exception):
@@ -116,9 +135,11 @@ class BotRuntime:
 
             dp = Dispatcher(storage=storage)
             dp.update.outer_middleware(DbMiddleware())
-            from app.middlewares.theme import (ThemeMiddleware,
-                                               ThemeErrorMiddleware,
-                                               ThemeGuardMiddleware)
+            from app.middlewares.theme import (
+                ThemeErrorMiddleware,
+                ThemeGuardMiddleware,
+                ThemeMiddleware,
+            )
             dp.update.outer_middleware(ThemeMiddleware())
             dp.errors.middleware(ThemeErrorMiddleware())
             # Inner-гарант темы перед каждым хендлером (см. main.py)
@@ -150,10 +171,12 @@ class BotRuntime:
 
             async with engine.begin() as conn:
                 await conn.run_sync(Base.metadata.create_all)
-            from app.main import (_backfill_subscriber_chats_v202,
-                                  _light_migrations,
-                                  _migrate_channel_subscribers_v20,
-                                  ensure_events_table)
+            from app.main import (
+                _backfill_subscriber_chats_v202,
+                _light_migrations,
+                _migrate_channel_subscribers_v20,
+                ensure_events_table,
+            )
             # Тот же набор миграций/само-исцелений схемы, что и в app.main.on_startup:
             # без него лёгкие колонки (welcome_shown и др.) и таблица events не
             # создаются при запуске через веб-панель.
@@ -196,7 +219,7 @@ class BotRuntime:
             self.started_at = time.time()
             self.state = "running"
 
-            allowed = dp.resolve_used_update_types() + ["message_reaction", "message_reaction_count", "chat_member"]
+            allowed = [*dp.resolve_used_update_types(), "message_reaction", "message_reaction_count", "chat_member"]
 
             @dp.startup()
             async def _startup_extras() -> None:
@@ -244,7 +267,7 @@ class BotRuntime:
             logger.error("💥 polling crashed: {}", exc)
             self.last_error = str(exc)
             if self._loop is not None:
-                asyncio.ensure_future(self._cleanup_partial(), loop=self._loop)
+                asyncio.ensure_future(self._cleanup_partial(), loop=self._loop)  # noqa: RUF006 — cleanup task, loop-bound
             self.state = "stopped"
 
     async def stop(self) -> None:
@@ -264,7 +287,7 @@ class BotRuntime:
                 await self._polling_task
             except asyncio.CancelledError:
                 pass  # ожидаемый исход отмены polling при остановке
-            except Exception as exc:  # noqa: BLE001 — не роняем shutdown
+            except Exception as exc:
                 logger.debug("polling task finished with error during shutdown: {}", exc)
             self._polling_task = None
         await close_redis()

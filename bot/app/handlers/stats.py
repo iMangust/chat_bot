@@ -4,23 +4,33 @@ import html
 from datetime import datetime, timedelta
 
 from aiogram import F, Router
+from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.repositories import UserRepository
-from aiogram.filters import Command
-
-from app.keyboards.inline import (achievements_list, back_to_main,
-                                  main_menu, nav_row, top_tabs,
-                                  with_nav)
-from app.services.leaderboard import (overall_top, top_emotional, top_karma,
-                                      top_levels, top_messages, top_pets,
-                                      top_reactions, top_streaks)
-from app.services.activity import ActivityService
+from app.keyboards.inline import (
+    achievements_list,
+    back_to_main,
+    main_menu,
+    top_tabs,
+    with_nav,
+)
 from app.services.achievements import AchievementService
+from app.services.activity import ActivityService
+from app.services.leaderboard import (
+    overall_top,
+    top_emotional,
+    top_karma,
+    top_levels,
+    top_messages,
+    top_pets,
+    top_reactions,
+    top_streaks,
+)
 from app.utils.formatting import progress_bar, xp_needed_for_level
-from app.utils.safe_edit import safe_edit_or_answer, answer_safe
 from app.utils.local_time import now as local_now
+from app.utils.safe_edit import answer_safe, safe_edit_or_answer
 
 router = Router(name="stats")
 

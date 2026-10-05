@@ -107,8 +107,8 @@ async def cmd_access_debug(message: Message, bot: Bot) -> None:
     uid_list = uid_list[:10]
     msg = await message.answer(
         f"⏳ Прогоняю цепочку доступа для {len(uid_list)} пользователь(ей)…")
-    from app.middlewares import gate
     from app.handlers.access import ensure_registry_fresh, last_scan_stats
+    from app.middlewares import gate
     chats = gate.required_chats()
     lines = [f"🔎 <b>Диагностика доступа</b> ({len(uid_list)} пользователь(ей))", ""]
     if not chats:

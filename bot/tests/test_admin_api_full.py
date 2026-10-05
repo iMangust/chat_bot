@@ -1,5 +1,8 @@
 """Функциональный тест REST API панели: все ручки с токеном и без."""
-import asyncio, os, sys, tempfile
+import asyncio
+import os
+import sys
+import tempfile
 
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///" + os.path.join(tempfile.mkdtemp(), "t.db")
 os.environ["REDIS_URL"] = ""  # FSM in-memory не нужен для API
@@ -8,13 +11,15 @@ os.environ["WEBHOOK_SECRET_TOKEN"] = "SecRetTokEn123"
 sys.path.insert(0, ".")
 
 # Сброс lru-кеша настроек (тесты идут в одном pytest-процессе)
-from app.config import get_settings as _gs  # noqa: E402
+from app.config import get_settings as _gs
+
 _gs.cache_clear()
 
-from app.db.session import engine, session_factory  # noqa: E402
-from app.db.models import Base  # noqa: E402
-from fastapi import FastAPI  # noqa: E402
-from httpx import ASGITransport, AsyncClient  # noqa: E402
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
+
+from app.db.models import Base
+from app.db.session import engine, session_factory
 
 
 async def main():
@@ -22,7 +27,7 @@ async def main():
         await conn.run_sync(Base.metadata.create_all)
 
     # наполним данные
-    from app.db.repositories import MerchRepository, EventRepository, UserRepository
+    from app.db.repositories import EventRepository, MerchRepository, UserRepository
     async with session_factory() as s:
         u = await UserRepository(s).get_or_create(777, "Тест", "testuser")
         m = MerchRepository(s)

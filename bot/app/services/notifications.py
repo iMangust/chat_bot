@@ -10,6 +10,7 @@ from app.services.tamagotchi import MOOD_TEXT, compute_mood
 from app.utils.html_text import esc
 from app.utils.local_time import now as local_now
 
+
 async def queue_notification(session: AsyncSession, user_id: int, kind: str,
                              text: str, send_at: datetime | None = None,
                              reply_markup=None) -> bool:

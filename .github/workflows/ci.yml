@@ -56,13 +56,19 @@ jobs:
       - name: Compile check (syntax gate — issue #2 аудита)
         run: python -m compileall -q app alembic scripts
 
-      - name: Run pytest
+      - name: Ruff lint
+        # Конфигурация — bot/ruff.toml. Набор правил E/F/W/I/UP/B/C4/SIM/RUF/PIE
+        # с задокументированными исключениями; ловит реальные баги
+        # (неиспользуемые импорты, loop-capture, raise-from и т.п.).
+        run: python -m ruff check .
+
+      - name: "Run pytest (coverage ratchet — порог в pytest.ini, fail_under=35)"
         env:
           # Минимально валидная конфигурация: тесты подменяют настройки сами,
           # но fail-fast валидатор вебхука (issue #8) не должен сработать.
           BOT_TOKEN: "test-token"
           IS_DEV: "true"
-        run: python -m pytest tests -q --tb=short -p no:cacheprovider
+        run: python -m pytest tests -q --tb=short -p no:cacheprovider --cov
 
   migration-check:
     name: Alembic migrations apply cleanly (issue #5 аудита)

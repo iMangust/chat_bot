@@ -2,8 +2,8 @@
 import asyncio
 from datetime import timedelta
 
-from app.services.tamagotchi import TamagotchiService
 from app.db.models import Pet
+from app.services.tamagotchi import TamagotchiService
 from app.utils.local_time import now as local_now
 
 

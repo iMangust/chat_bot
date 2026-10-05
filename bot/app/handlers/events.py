@@ -10,23 +10,17 @@ from aiogram.filters import BaseFilter, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InputMediaPhoto, Message
-from app.keyboards.inline import InlineKeyboardBuilder, HOME_LABEL
 from loguru import logger
 
 from app.config import get_settings
 from app.db.repositories import EventRepository
+from app.keyboards.inline import HOME_LABEL, InlineKeyboardBuilder, _nav_back_cb
 from app.utils.local_time import now as local_now
 from app.utils.safe_edit import safe_edit_or_answer
-from app.keyboards.inline import _nav_back_cb
-
-
-
-
-
 
 
 def _vrow(b):
-    b._markup = [list([btn]) for btn in list(b.buttons)]
+    b._markup = [[btn] for btn in list(b.buttons)]
     b.max_width = 1
 
 
@@ -174,7 +168,11 @@ async def _render_list(cb: CallbackQuery, session, bot: Bot | None = None) -> No
     try:
         all_ev = await repo.all()
     except Exception as exc:
-        from sqlalchemy.exc import DisconnectionError, OperationalError, ProgrammingError
+        from sqlalchemy.exc import (
+            DisconnectionError,
+            OperationalError,
+            ProgrammingError,
+        )
         if not isinstance(exc, (OperationalError, ProgrammingError,
                                 DisconnectionError)):
             logger.exception("menu:events DB query failed: {}", exc)
@@ -303,10 +301,11 @@ async def _selfheal_reload_events(exc: Exception, session) -> list:
     3) Читаем список событий новой отдельной сессией, чтобы не зависеть от
        состояния сессии запросившего апдейта.
     """
-    import app.db.session as dbs
-    from app.db.models import Event
     from sqlalchemy import inspect as sa_inspect
     from sqlalchemy import select
+
+    import app.db.session as dbs
+    from app.db.models import Event
 
     # 1) Досоздать отсутствующую таблицу events (по модели, идемпотентно).
     try:
@@ -395,9 +394,9 @@ async def menu_events(cb: CallbackQuery, session, bot: Bot) -> None:
 # лища (Redis) start.router падал на первом же «menu:*» и все кнопки становились
 # «устаревшими»; теперь такие коллбэки долечиваются здесь, а не уходят в
 # catch-all.
-from app.handlers.stats import ach_screen as _stats_ach_screen  # noqa: E402
-from app.handlers.stats import stats_screen as _stats_screen  # noqa: E402
-from app.handlers.stats import top_screen as _stats_top_screen  # noqa: E402
+from app.handlers.stats import ach_screen as _stats_ach_screen
+from app.handlers.stats import stats_screen as _stats_screen
+from app.handlers.stats import top_screen as _stats_top_screen
 
 
 @router.callback_query(F.data.in_(("menu:stats", "menu:ach", "menu:top")))
@@ -411,12 +410,12 @@ async def menu_stats_bridge(cb: CallbackQuery, session) -> None:
 
 
 try:  # social может не импортироваться (циклические зависимости) — не критично
-    from app.handlers.social import cb_card as _social_card  # noqa: E402
+    from app.handlers.social import cb_card as _social_card
 
     @router.callback_query(F.data == "menu:card")
     async def menu_card_bridge(cb: CallbackQuery, session) -> None:
         await _social_card(cb, session)
-except Exception as exc:  # pragma: no cover  # noqa: BLE001
+except Exception as exc:  # pragma: no cover
     logger.warning("menu:card bridge не зарегистрирован (импорт social "
                    "не удался): {!r} — кнопка уйдёт в catch-all", exc)
 

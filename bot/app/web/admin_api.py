@@ -175,7 +175,7 @@ async def _ensure_db() -> None:
             return
         try:
             from app.db.session import engine
-            from app.main import ensure_events_table, _light_migrations
+            from app.main import _light_migrations, ensure_events_table
             async with engine.begin() as conn:
                 from app.db.models import Base
                 await conn.run_sync(Base.metadata.create_all)
@@ -184,7 +184,7 @@ async def _ensure_db() -> None:
             _db_init_done = True
             logger.info("admin API: схема БД проверена/создана при первом запросе")
         except Exception as exc:  # pragma: no cover
-            logger.warning("admin API: ленивая инициализация схемы не удалась: {}",
+            logger.warning("admin API: ленивая инициализация схемы не удалась: %r",
                            exc)
 
 
@@ -222,17 +222,24 @@ async def dashboard_token(request: Request) -> dict:
 
 @router.get("/stats/overview", dependencies=[Depends(_tok)])
 async def stats_overview() -> dict:
-    from app.db.models import (Achievement, ChannelSubscriber, Event, Pet,
-                               User, UserAchievement, utcnow)
+    from app.db.models import (
+        Achievement,
+        ChannelSubscriber,
+        Event,
+        Pet,
+        User,
+        UserAchievement,
+        utcnow,
+    )
     async with _session() as s:
         users_total = (await s.execute(select(func.count(User.tg_id)))).scalar() or 0
         users_week = (await s.execute(
             select(func.count(User.tg_id)).where(
                 User.created_at >= utcnow() - timedelta(days=7)))).scalar() or 0
         banned = (await s.execute(
-            select(func.count(User.tg_id)).where(User.is_banned == True))).scalar() or 0  # noqa: E712
+            select(func.count(User.tg_id)).where(User.is_banned == True))).scalar() or 0
         pets_total = (await s.execute(select(func.count(Pet.id)).where(
-            Pet.is_archived == False))).scalar() or 0  # noqa: E712
+            Pet.is_archived == False))).scalar() or 0
         ach_total = (await s.execute(select(func.count(Achievement.id)))).scalar() or 0
         unlocks = (await s.execute(select(func.count(UserAchievement.id)).where(
             UserAchievement.unlocked_at.is_not(None)))).scalar() or 0
@@ -264,9 +271,9 @@ async def list_users(q: str = "", limit: int = Query(50, le=500),
             conds.append(User.tg_id == int(qq))
         stmt = stmt.where(or_(*conds))
     if banned == "yes":
-        stmt = stmt.where(User.is_banned == True)  # noqa: E712
+        stmt = stmt.where(User.is_banned == True)
     elif banned == "no":
-        stmt = stmt.where(User.is_banned == False)  # noqa: E712
+        stmt = stmt.where(User.is_banned == False)
     order = {"created": User.created_at.desc(), "xp": User.xp.desc(),
              "level": User.level.desc(), "coins": User.coins.desc(),
              "active": User.updated_at.desc()}.get(sort, User.created_at.desc())
@@ -290,8 +297,7 @@ async def list_users(q: str = "", limit: int = Query(50, le=500),
 async def user_detail(tg_id: int) -> dict:
     """Карточка пользователя. Все необязательные блоки считаются защищённо:
     одна отсутствующая таблица/битая связь не должна ронять ручку в 500."""
-    from app.db.models import (NotificationSetting, Pet, ReactionLog,
-                               User, UserStat)
+    from app.db.models import NotificationSetting, Pet, ReactionLog, User, UserStat
     try:
         async with _session() as s:
             u = (await s.execute(select(User).where(User.tg_id == tg_id))
@@ -352,7 +358,7 @@ async def user_detail(tg_id: int) -> dict:
         raise
     except Exception as exc:
         logger.exception("user_detail failed for %s", tg_id)
-        raise HTTPException(500, f"Ошибка карточки пользователя: {type(exc).__name__}: {exc}")
+        raise HTTPException(500, f"Ошибка карточки пользователя: {type(exc).__name__}: {exc}") from exc
 
     # Достижения — отдельным защищённым блоком: при проблеме с таблицей
     # user_achievements карточка всё равно открывается.
@@ -521,7 +527,7 @@ async def achievements_list(with_holders: bool = False, user_id: int = 0) -> dic
                 select(UserAchievement.achievement_id, func.count())
                 .where(UserAchievement.unlocked_at.is_not(None))
                 .group_by(UserAchievement.achievement_id))).all()
-            counts = {aid: c for aid, c in rows}
+            counts = dict(rows)
         ustate: dict[int, tuple] = {}
         if user_id:
             rows = (await s.execute(select(UserAchievement).where(
@@ -743,7 +749,7 @@ async def merch_del_variant(variant_id: int) -> dict:
 
 @router.get("/merch/reservations", dependencies=[Depends(_tok)])
 async def merch_reservations() -> dict:
-    from app.db.models import MerchProduct, MerchVariant, User
+    from app.db.models import MerchProduct, User
     from app.db.repositories import MerchRepository
     async with _session() as s:
         rows = await MerchRepository(s).all_reserved()
@@ -882,7 +888,7 @@ async def broadcast(body: BroadcastBody) -> dict:
         raise HTTPException(422, "текст слишком длинный (>3500 симв.)")
     stmt = select(User.tg_id)
     if body.only_active:
-        stmt = stmt.where(User.is_banned == False)  # noqa: E712
+        stmt = stmt.where(User.is_banned == False)
     async with _session() as s:
         ids = (await s.execute(stmt)).scalars().all()
         from app.services.notifications import queue_notification
@@ -926,7 +932,7 @@ async def notifications_clear(body: dict | None = None) -> dict:
     async with _session() as s:
         stmt = select(NotificationQueue)
         if sent_only:
-            stmt = stmt.where(NotificationQueue.sent == True)  # noqa: E712
+            stmt = stmt.where(NotificationQueue.sent == True)
         rows = (await s.execute(stmt)).scalars().all()
         for n in rows:
             await s.delete(n)
@@ -1011,10 +1017,7 @@ async def grant_rewards(tg_id: int, body: GrantRewards) -> dict:
             raise HTTPException(400, "нечего выдавать: укажите опыт, монеты, предметы или текст")
 
         head = (body.message.strip() + "\n\n") if (body.message or "").strip() else ""
-        if parts:
-            text = head + "🎁 Вам начислено:\n" + "\n".join("• " + p for p in parts)
-        else:
-            text = body.message.strip()
+        text = head + "🎁 Вам начислено:\n" + "\n".join("• " + p for p in parts) if parts else body.message.strip()
         from app.services.notifications import queue_notification
         queued = await queue_notification(s, tg_id, "reward", text)
         await s.commit()
@@ -1122,8 +1125,8 @@ async def pet_edit(pet_id: int, body: PetEdit) -> dict:
             if attr == "stage":
                 try:
                     v = PetStage(str(val))
-                except ValueError:
-                    raise HTTPException(422, f"неизвестная стадия {val!r}")
+                except ValueError as err:
+                    raise HTTPException(422, f"неизвестная стадия {val!r}") from err
                 p.stage = v
             elif attr == "name":
                 name = str(val).strip()[:64]
@@ -1133,20 +1136,20 @@ async def pet_edit(pet_id: int, body: PetEdit) -> dict:
             elif attr in ("hunger", "happiness", "energy", "hygiene", "health"):
                 try:
                     v = float(val)
-                except (TypeError, ValueError):
-                    raise HTTPException(422, f"поле «{key}» должно быть числом")
+                except (TypeError, ValueError) as err:
+                    raise HTTPException(422, f"поле «{key}» должно быть числом") from err
                 setattr(p, attr, max(0.0, min(100.0, v)))
             elif attr in ("level", "strength", "agility", "intellect"):
                 try:
                     v = int(float(val))
-                except (TypeError, ValueError):
-                    raise HTTPException(422, f"поле «{key}» должно быть числом")
+                except (TypeError, ValueError) as err:
+                    raise HTTPException(422, f"поле «{key}» должно быть числом") from err
                 setattr(p, attr, max(1, v))
             elif attr == "xp":
                 try:
                     v = int(float(val))
-                except (TypeError, ValueError):
-                    raise HTTPException(422, "поле «опыт» должно быть числом")
+                except (TypeError, ValueError) as err:
+                    raise HTTPException(422, "поле «опыт» должно быть числом") from err
                 p.xp = max(0, v)
             elif isinstance(getattr(p, attr), bool):
                 setattr(p, attr, bool(val))

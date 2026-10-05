@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import random
 import re
-from collections import OrderedDict
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -15,17 +14,26 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import Pet
 from app.db.repositories import PetRepository, UserRepository
 from app.i18n import t
-from app.keyboards.inline import (PET_PAGES, adopt_cta_kb,
-                                   pet_history_kb, pet_hub,
-                                   pet_page_count, train_menu)
-from app.utils.safe_edit import safe_edit_or_answer, answer_safe
-from app.utils.html_text import esc
-from app.services.tamagotchi import (SPECIES_DATA, TamagotchiService, _aware,
-                                     _species_key)
-from app.services.weather import (STAT_LEGEND as _STAT_LEGEND,
-                                   walk_forecast_line, weather_hint_block)
-from app.utils.local_time import now as local_now
+from app.keyboards.inline import (
+    PET_PAGES,
+    adopt_cta_kb,
+    pet_history_kb,
+    pet_hub,
+    pet_page_count,
+    train_menu,
+)
+from app.services.tamagotchi import (
+    SPECIES_DATA,
+    TamagotchiService,
+    _aware,
+    _species_key,
+)
+from app.services.weather import STAT_LEGEND as _STAT_LEGEND
+from app.services.weather import walk_forecast_line, weather_hint_block
 from app.utils.chat_ctx import BoundedChatCtx
+from app.utils.html_text import esc
+from app.utils.local_time import now as local_now
+from app.utils.safe_edit import answer_safe, safe_edit_or_answer
 
 router = Router(name="tamagotchi")
 _aware_dt = _aware
@@ -38,7 +46,7 @@ async def _get_pet(session: AsyncSession, tg_id: int) -> Pet | None:
 
 
 def _hub_kb(svc: TamagotchiService, pet: Pet | None, chat_id,
-            page: int | None = None) -> "object":
+            page: int | None = None) -> object:
     """Единая клавиатура хаба питомца для ВСЕХ экранов раздела.
 
     Собирается из реального состояния питомца (critical/сон/прогулка), а не
@@ -312,13 +320,19 @@ async def _render_weather_screen(cb: CallbackQuery, view: str,
     # NameError/ImportError, пользователю показывается понятная заглушка.
     try:
         from app.keyboards.inline import weather_kb
+
         # ВАЖНО: weather_hint_block_fresh обязательно в этом же импорте —
         # раньше он здесь отсутствовал и экран падал с NameError (см. коммит
         # 501867a). Все имена, используемые ниже, должны быть в списке импорта.
-        from app.services.weather import (_ensure_fresh, hourly_points,
-                                          render_today, render_week,
-                                          weather_now, _day_rows,
-                                          weather_hint_block_fresh)
+        from app.services.weather import (
+            _day_rows,
+            _ensure_fresh,
+            hourly_points,
+            render_today,
+            render_week,
+            weather_hint_block_fresh,
+            weather_now,
+        )
         if force:
             await _ensure_fresh(force=True)
         w = await weather_now()
@@ -621,7 +635,7 @@ async def _after_action(cb: CallbackQuery, session: AsyncSession, result_text: s
         await PetRepository(session).log_action(pet.id, "walk_done", value=coins)
         prefix = f"{wtext}\n\n"
     try:
-        await safe_edit_or_answer(cb.message, 
+        await safe_edit_or_answer(cb.message,
             f"{prefix}{result_text}\n\n" + await svc.render_async(pet),
             reply_markup=_hub_kb(svc, pet, cb.message.chat.id if cb.message else None),
         )
@@ -629,8 +643,8 @@ async def _after_action(cb: CallbackQuery, session: AsyncSession, result_text: s
         await session.commit()
 
     try:
-        from app.services.activity import ActivityService
         from app.services.achievements import AchievementService
+        from app.services.activity import ActivityService
         user = await UserRepository(session).get(cb.from_user.id)
         if user is not None:
             counters = await ActivityService(session)._counters(user, local_now())

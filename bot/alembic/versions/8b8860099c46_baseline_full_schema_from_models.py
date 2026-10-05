@@ -1,22 +1,21 @@
 """baseline: full schema from models
 
 Revision ID: 8b8860099c46
-Revises: 
+Revises:
 Create Date: 2026-10-05 05:32:06.413820
 
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
 
-import app.db.models  # noqa: F401 — custom-типы (_JsonIntList) нужны при upgrade
-
+import app.db.models
+from alembic import op
 
 revision: str = '8b8860099c46'
-down_revision: Union[str, None] = None
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = None
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

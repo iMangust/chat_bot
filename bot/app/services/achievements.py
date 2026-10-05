@@ -2,16 +2,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from loguru import logger
 
 from app.db.models import (
-    Achievement, AchievementCategory, AchievementRarity, ConditionType,
-    User, UserAchievement,
+    Achievement,
+    AchievementCategory,
+    AchievementRarity,
+    ConditionType,
+    User,
+    UserAchievement,
 )
 from app.db.repositories import AchievementRepository
 from app.utils.local_time import now as local_now
+
 
 @dataclass(frozen=True)
 class AchievementDef:
@@ -85,9 +90,7 @@ ACHIEVEMENTS: list[AchievementDef] = [
 _BY_CODE = {a.code: a for a in ACHIEVEMENTS}
 
 async def seed_achievements(session: AsyncSession) -> int:
-    existing = {
-        row for row in (await session.execute(select(Achievement.code))).scalars()
-    }
+    existing = set((await session.execute(select(Achievement.code))).scalars())
     created = 0
     for i, a in enumerate(_BY_CODE.values(), start=1):
         if a.code in existing:

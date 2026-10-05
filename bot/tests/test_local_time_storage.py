@@ -71,13 +71,13 @@ def test_utcnow_writes_local_kamchatka_time(local_now_naive: datetime):
 
     written = utcnow()
     # запись должна совпадать с локальным временем (не с UTC!)
-    assert abs((written.replace(tzinfo=None) - local_now_naive)) < timedelta(minutes=2), (
+    assert abs(written.replace(tzinfo=None) - local_now_naive) < timedelta(minutes=2), (
         "models.utcnow() должен писать локальное (камчатское) время: "
         f"записано {written}, локальное {local_now_naive}"
     )
     # и НЕ должен совпадать с UTC (это был баг: разница ровно 12 часов)
     utc_now = datetime.now(timezone.utc).replace(tzinfo=None)
-    assert abs((written.replace(tzinfo=None) - utc_now)) > timedelta(hours=6)
+    assert abs(written.replace(tzinfo=None) - utc_now) > timedelta(hours=6)
 
 
 def test_db_bound_keeps_local_bounds(local_now_naive: datetime):
@@ -123,7 +123,7 @@ def test_created_at_column_matches_wall_clock(tmp_path, local_now_naive):
             return row
 
         stored = asyncio.run(main())
-        assert abs((stored.replace(tzinfo=None) - local_now_naive)) < timedelta(minutes=2), (
+        assert abs(stored.replace(tzinfo=None) - local_now_naive) < timedelta(minutes=2), (
             f"в базе {stored}, а на часах (Камчатка) {local_now_naive} — "
             "разница недопустима"
         )

@@ -18,10 +18,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from aiogram.utils.keyboard import InlineKeyboardBuilder  # noqa: E402
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-from app.keyboards import inline as ik  # noqa: E402
-from app.utils import nav  # noqa: E402
+from app.keyboards import inline as ik
+from app.utils import nav
 
 
 def _back_cb_of(kb):
@@ -37,7 +37,7 @@ def _set_stack(chat_id: int, items: list[str]) -> None:
     # ВАЖНО: mem_stack возвращает КОПИЮ списка — пишем прямо в _mem,
     # иначе стек под тестом останется пустым и клавиатура деградирует.
     from collections import deque
-    nav._mem[int(chat_id)] = deque(items)  # noqa: SLF001
+    nav._mem[int(chat_id)] = deque(items)
 
 
 def test_main_menu_has_no_adopt_cta_and_next_pages():

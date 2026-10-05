@@ -1,18 +1,16 @@
 from __future__ import annotations
 
 import contextlib
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from aiogram import BaseMiddleware, Bot, F, Router
 from aiogram.enums import ChatMemberStatus, ChatType
 from aiogram.exceptions import TelegramForbiddenError
 from aiogram.filters import Command
-from aiogram.types import (CallbackQuery, ChatMemberUpdated, Message,
-                           TelegramObject)
+from aiogram.types import CallbackQuery, ChatMemberUpdated, Message, TelegramObject
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from collections.abc import Awaitable, Callable
-from typing import Any
 
 from app.config import get_settings
 from app.services import access as access_service
@@ -231,6 +229,7 @@ async def cb_gate_check(cb: CallbackQuery, bot: Bot) -> None:
 
 def _start_kb():
     from aiogram.types import InlineKeyboardMarkup
+
     from app.keyboards.inline import InlineKeyboardButton
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="▶️ Начать", callback_data="onb:start")]])

@@ -14,7 +14,7 @@ _SNAPSHOTS: dict[tuple[int, int], set[tuple[int, str]]] = {}
 
 def _emoji_key(rt) -> str | None:
     try:
-        from telethon.tl.types import ReactionEmoji, ReactionCustomEmoji
+        from telethon.tl.types import ReactionCustomEmoji, ReactionEmoji
     except Exception:
         return getattr(rt, "emoticon", None)
     if isinstance(rt, ReactionEmoji):
@@ -43,9 +43,8 @@ async def _resolve_author(chat_id: int, msg_id: int) -> int | None:
        чтобы не было ложных «это свой же id».
     """
     from app.db.session import session_factory
-    from app.services.activity import ActivityService
-
     from app.services.access import numeric_chat_id
+    from app.services.activity import ActivityService
 
     # Реестр сообщений ведётся в формате Bot API (-100XXXXXXXXXX), MTProto
     # отдаёт id без префикса — ищем по обеим нормализациям.
@@ -70,7 +69,7 @@ def _same_uid(a: int | None, b: int | None) -> bool:
         from app.services.access import numeric_chat_id
         na, nb = numeric_chat_id(a), numeric_chat_id(b)
         return na is not None and na == nb
-    except Exception:  # noqa: BLE001
+    except Exception:
         return int(a) == int(b)
 
 
@@ -207,8 +206,7 @@ _REACTION_TYPES: tuple[type, ...] | None = None
 def _reaction_types() -> tuple[type, ...]:
     global _REACTION_TYPES
     if _REACTION_TYPES is None:
-        from telethon.tl.types import (UpdateBotMessageReaction,
-                                       UpdateMessageReactions)
+        from telethon.tl.types import UpdateBotMessageReaction, UpdateMessageReactions
         _REACTION_TYPES = (UpdateMessageReactions, UpdateBotMessageReaction)
     return _REACTION_TYPES
 
@@ -245,8 +243,11 @@ async def warm_snapshots(client, hours: int = 24) -> int:
 
 async def start_reaction_listener() -> asyncio.Task | None:
     global _LISTENER_TASK
-    from app.services.mtproto_client import (credentials_configured,
-                                             holder, telethon_available)
+    from app.services.mtproto_client import (
+        credentials_configured,
+        holder,
+        telethon_available,
+    )
     if not telethon_available() or not credentials_configured():
         return None
     try:

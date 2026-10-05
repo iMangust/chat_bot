@@ -16,7 +16,6 @@ from pathlib import Path
 
 import pytest
 
-
 APP_DIR = Path(__file__).resolve().parents[1] / "app"
 
 FORBIDDEN = {"SetMessageReaction", "react_to_message"}

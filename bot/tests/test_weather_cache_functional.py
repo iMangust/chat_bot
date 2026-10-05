@@ -1,6 +1,9 @@
 """Регресс: негативное шторм-окно не должно затирать успешный кэш погоды."""
-import asyncio, os, sys
+import asyncio
+import os
+import sys
 from datetime import datetime, timedelta, timezone
+
 sys.path.insert(0, os.path.dirname("app"))
 from app.services import weather as W
 from app.utils.local_time import KAMCHATKA_TZ
@@ -76,6 +79,7 @@ class TestWeekHoursSurviveNoHourlySnapshot:
 
     def test_no_hourly_snapshot_keeps_cached_points(self):
         import asyncio
+
         from app.services import weather as W
 
         async def scenario():
@@ -116,6 +120,7 @@ class TestWeekHoursSurviveNoHourlySnapshot:
 
     def test_standalone_forecast_backfills_week(self):
         import asyncio
+
         from app.services import weather as W
 
         async def scenario():

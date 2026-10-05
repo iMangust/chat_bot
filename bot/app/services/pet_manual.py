@@ -19,10 +19,12 @@ from __future__ import annotations
 import html as _html
 
 from app.services import balance
-from app.services.pet_data import (SPECIES_DATA, SPECIES_START_PRICE)
-from app.services.tamagotchi import (DECAY_PER_HOUR,
-                                     SPECIES_SEASON_DECAY_MULT,
-                                     SPRING_ALL_HAPPY_MULT, SEASON_DECAY_MULT)
+from app.services.pet_data import SPECIES_DATA, SPECIES_START_PRICE
+from app.services.tamagotchi import (
+    SEASON_DECAY_MULT,
+    SPECIES_SEASON_DECAY_MULT,
+    SPRING_ALL_HAPPY_MULT,
+)
 
 PREF_LABELS = {
     "play": "🎾 Игры",
@@ -126,7 +128,7 @@ def games_guide_text() -> str:
                     "бесплатно, дальше по правилам магазина.",
                     "⚡ Нужно минимум 15 энергии.", "",
                     "Множители счастья за победу по видам:"]
-    for code, sp in SPECIES_DATA.items():
+    for _code, sp in SPECIES_DATA.items():
         m = sp["bonus"]["play_happy"]
         note = " 🐱 любимец игр" if m > 1.15 else (" ⚠️ не любит игры" if m < 1 else "")
         L.append(f"  {sp['emoji']} {sp['title']}: ×{_fmt(m)}{note}")
@@ -147,7 +149,6 @@ def species_season_notes(code: str) -> list[str]:
         for stat_key, mult in mods.items():
             label = {"hunger": "🍎", "energy": "⚡", "hygiene": "🫧",
                      "happy": "😊"}.get(stat_key, stat_key)
-            who = "все питомцы"
             notes.append(f"{SEASON_RU[season]}: {label} ×{_fmt(mult)} (у всех)")
     happy_winter = SEASON_DECAY_MULT.get("winter", {}).get("happy")
     if happy_winter:  # сейчас зимних happy-модов нет — защита на будущее

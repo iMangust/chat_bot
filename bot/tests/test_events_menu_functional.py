@@ -31,7 +31,8 @@ os.environ["ADMIN_IDS"] = "[]"
 # Тесты запускаются в одном pytest-процессе; get_settings() — lru_cache.
 # Сбрасываем кеш, чтобы настройки этого файла (в т.ч. ADMIN_IDS=[]) не
 # наследовались от других тестов и наоборот.
-from app.config import get_settings as _gs  # noqa: E402
+from app.config import get_settings as _gs
+
 _gs.cache_clear()
 
 # ВАЖНО: app.db.session создаёт engine при импорте — если модуль уже был
@@ -39,17 +40,21 @@ _gs.cache_clear()
 # указывал бы на чужую базу и видел её данные (регрессия: «Встреча» из
 # теста admin_api попадала в экран мероприятий). Пересоздаём engine/
 # session_factory на настройки ЭТОГО теста (:memory:).
-import app.db.session as _dbs  # noqa: E402
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+import app.db.session as _dbs
 
 _s = _gs()
 _dbs.engine = create_async_engine(_s.database_url)
 _dbs.session_factory = async_sessionmaker(
     _dbs.engine, class_=_dbs.AsyncSession, expire_on_commit=False)
 
-from aiogram.client.session.base import BaseSession  # noqa: E402
-from aiogram.methods import GetMe, SendChatAction  # noqa: E402
-from aiogram.types import CallbackQuery, Chat, Message, Update, User  # noqa: E402
+# Bot нужен только как аннотация; файл использует `from __future__ import
+# annotations`, но явный импорт убирает F821 при проверке типов/линтером.
+from aiogram import Bot
+from aiogram.client.session.base import BaseSession
+from aiogram.methods import GetMe, SendChatAction
+from aiogram.types import CallbackQuery, Chat, Message, Update, User
 
 # loguru-перехватчик: фиксируем факт входа в хендлер
 _captured_logs: list[str] = []
@@ -128,9 +133,22 @@ async def _run() -> None:
     import app.db.session as dbs
     from app.config import get_settings
     from app.db.models import Base
-    from app.handlers import (access as access_handlers, admin, arena, errors,
-                              events, games, merch, settings as settings_h,
-                              shop, social, start, stats, tamagotchi, tracker)
+    from app.handlers import access as access_handlers
+    from app.handlers import (
+        admin,
+        arena,
+        errors,
+        events,
+        games,
+        merch,
+        shop,
+        social,
+        start,
+        stats,
+        tamagotchi,
+        tracker,
+    )
+    from app.handlers import settings as settings_h
     from app.main import _make_fsm_storage, probe_fsm_storage
 
     engine = dbs.engine
@@ -197,9 +215,22 @@ async def _run_repeat_press() -> None:
     import app.db.session as dbs
     from app.config import get_settings
     from app.db.models import Base
-    from app.handlers import (access as access_handlers, admin, arena, errors,
-                              events, games, merch, settings as settings_h,
-                              shop, social, start, stats, tamagotchi, tracker)
+    from app.handlers import access as access_handlers
+    from app.handlers import (
+        admin,
+        arena,
+        errors,
+        events,
+        games,
+        merch,
+        shop,
+        social,
+        start,
+        stats,
+        tamagotchi,
+        tracker,
+    )
+    from app.handlers import settings as settings_h
     from app.main import _make_fsm_storage, probe_fsm_storage
 
     engine = dbs.engine

@@ -17,7 +17,7 @@ redis_client: Redis | None = None
 # Format: key -> expiry_time (monotonic clock).
 # When Redis is unavailable, all cooldowns/locks/counters live here and are
 # lost on restart (acceptable for dev/single-instance; production should have Redis).
-_mem_store: "OrderedDict[str, float]" = OrderedDict()
+_mem_store: OrderedDict[str, float] = OrderedDict()
 _MEM_MAX_KEYS = 8192  # Cap to prevent memory leak during long uptimes with dead Redis
 
 # Circuit breaker state: avoid hammering a dead Redis with ping() on every operation.
@@ -83,25 +83,24 @@ _warned_errors: set[str] = set()
 
 async def _try_redis() -> Any:
     """Check Redis availability with circuit breaker pattern.
-    
+
     Returns Redis client if healthy, None otherwise. Uses exponential backoff
     to avoid hammering a dead server: once unavailable, we only recheck every
     _redis_backoff_sec seconds. This prevents DDoSing a struggling Redis with
     ping() on every message/cooldown check.
     """
     global _redis_available, _redis_last_check
-    
+
     if redis_client is None:
         return None
-    
+
     now = time.monotonic()
-    
+
     # If marked unavailable, wait for backoff period before retrying
-    if not _redis_available:
-        if now - _redis_last_check < _redis_backoff_sec:
-            return None
+    if not _redis_available and now - _redis_last_check < _redis_backoff_sec:
+        return None
         # Backoff expired, will attempt reconnect below
-    
+
     # Health check (either initial or after backoff)
     try:
         await redis_client.ping()
@@ -112,7 +111,7 @@ async def _try_redis() -> Any:
         was_available = _redis_available
         _redis_available = False
         _redis_last_check = now
-        
+
         # Log transition to unavailable state (once per error type)
         if was_available:
             key = type(exc).__name__

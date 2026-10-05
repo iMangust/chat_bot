@@ -6,8 +6,8 @@ from aiogram.types import CallbackQuery, Message
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.repositories import PetRepository, UserRepository
-from app.keyboards.inline import open_slot_of, style_keyboard
 from app.handlers.tamagotchi import set_pet_page
+from app.keyboards.inline import open_slot_of, style_keyboard
 from app.services.pet_duels import arena_screen, fight
 from app.services.tamagotchi import TamagotchiService
 from app.utils.safe_edit import safe_edit_or_answer

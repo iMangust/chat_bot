@@ -4,13 +4,15 @@ import asyncio
 import os
 import threading
 import time as _mono
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from loguru import logger
 
 from app.utils.formatting import WEATHER_SEASONS, season_for
 from app.utils.html_text import esc
-from app.utils.local_time import now as local_now, user_tz
+from app.utils.local_time import now as local_now
+from app.utils.local_time import user_tz
+
 
 def _weather_geo() -> tuple[str, float, float]:
     """Город и координаты берутся из Settings (переменные WEATHER_* в .env),
@@ -105,7 +107,7 @@ async def fetch_real_weather() -> dict | None:
     if not openweather_key() or getattr(mod, "FORCE_FALLBACK", False):
         return None
     try:
-        owm = await getattr(mod, "fetch_openweather")()
+        owm = await mod.fetch_openweather()
     except Exception as exc:
         logger.warning("openweather unavailable: {}: {}", type(exc).__name__, str(exc)[:200])
         owm = None
@@ -214,7 +216,7 @@ def _parse_owm_current(js: dict) -> dict | None:
         "snow_cm": round(snow_mm * 7.0, 1) if (
             float(t) <= 1.0 and (code in SNOW_CODES or code in (66, 71, 77, 85, 86))) else 0.0,
         "cloud": float(cloud_pct if cloud_pct is not None else 60),
-        "pressure_hpa": float((main.get("pressure") or 0)),
+        "pressure_hpa": float(main.get("pressure") or 0),
         "description": desc,
         "source": "openweather",
         "obs": False,
@@ -222,7 +224,8 @@ def _parse_owm_current(js: dict) -> dict | None:
     }
 
 def _owm_utc_hour(ts: int) -> str:
-    from datetime import datetime as _dt, timezone as _tz
+    from datetime import datetime as _dt
+    from datetime import timezone as _tz
     try:
         return _dt.fromtimestamp(int(ts), tz=_tz.utc).strftime("%Y-%m-%dT%H")
     except (ValueError, OSError, OverflowError):
@@ -455,8 +458,7 @@ def _reset_state_for_tests() -> None:
 async def _do_fetch() -> dict | None:
     import sys as _sys
     try:
-        real = await getattr(
-            _sys.modules[__name__], "fetch_real_weather")()
+        real = await _sys.modules[__name__].fetch_real_weather()
     except Exception as exc:
         real = None
         logger.warning("погода: fetch исключение: {}", exc)
@@ -528,9 +530,7 @@ async def _ensure_fresh(force: bool = False) -> dict | None:
         # повторные сетевые попытки; при его наличии считаем кэш
         # «достаточно свежим», чтобы не долбить API — наружу уйдёт
         # сезонная модель.
-        if _storm_window_active(now_m):
-            return True
-        return False
+        return bool(_storm_window_active(now_m))
 
     def _start_or_join(now_m: float):
         global _fetch_inflight, _inflight_force
@@ -539,15 +539,17 @@ async def _ensure_fresh(force: bool = False) -> dict | None:
             fut = _fetch_inflight
             if fut is not None and not fut.done() and fut.get_loop() is loop:
                 return fut, False, False
-            if not force and _storm_window_active(now_m):
-                if not (fut is not None and not fut.done() and _inflight_force):
-                    return None, False, True
+            # штормовое окно: не пускаем НЕ-force запросы, только если в полёте
+            # нет force-запроса (он имеет приоритет и должен остаться единственным)
+            if (not force and _storm_window_active(now_m)
+                    and not (fut is not None and not fut.done() and _inflight_force)):
+                return None, False, True
             fut = loop.create_future()
             _fetch_inflight = fut
             _inflight_force = force
             return fut, True, False
 
-    fut: "asyncio.Future | None" = None
+    fut: asyncio.Future | None = None
     try:
         now_m = _mono.monotonic()
         if not force and _fresh_enough(now_m):
@@ -572,7 +574,7 @@ async def _ensure_fresh(force: bool = False) -> dict | None:
                 _inflight_force = False
 
 _FETCH_GUARD = threading.Lock()
-_fetch_inflight: "asyncio.Future | None" = None
+_fetch_inflight: asyncio.Future | None = None
 _inflight_force = False
 
 SUNNY_CODES = {0, 1, 2}
@@ -603,8 +605,8 @@ def classify_weather(code: int, temp_c: float, wind_kmh: float, *,
     if code < 0:
         return ""
     extreme_wind = (wind_kmh >= WIND_STORM_KMH
-                    or (gust or 0.0) >= WIND_STORM_KMH
-                    and (gust or 0.0) >= wind_kmh * GUST_ESCALATION_FACTOR)
+                    or ((gust or 0.0) >= WIND_STORM_KMH
+                    and (gust or 0.0) >= wind_kmh * GUST_ESCALATION_FACTOR))
     if temp_c <= COLD_TEMP_C or extreme_wind:
         return "frosty"
     if code in STORM_CODES:
@@ -923,7 +925,7 @@ def next_weather_tick(pet, dt: datetime | None = None) -> datetime:
 
 def weather_effects_lines(eff: dict | None = None, *, walk: bool = False,
                           forecast: dict | None = None,
-                          window_end: "datetime | tuple | str | None" = None,
+                          window_end: datetime | tuple | str | None = None,
                           pet=None, show_legend: bool = False) -> list[str]:
     eff = eff if eff is not None else weather_effect()
     if not eff:
@@ -998,8 +1000,7 @@ def weather_hint_block(*, walk: bool = False, pet=None,
         return ""
     fc = forecast_walk_mods(3) if walk else None
     stamp = _tick_time_parts(pet) if pet is not None else "скоро"
-    lines = [f"🌦️ {eff.get('label', '')}"] + weather_effects_lines(
-        eff, walk=walk, forecast=fc, window_end=stamp, show_legend=show_legend)
+    lines = [f"🌦️ {eff.get('label', '')}", *weather_effects_lines(eff, walk=walk, forecast=fc, window_end=stamp, show_legend=show_legend)]
     return "\n".join(lines)
 
 async def weather_hint_block_fresh(*, walk: bool = False, pet=None,
@@ -1012,13 +1013,14 @@ async def weather_hint_block_fresh(*, walk: bool = False, pet=None,
     except asyncio.TimeoutError:
         logger.debug("weather_hint_block_fresh: обновление кэша не успело за 4с — "
                      "отдаём текущий блок")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("weather_hint_block_fresh: обновление кэша failed ({!r}) — "
                        "отдаём текущий блок", exc)
     return weather_hint_block(walk=walk, pet=pet, show_legend=show_legend)
 
 def apply_weather_to_pet(pet, dt=None) -> str | None:
     import random as _random
+
     from app.utils.local_time import now as _local_now
     eff = weather_effect()
     if not eff:
@@ -1121,7 +1123,7 @@ async def local_weather() -> dict:
         except asyncio.TimeoutError:
             logger.debug("weather: фоновое обновление кэша не успело за 2с — "
                          "отдаём сезонную модель")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("weather: обновление кэша failed ({!r}) — "
                            "отдаём сезонную модель", exc)
     real = _cache["info"]
@@ -1257,7 +1259,7 @@ async def weather_button_label() -> str:
     """Подпись кнопки погоды в главном меню: «🌦 +3° Дождь» (не длиннее ~26 симв.)."""
     try:
         w = await weather_now()
-    except Exception as exc:  # noqa: BLE001 — меню не должно падать из-за погоды
+    except Exception as exc:
         logger.debug("weather_button_label: {}", exc)
         return "🌦️ Погода"
     if not w["live"]:
@@ -1306,7 +1308,7 @@ async def hourly_points() -> list[dict]:
         # чаще) — иначе недельный экран навсегда остаётся сезонной заглушкой.
         try:
             hours = await fetch_forecast_hours()
-        except Exception as exc:  # noqa: BLE001 — экран не должен падать
+        except Exception as exc:
             logger.debug("hourly_points: standalone forecast failed: {}", exc)
             hours = []
         if hours:

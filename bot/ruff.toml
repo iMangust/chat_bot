@@ -1,0 +1,54 @@
+# Ruff configuration for the Telegram tamagotchi bot.
+# Pragmatic rule set: correctness + hygiene without style-nazi noise.
+target-version = "py311"
+line-length = 120
+
+[lint]
+select = [
+    "E",     # pycodestyle errors (style warnings kept minimal via ignores below)
+    "F",     # pyflakes: unused imports/variables, undefined names (caught real F821 bug)
+    "W",     # pycodestyle warnings
+    "I",     # isort: deterministic import order (auto-fixed across the codebase)
+    "UP",    # pyupgrade: modern syntax (X | None, etc.)
+    "B",     # flake8-bugbear: likely real bugs (loop variable capture, raise-from, ...)
+    "C4",    # comprehension issues
+    "SIM",   # simplifications
+    "RUF",   # ruff-specific rules
+    "PIE",   # misc small improvements
+    "RET504",# unnecessary assignment before return
+]
+ignore = [
+    "E402",   # imports after sys.path bootstrap / conditional fallbacks — established pattern here
+    "E501",   # line length handled by formatter philosophy, not enforced on legacy text blocks
+    "E702",   # semicolon-separated statements — used in dense test fixtures
+    "E712",   # == True comparisons — SQLAlchemy expression API requires it (column == True)
+    "UP017",  # datetime.UTC alias — timezone.utc kept for consistency across the codebase
+    "UP031",  # printf-style formatting — pervasive in logging calls, churn not worth it
+    "UP041",  # TimeoutError alias — safe either way, low value
+    "UP042",  # StrEnum migration — behavior change risk (str() semantics), defer
+    "C408",   # dict()/list() calls — intentional kwargs style in config builders
+    "RUF001", # ambiguous unicode in strings — bot uses Russian text extensively by design
+    "RUF002", # ambiguous unicode in docstrings — same
+    "RUF003", # ambiguous unicode in comments — same
+    "RUF012", # mutable class defaults — SQLAlchemy/pydantic models flag false positives
+    "RUF059", # unused unpacked variables — tuple destructuring for positional clarity
+    "B008",   # function call in default arg — aiogram idiom: Depends(...) as defaults
+    "B905",   # zip without strict — reviewed call sites, inputs are equal-length by construction
+    "SIM105", # contextlib.suppress suggestion — we intentionally log in except blocks (issue #7)
+    "SIM108", # if-else kept when a branch carries an explanatory comment
+    "RET504", # keep assignments before return when they name the value for readability
+]
+
+[lint.per-file-ignores]
+# Tests deliberately use simple sync engines, shadowed fixtures, broad asserts.
+"tests/*" = ["B017", "E402", "F841"]
+# Legacy one-off migration scripts may reference removed helpers conditionally.
+"scripts/*" = ["E402"]
+"alembic/versions/*" = ["E402"]
+
+[lint.isort]
+known-first-party = ["app", "config", "i18n", "themes"]
+
+[format]
+quote-style = "double"
+indent-style = "space"

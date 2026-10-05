@@ -93,8 +93,8 @@ async def test_sleep_no_double_energy_regen():
                energy=20.0, last_update=now - timedelta(hours=2))
     await svc.apply_decay(pet, now)
     assert pet.is_sleeping  # ещё спит — идёт плановая регенерация
-    from app.services.tamagotchi import sleep_regen_per_hour
     from app.services.pet_data import SPECIES_DATA
+    from app.services.tamagotchi import sleep_regen_per_hour
     regen = sleep_regen_per_hour(SPECIES_DATA["cat"])
     expected = 20.0 + 2 * regen
     assert abs(pet.energy - min(100.0, expected)) < max(1.0, regen * 0.35), \

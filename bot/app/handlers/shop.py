@@ -4,21 +4,17 @@ import html
 
 from aiogram import F, Router
 from aiogram.types import CallbackQuery
-from app.keyboards.inline import InlineKeyboardBuilder
+from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from loguru import logger
-
-from app.keyboards.inline import InlineKeyboardButton
 
 from app.db.models import Item, PetInventory, User
-from app.i18n import t
 from app.db.repositories import PetRepository, UserRepository
-from app.keyboards.inline import pet_hub
-from app.keyboards.paged import paged_keyboard, paged_pages
 from app.handlers.tamagotchi import set_pet_page
+from app.i18n import t
+from app.keyboards.inline import InlineKeyboardBuilder, InlineKeyboardButton, pet_hub
+from app.keyboards.paged import paged_keyboard, paged_pages
 from app.services.tamagotchi import TamagotchiService
-from app.utils import nav
 from app.utils.safe_edit import safe_edit_or_answer
 
 router = Router(name="shop")
@@ -32,7 +28,7 @@ _SHOP_PAGE_CTX = _BoundedChatCtx()
 
 
 
-def _nav_back_cb(cb: CallbackQuery, section: str) -> "str | None":
+def _nav_back_cb(cb: CallbackQuery, section: str) -> str | None:
     """Callback кнопки «⬅️ Назад» для постраничных экранов магазина/инвентаря.
 
     Единый источник истины — `inline._nav_back_cb` (тот же алгоритм, что у
@@ -123,7 +119,7 @@ ITEMS_SEED = [
 ]
 
 async def seed_items(session: AsyncSession) -> int:
-    existing = {r for r in (await session.execute(select(Item.code))).scalars()}
+    existing = set((await session.execute(select(Item.code))).scalars())
     created = 0
     next_id = ((await session.execute(select(Item.id).order_by(Item.id.desc()).limit(1)))
                .scalars().first() or 0)
@@ -137,7 +133,7 @@ async def seed_items(session: AsyncSession) -> int:
         await session.flush()
     return created
 
-def shop_keyboard(items: list[Item], user_coins: int) -> "InlineKeyboardBuilder | None":
+def shop_keyboard(items: list[Item], user_coins: int) -> InlineKeyboardBuilder | None:
     b = InlineKeyboardBuilder()
     for it in items:
         if it.type == "merch":
@@ -172,7 +168,7 @@ async def shop_screen(cb: CallbackQuery, session: AsyncSession,
         try:
             if data.startswith("shop:page:"):
                 page = int(data.split(":")[2])
-            elif data.startswith("shop:back") or data.startswith("shop:next"):
+            elif data.startswith(("shop:back", "shop:next")):
                 cur = _SHOP_PAGE_CTX.get(cb.message.chat.id, 0)
                 page = cur - 1 if data.startswith("shop:back") else cur + 1
             else:
@@ -282,7 +278,7 @@ async def inventory_screen(cb: CallbackQuery, session: AsyncSession) -> None:
         .where(PetInventory.pet_id == pet.id)
     )).all()
     if not rows:
-        await safe_edit_or_answer(cb.message, 
+        await safe_edit_or_answer(cb.message,
             "🎒 Инвентарь пуст. Загляни в 🛒 Магазин!",
             reply_markup=pet_hub(1),
         )
@@ -411,7 +407,7 @@ async def use_item(cb: CallbackQuery, session: AsyncSession) -> None:
         # with_result=True: успех/отказ берётся из флага, а не из поиска
         # эмодзи в тексте (старые denied_markers ломались на любой теме,
         # где перевод строки отказа отличался от стандартного).
-        result, used = await svc.feed(pet, {k: v for k, v in item.effect.items()},
+        result, used = await svc.feed(pet, dict(item.effect.items()),
                                       with_result=True)
         if not used:
             return await cb.answer(result, show_alert=True)

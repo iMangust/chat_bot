@@ -11,7 +11,6 @@ from aiogram.enums import ChatType
 from aiogram.exceptions import TelegramAPIError, TelegramForbiddenError
 from aiogram.types import CallbackQuery, Message, TelegramObject, User
 from loguru import logger
-
 from sqlalchemy import select
 
 from app.config import get_settings
@@ -70,8 +69,9 @@ def channel_link() -> tuple[str, str]:
     visual = (st.channel_username_visual or "").strip() or f"t.me/{ch}"
     return ch, visual
 
-def subscribe_kb() -> "Any":
+def subscribe_kb() -> Any:
     from aiogram.types import InlineKeyboardMarkup
+
     from app.keyboards.inline import InlineKeyboardButton
     rows = []
     ch, visual = channel_link()
@@ -101,7 +101,7 @@ async def _notify_admin(bot, text_key: str, uid: str, text: str) -> None:
 
 async def known_subscriber_in_required_chats(user_id: int) -> bool:
     ids = {numeric_chat_id(cid) for cid, uname in required_chats()}
-    for cid, uname in required_chats():
+    for _cid, uname in required_chats():
         if uname:
             n2 = numeric_chat_id(uname)
             if n2 is not None:
@@ -693,7 +693,7 @@ class AccessGateMiddleware(BaseMiddleware):
                     await clear_registry_membership(user.id)
                     logger.info("gate: recheck DENY {} — Bot API says not a "
                                 "member; registry membership cleared", user.id)
-        except Exception as exc:
+        except Exception:
             logger.exception("subscription gate crashed for {} — deny (fail-closed)", user.id)
             subscribed = False
 

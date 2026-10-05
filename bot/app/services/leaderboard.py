@@ -5,12 +5,18 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import Integer, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import (ChatMessageLog, LeaderboardSnapshot, Pet, ReactionLog,
-                           User, UserStat)
-from app.utils.local_time import now as local_now
+from app.db.models import (
+    ChatMessageLog,
+    LeaderboardSnapshot,
+    Pet,
+    ReactionLog,
+    User,
+    UserStat,
+)
 from app.services.notifications import queue_notification
-from app.utils.local_time import db_bound
 from app.utils.html_text import esc as _esc
+from app.utils.local_time import db_bound
+from app.utils.local_time import now as local_now
 
 MEDALS = {1: "🥇", 2: "🥈", 3: "🥉"}
 WEEKLY_PRIZES = {1: 500, 2: 250, 3: 100}

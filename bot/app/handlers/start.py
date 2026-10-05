@@ -1,30 +1,36 @@
 from __future__ import annotations
 
 import contextlib
+import html as _html
 
 from aiogram import Bot, F, Router
 from aiogram.filters import CommandObject, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
-import html as _html
+from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.config import get_settings
 from app.db.models import Pet, PetSpecies
 from app.db.repositories import PetRepository, UserRepository
 from app.keyboards.inline import (
-    MENU_PAGES, main_menu, onboard_done, species_picker,
+    MENU_PAGES,
+    main_menu,
+    onboard_done,
+    species_picker,
     start_pet_name_suggestions,
+)
+from app.middlewares.gate import (
+    channel_link,
+    is_channel_subscribed,
+    reset_subscribe_cache,
 )
 from app.services.achievements import AchievementService
 from app.services.tamagotchi import SPECIES_DATA
 from app.utils.formatting import progress_bar, xp_needed_for_level
 from app.utils.safe_edit import safe_edit_or_answer
-from app.config import get_settings
-from loguru import logger
-from app.middlewares.gate import (channel_link, gate_granted,
-                                  is_channel_subscribed, reset_subscribe_cache)
 
 router = Router(name="start")
 
@@ -38,7 +44,7 @@ def species_picker_text() -> str:
     from app.services.tamagotchi import species_bonuses_text, species_likes_text
 
     lines = []
-    for code, sp in SPECIES_DATA.items():
+    for _code, sp in SPECIES_DATA.items():
         st = sp["start"]
         likes, dislikes = species_likes_text(sp)
         bonuses = species_bonuses_text(sp)
@@ -247,7 +253,7 @@ def _repaint_weather_label(kb) -> None:
     try:
         from app.services.weather import cached_weather_button_label
         label = cached_weather_button_label()
-    except Exception:  # noqa: BLE001 — украшение кнопки не должно ломать меню
+    except Exception:
         return
     if not label:
         return
@@ -403,7 +409,7 @@ async def cb_pick_species(cb: CallbackQuery, state: FSMContext) -> None:
     if code == "Имя своё…":
         await safe_edit_or_answer(cb.message, "✍️ Напиши своё имя питомца сообщением:")
     else:
-        await safe_edit_or_answer(cb.message, 
+        await safe_edit_or_answer(cb.message,
             f"{SPECIES_DATA[code]['emoji']} Отличный выбор — {SPECIES_DATA[code]['title']}!\n\n"
             "Шаг 2 из 3. Выбери имя питомцу (или напиши своё сообщением):",
             reply_markup=start_pet_name_suggestions(PET_NAME_SUGGESTIONS,
@@ -487,7 +493,7 @@ async def _finish_onboarding(cb: CallbackQuery, state: FSMContext,
     ach = AchievementService(session)
     await ach.unlock_by_code(user.tg_id, "first_steps")
     sp = SPECIES_DATA.get(species.value, SPECIES_DATA["cat"])
-    await safe_edit_or_answer(cb.message, 
+    await safe_edit_or_answer(cb.message,
         f"🎉 У тебя появился питомец <b>{_html.escape(name)}</b> — "
         f"{sp['emoji']} {sp['title']}!\n\n"
         "Мини-тур:\n"

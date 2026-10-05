@@ -17,7 +17,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname("app"))
-from app.services import weather as W  # noqa: E402
+from app.services import weather as W
 
 
 def test_local_weather_never_blocks_on_slow_network():

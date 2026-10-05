@@ -136,8 +136,8 @@ def test_sleep_regen_single_source(svc):
     измерение; глобальный множитель sleep_regen фиксируется, чтобы тест
     не зависел от env/override-настроек окружения прогона.
     """
-    from app.services.tamagotchi import _species
     from app.services import balance
+    from app.services.tamagotchi import _species
     balance.set_mult("sleep_regen", 1.0)
     try:
         now = datetime(2026, 7, 15, 12, tzinfo=timezone.utc)

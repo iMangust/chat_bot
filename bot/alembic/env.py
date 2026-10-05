@@ -24,8 +24,8 @@ from alembic import context
 # Позволяет импортировать пакет app.* при запуске alembic из каталога bot/.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.config import get_settings  # noqa: E402
-from app.db.models import Base  # noqa: E402  (импорт регистрирует все таблицы)
+from app.config import get_settings
+from app.db.models import Base
 
 config = context.config
 

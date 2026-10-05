@@ -1,0 +1,74 @@
+name: Deploy
+
+# Деплой по git-тегу: git tag v1.2.3 && git push origin v1.2.3
+# Воркфлоу намеренно минимален и защищён: реальные шаги деплоя
+# выполняются только после ручного подтверждения (environment approval)
+# и требуют настроенных secrets на уровне окружения.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Тег для деплоя (например, v1.2.3)"
+        required: true
+        default: "latest"
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to production (${{ github.ref_name }})
+    runs-on: ubuntu-latest
+    # Окружение с обязательным ручным подтверждением в настройках репозитория
+    # (Settings → Environments → production → Required reviewers).
+    environment:
+      name: production
+      url: ${{ steps.deploy.outputs.deploy-url }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Для workflow_dispatch по указанному тегу — checkout того тега
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Verify release quality (tests must pass on the tag itself)
+        working-directory: bot
+        env:
+          BOT_TOKEN: "test-token"
+          IS_DEV: "true"
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          python -m ruff check .
+          python -m pytest tests -q -p no:cacheprovider
+
+      - name: Deploy
+        id: deploy
+        # Шаги деплоя зависят от инфраструктуры: пример SSH-деплоя через
+        # уже существующие секреты. Замените на свой пайплайн (docker/systemd).
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          if [ -z "$DEPLOY_HOST" ]; then
+            echo "::notice::DEPLOY_HOST secret не настроен — пропускаем фактический деплой (dry-run)."
+            echo "deploy-url=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          mkdir -p ~/.ssh
+          echo "$DEPLOY_SSH_KEY" > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+          ssh -i ~/.ssh/id_deploy "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd ~/bot && git fetch --tags && git checkout ${GITHUB_REF_NAME} && pip install -r requirements.txt && systemctl restart bot"
+          echo "deploy-url=http://$DEPLOY_HOST" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub release notes
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true

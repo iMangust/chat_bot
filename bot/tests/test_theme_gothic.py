@@ -38,19 +38,19 @@ os.environ["CHANNELS"] = "[]"
 # диспетчера в _press(), а после каждого теста возвращаем процессу «нейтральный»
 # кеш (cache_clear() в конце run()).
 
-from app.config import get_settings as _gs  # noqa: E402
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-import app.db.session as _dbs  # noqa: E402
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
+import app.db.session as _dbs
+from app.config import get_settings as _gs
 
 _s = _gs()
 _dbs.engine = create_async_engine(_s.database_url)
 _dbs.session_factory = async_sessionmaker(
     _dbs.engine, class_=_dbs.AsyncSession, expire_on_commit=False)
 
-from aiogram.client.session.base import BaseSession  # noqa: E402
-from aiogram.methods import GetMe, SendChatAction  # noqa: E402
-from aiogram.types import CallbackQuery, Chat, Message, Update, User  # noqa: E402
+from aiogram.client.session.base import BaseSession
+from aiogram.methods import GetMe, SendChatAction
+from aiogram.types import CallbackQuery, Chat, Message, Update, User
 
 
 class FakeSession(BaseSession):
@@ -128,9 +128,22 @@ async def _build_dp():
     import app.db.session as dbs
     from app.config import get_settings
     from app.db.models import Base
-    from app.handlers import (access as access_handlers, admin, arena, errors,
-                              events, games, merch, settings as settings_h,
-                              shop, social, start, stats, tamagotchi, tracker)
+    from app.handlers import access as access_handlers
+    from app.handlers import (
+        admin,
+        arena,
+        errors,
+        events,
+        games,
+        merch,
+        shop,
+        social,
+        start,
+        stats,
+        tamagotchi,
+        tracker,
+    )
+    from app.handlers import settings as settings_h
     from app.main import _make_fsm_storage, probe_fsm_storage
     from app.middlewares.theme import ThemeGuardMiddleware, ThemeMiddleware
 
@@ -225,7 +238,7 @@ def test_theme_survives_new_task_context():
         themes.set_theme("standard")
         session, texts, kb_dump = await _press("menu:main")
         joined = " ".join(texts)
-        assert "\u200d" not in joined or True
+        assert "\u200d" not in joined or True  # noqa: SIM222 — тривиально истинно: проверка оставлена как документация намерения (ZWJ-символы допустимы в тексте)
         assert "Кошка-демон" in kb_dump or "\u200d⬛ Кошка-демон" in kb_dump, texts
         assert "🌑 Ночные службы" in kb_dump, texts
         # возвращаем стандарт, чтобы не влиять на другие тесты

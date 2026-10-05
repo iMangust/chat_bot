@@ -25,8 +25,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.db.models import Base, ChatMessageLog, User          # noqa: E402
-from app.db.repositories import ActivityRepository           # noqa: E402
+from app.db.models import Base, ChatMessageLog, User
+from app.db.repositories import ActivityRepository
 
 
 def _log(user_id: int, msg_id: int, created_at: datetime) -> ChatMessageLog:

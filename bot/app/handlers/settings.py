@@ -1,24 +1,21 @@
 from __future__ import annotations
 
 import contextlib
-import html as _html
 
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramAPIError
-from aiogram.filters import Command, CommandStart
+from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Chat, Message
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
+from app import themes
 from app.db.models import User
 from app.db.repositories import NotificationRepository, UserRepository
-from app import themes
-from app.keyboards.inline import (back_to_main, settings_keyboard,
-                                  theme_picker_keyboard)
+from app.keyboards.inline import back_to_main, settings_keyboard, theme_picker_keyboard
 from app.services.leaderboard import leaderboard_text, snapshot_weekly
-from app.utils.formatting import progress_bar, xp_needed_for_level
-from app.utils.safe_edit import safe_edit_or_answer, answer_safe
+from app.utils.safe_edit import answer_safe, safe_edit_or_answer
 
 router = Router(name="settings")
 
@@ -188,7 +185,7 @@ async def _get_mtproto():
     try:
         from app.services.mtproto_client import holder
         client = await holder.get()
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.debug("repaint: MTProto недоступен ({})", exc)
         return None
     if client is None or not getattr(holder, "is_connected", False):
@@ -212,6 +209,7 @@ async def _fetch_history(client, chat_id: int, limit: int) -> list:
 def _telethon_markup_to_aiogram(kb):
     """Telethon ReplyKeyboardMarkup (inline) -> InlineKeyboardMarkup aiogram."""
     from aiogram.types import InlineKeyboardMarkup
+
     from app.keyboards.inline import InlineKeyboardButton
     rows = []
     for row in kb.rows:
@@ -256,7 +254,7 @@ async def repaint_main_menu(bot: Bot, chat_id: int, theme_key: str) -> int:
     try:
         me = await bot.get_me()
         msgs = await _fetch_history(client, chat_id, 40)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.debug("repaint main menu: history unavailable ({})", exc)
         return 0
     repainted = 0
@@ -270,7 +268,7 @@ async def repaint_main_menu(bot: Bot, chat_id: int, theme_key: str) -> int:
             continue
         try:
             kb = _telethon_markup_to_aiogram(kb_src)
-        except Exception as exc:  # noqa: BLE001 — нестандартная разметка, пропускаем сообщение
+        except Exception as exc:
             logger.debug("telethon markup conversion failed for msg {}: {!r}",
                          getattr(m, 'id', '?'), exc)
             continue
@@ -321,7 +319,7 @@ async def repaint_chat_messages(bot: Bot, chat_id: int, theme_key: str,
     except TelegramAPIError as exc:
         logger.debug("repaint: history unavailable ({})", exc)
         return 0
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.debug("repaint: mtproto history failed: {}", exc)
         return 0
     for m in msgs:
@@ -334,7 +332,7 @@ async def repaint_chat_messages(bot: Bot, chat_id: int, theme_key: str,
             continue
         try:
             kb = _telethon_markup_to_aiogram(kb_src)
-        except Exception as exc:  # noqa: BLE001 — нестандартная разметка, пропускаем сообщение
+        except Exception as exc:
             logger.debug("telethon markup conversion failed for msg {}: {!r}",
                          getattr(m, 'id', '?'), exc)
             continue
@@ -369,7 +367,7 @@ async def repaint_chat_messages(bot: Bot, chat_id: int, theme_key: str,
                     await _render_settings(s_, hm, chat_id, chat_id=chat_id)
                 repainted += 1
                 continue
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 logger.debug("repaint: settings re-render failed: {}", exc)
                 new_text = _retheme_message_text(text, theme_key)
         else:  # sub
@@ -395,7 +393,7 @@ def _rebuild_kb(std_text: str, kb, theme_key: str):
     целевая тема, поэтому ThemeButton.__init__ сам подставит готические
     подписи по callback_data.
     """
-    from app.keyboards.inline import InlineKeyboardButton, _page_nav, MENU_PAGES
+    from app.keyboards.inline import MENU_PAGES, InlineKeyboardButton, _page_nav
     labels: list[str] = []
     for ln in std_text.splitlines():
         s = ln.strip()
@@ -491,13 +489,13 @@ async def cb_set_theme(cb: CallbackQuery, session: AsyncSession,
     if chat_id is not None:
         try:
             n_repainted += await repaint_main_menu(bot, chat_id, key)
-        except Exception as exc:  # noqa: BLE001 — не ломать выбор темы
+        except Exception as exc:
             logger.debug("theme main-menu repaint failed: {}", exc)
     # перекрашиваем старые сообщения, чтобы тема было видно СРАЗУ
     if chat_id is not None:
         try:
             n_repainted += await repaint_chat_messages(bot, chat_id, key)
-        except Exception as exc:  # noqa: BLE001 — перекраска не должна ломать выбор темы
+        except Exception as exc:
             logger.debug("theme repaint failed: {}", exc)
     toast = f"Тема изменена: {th.title}"
     if n_repainted:

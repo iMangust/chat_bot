@@ -89,7 +89,7 @@ def write_env(updates: dict[str, str], path: Path | None = None) -> None:
         if new_lines:
             new_lines.append("")
         new_lines.extend(additions)
-    content = "\n".join(new_lines + [""]) 
+    content = "\n".join([*new_lines, ""])
     path.write_bytes(content.encode("utf-8"))
     for k, v in updates.items():
         os.environ[k] = v
@@ -168,8 +168,8 @@ def validate_updates(updates: dict[str, str]) -> tuple[dict[str, str], list[str]
             if DIRECT_ENV_KEYS[key] == "int" and v:
                 try:
                     int(v)
-                except ValueError:
-                    raise ValueError(f"{key}: ожидается целое число")
+                except ValueError as err:
+                    raise ValueError(f"{key}: ожидается целое число") from err
             clean[key] = v
         else:
             clean[key] = _coerce(key, "" if val is None else str(val))
@@ -285,10 +285,7 @@ def _line_comment(key: str) -> str:
             m = _KEY_RE.match(line.strip())
             if m and m.group(1) == key:
                 inline = line.split("#", 1)
-                if "#" in line and inline[1].strip():
-                    text = inline[1].strip()
-                else:
-                    text = prev.lstrip("# ").strip()
+                text = inline[1].strip() if "#" in line and inline[1].strip() else prev.lstrip("# ").strip()
                 break
             if line.strip():
                 prev = line
