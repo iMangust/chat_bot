@@ -9,7 +9,7 @@ from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic_settings.sources import EnvSettingsSource
 
-__version__ = "1.0.1"
+__version__ = "1.0.0"
 
 _ENV_ENCODINGS = ("utf-8-sig", "cp1251", "latin-1")
 

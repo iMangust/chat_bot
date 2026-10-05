@@ -1,6 +1,6 @@
 """Регрессия: нормализация id каналов к Bot API форме (-100...).
 
-Баг v1.0.2: TRACKED_CHAT_IDS, записанные без знака (1004335857237),
+Регрессионный тест: TRACKED_CHAT_IDS, записанные без знака (1004335857237),
 проходили через abs() в _tracked_ids()/userbot и в resolve_channel_entity
 как положительные peer'ы. Telethon GetChannels отвергает их с
 "Invalid channel object" / ChannelInvalidError — реакции не снапшотились
