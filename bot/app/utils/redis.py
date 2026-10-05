@@ -153,10 +153,13 @@ async def set_cooldown(key: str, ttl_sec: Any) -> bool:
 
 async def get_cooldown_ttl(key: str) -> int:
     now = time.monotonic()
+    # During post-outage quarantine mem data wins (same rule as set_cooldown):
+    # Redis may not know about cooldowns written while it was down.
     if _prefer_mem():
-        exp = _mem_store.get(f"cd:{key}")
-        if isinstance(exp, float) and exp > now:
+        exp = _mem_get(f"cd:{key}")
+        if exp is not None and exp > now:
             return max(int(exp - now), 0)
+        return 0
     r = await _try_redis()
     if r is not None:
         try:

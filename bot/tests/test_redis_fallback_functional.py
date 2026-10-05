@@ -138,6 +138,49 @@ def test_mem_cooldown_survives_redis_recovery():
     asyncio.run(main())
 
 
+def test_get_cooldown_ttl_respects_mem_quarantine():
+    """Кулдаун, записанный в mem во время аварии, после восстановления Redis
+    должен показывать остаток из mem, а не 0 (иначе UI на долю секунды
+    «отпускает» блокировку и пользователь жмёт повторно)."""
+
+    class FlakyRedis:
+        def __init__(self):
+            self.down = True
+
+        async def ping(self):
+            if self.down:
+                raise ConnectionError("redis down")
+            return True
+
+        async def set(self, key, value, nx=False, ex=None, xx=False):
+            return True
+
+        async def ttl(self, key):
+            # Redis ничего не знает про кулдаун, записанный в mem-фолбэк.
+            return -2
+
+    async def main():
+        _reset_state()
+        flaky = FlakyRedis()
+        ur.redis_client = flaky
+        try:
+            # Авария: кулдаун уходит в mem с TTL 60 сек.
+            assert await ur.set_cooldown("msg:7", 60) is True
+            # Redis «починился», бэкофф сброшен.
+            flaky.down = False
+            ur._redis_last_check = 0.0
+            ttl = await ur.get_cooldown_ttl("msg:7")
+            assert 50 <= ttl <= 60, (
+                f"во время карантина остаток должен браться из mem, получено {ttl}"
+            )
+            # После окончания карантина — снова авторитет Redis (ключа там нет).
+            ur._mem_quarantine_until = 0.0
+            assert await ur.get_cooldown_ttl("msg:7") == 0
+        finally:
+            _reset_state()
+
+    asyncio.run(main())
+
 def test_mem_store_is_lru_bounded():
     """Мем-фолбэк не должен расти бесконечно при долгом аптайме без Redis."""
 
