@@ -858,6 +858,11 @@ async def main() -> None:
 
     try:
         if settings.is_dev or not settings.webhook_url:
+            if not settings.is_dev and not settings.webhook_url:
+                # webhook-конфиг частично задан (IS_DEV=false, но WEBHOOK_URL
+                # пуст) — бот тихо живёт на polling. Предупреждаем явно.
+                logger.warning("IS_DEV=false, но WEBHOOK_URL не задан — "
+                               "бот работает на long polling вместо вебхука")
             logger.info("starting long polling…")
             await dp.start_polling(
                 bot,

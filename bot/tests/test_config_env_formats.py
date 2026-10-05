@@ -107,3 +107,27 @@ def test_bot_api_forms_no_bogus_concatenations():
     # положительный «сырой» MTProto id -> обе формы
     raw_forms = _bot_api_forms(4467842206)
     assert "4467842206" in raw_forms and "-1004467842206" in raw_forms
+
+
+# --- Issue #8 аудита: секрет вебхука по умолчанию в production ---
+
+def test_default_webhook_secret_rejected_in_prod_webhook_mode():
+    """IS_DEV=false + WEBHOOK_URL + дефолтный секрет = отказ запуска."""
+    with pytest.raises(ValueError, match="WEBHOOK_SECRET_TOKEN"):
+        Settings(is_dev=False, webhook_url="https://example.com",
+                 webhook_secret_token="change-me-in-env")
+
+
+def test_custom_webhook_secret_allowed_in_prod():
+    s = Settings(is_dev=False, webhook_url="https://example.com",
+                 webhook_secret_token="s3cr3t-token-xyz")
+    assert s.webhook_secret_token == "s3cr3t-token-xyz"
+
+
+def test_default_secret_ok_in_dev_and_polling_modes():
+    # dev — можно (вебхук не используется)
+    Settings(is_dev=True, webhook_url="https://example.com",
+             webhook_secret_token="change-me-in-env")
+    # prod без WEBHOOK_URL (long polling) — тоже можно
+    Settings(is_dev=False, webhook_url=None,
+             webhook_secret_token="change-me-in-env")

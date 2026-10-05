@@ -5,7 +5,7 @@ import re
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 __version__ = "1.0.1"
@@ -154,6 +154,22 @@ class Settings(BaseSettings):
         # pydantic-settings умеет только JSON-массивы; пользовательский .env
         # мог быть в CSV без скобок — нормализуем оба формата.
         return _normalize_int_list(v)
+
+    @model_validator(mode="after")
+    def _reject_default_webhook_secret_in_prod(self):
+        # Issue #8 аудита: секрет вебхука по умолчанию ("change-me-in-env")
+        # известен из исходников. В webhook-режиме (не dev, задан WEBHOOK_URL)
+        # Telegram шлёт его в заголовке X-Telegram-Bot-Api-Secret-Token, и
+        # aiogram проверяет точное совпадение — дефолт = любой, кто знает
+        # строку, может подделать апдейты. Не запускаемся с таким конфигом.
+        if (not self.is_dev and self.webhook_url
+                and self.webhook_secret_token == "change-me-in-env"):
+            raise ValueError(
+                "WEBHOOK_SECRET_TOKEN не настроен: в production (IS_DEV=false "
+                "+ WEBHOOK_URL) требуется задать уникальный секрет вебхука, "
+                "иначе апдейты Telegram можно подделать. Сгенерируйте, напр.: "
+                "python -c \"import secrets; print(secrets.token_hex(32))\"")
+        return self
 
     tracked_chat_ids: list[int] = []
 
