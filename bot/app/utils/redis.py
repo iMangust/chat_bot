@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from collections import OrderedDict
 from typing import Any
 
 from loguru import logger
@@ -12,7 +13,21 @@ _settings = get_settings()
 
 redis_client: Redis | None = None
 
-_mem_store: dict[str, float] = {}
+# In-memory fallback storage with LRU eviction to prevent unbounded growth.
+# Format: key -> expiry_time (monotonic clock).
+# When Redis is unavailable, all cooldowns/locks/counters live here and are
+# lost on restart (acceptable for dev/single-instance; production should have Redis).
+_mem_store: "OrderedDict[str, float]" = OrderedDict()
+_MEM_MAX_KEYS = 8192  # Cap to prevent memory leak during long uptimes with dead Redis
+
+# Circuit breaker state: avoid hammering a dead Redis with ping() on every operation.
+_redis_available: bool = True       # Assume available until first failure
+_redis_last_check: float = 0.0      # Monotonic timestamp of last health check
+_redis_backoff_sec: float = 30.0    # Recheck after this many seconds when unavailable
+# Cooldowns written to the in-memory fallback while Redis was down are NOT
+# mirrored back to Redis on reconnect — without this quarantine a just-recovered
+# Redis would answer "no cooldown" and let duplicate messages/callbacks through.
+_mem_quarantine_until: float = 0.0  # Monotonic deadline: prefer mem data over Redis
 
 def _norm_ttl(ttl_sec: Any) -> int:
     import math
@@ -22,8 +37,31 @@ def _norm_ttl(ttl_sec: Any) -> int:
         value = 1
     return max(value, 1)
 
+def _mem_put(key: str, value: float) -> None:
+    """Store in LRU cache with automatic eviction."""
+    global _mem_quarantine_until
+    _mem_store[key] = value
+    _mem_store.move_to_end(key)
+    while len(_mem_store) > _MEM_MAX_KEYS:
+        _mem_store.popitem(last=False)
+    # Quarantine: mem now holds cooldown/lock state Redis knows nothing about.
+    # Keep serving from mem until the longest live deadline expires, so a
+    # mid-outage write can't be "forgotten" right after Redis comes back.
+    _mem_quarantine_until = max(_mem_quarantine_until, float(value))
+
+def _mem_get(key: str) -> float | None:
+    """Retrieve from LRU cache, updating access order."""
+    val = _mem_store.get(key)
+    if val is not None:
+        _mem_store.move_to_end(key)
+    return val
+
+def _prefer_mem() -> bool:
+    """True while mem fallback data must win over (possibly recovered) Redis."""
+    return time.monotonic() < _mem_quarantine_until
+
 def init_redis() -> Redis:
-    global redis_client
+    global redis_client, _redis_available, _redis_last_check
     redis_client = Redis.from_url(
         _settings.redis_url,
         decode_responses=True,
@@ -31,6 +69,8 @@ def init_redis() -> Redis:
         socket_timeout=getattr(_settings, "redis_socket_timeout", 5),
         socket_connect_timeout=getattr(_settings, "redis_socket_timeout", 5),
     )
+    _redis_available = True
+    _redis_last_check = 0.0
     return redis_client
 
 async def close_redis() -> None:
@@ -42,23 +82,53 @@ async def close_redis() -> None:
 _warned_errors: set[str] = set()
 
 async def _try_redis() -> Any:
+    """Check Redis availability with circuit breaker pattern.
+    
+    Returns Redis client if healthy, None otherwise. Uses exponential backoff
+    to avoid hammering a dead server: once unavailable, we only recheck every
+    _redis_backoff_sec seconds. This prevents DDoSing a struggling Redis with
+    ping() on every message/cooldown check.
+    """
+    global _redis_available, _redis_last_check
+    
     if redis_client is None:
         return None
+    
+    now = time.monotonic()
+    
+    # If marked unavailable, wait for backoff period before retrying
+    if not _redis_available:
+        if now - _redis_last_check < _redis_backoff_sec:
+            return None
+        # Backoff expired, will attempt reconnect below
+    
+    # Health check (either initial or after backoff)
     try:
         await redis_client.ping()
+        _redis_available = True
+        _redis_last_check = now
         return redis_client
     except Exception as exc:
-        key = type(exc).__name__
-        if key not in _warned_errors:
-            _warned_errors.add(key)
-            logger.warning(
-                f"Redis недоступен ({key}: {exc}) — переключаюсь на in-memory "
-                f"кулдауны/кэш (сбрасываются при рестарте)"
-            )
+        was_available = _redis_available
+        _redis_available = False
+        _redis_last_check = now
+        
+        # Log transition to unavailable state (once per error type)
+        if was_available:
+            key = type(exc).__name__
+            if key not in _warned_errors:
+                _warned_errors.add(key)
+                logger.warning(
+                    f"Redis недоступен ({key}: {exc}) — переключаюсь на in-memory "
+                    f"кулдауны/кэш (сбрасываются при рестарте). Повторная проверка "
+                    f"через {_redis_backoff_sec:.0f} сек."
+                )
         return None
 
 async def set_cooldown(key: str, ttl_sec: Any) -> bool:
-    r = await _try_redis()
+    # During post-outage quarantine mem data wins (Redis may not know about
+    # cooldowns written while it was down).
+    r = None if _prefer_mem() else await _try_redis()
     if r is not None:
         try:
             return bool(await r.set(f"cd:{key}", "1", nx=True, ex=_norm_ttl(ttl_sec)))
@@ -71,25 +141,37 @@ async def set_cooldown(key: str, ttl_sec: Any) -> bool:
                 return True
             logger.debug(f"set_cooldown compat-path: {exc}")
             return False
+        except Exception as exc:
+            # Redis went down mid-operation (e.g. connection lost after ping):
+            # fall through to in-memory instead of crashing the caller.
+            logger.debug("set_cooldown redis failed ({}): mem mode", type(exc).__name__)
     now = time.monotonic()
-    exp = _mem_store.get(f"cd:{key}")
+    exp = _mem_get(f"cd:{key}")
     if exp is not None and exp > now:
         return False
-    _mem_store[f"cd:{key}"] = now + float(_norm_ttl(ttl_sec))
+    _mem_put(f"cd:{key}", now + float(_norm_ttl(ttl_sec)))
     return True
 
 async def get_cooldown_ttl(key: str) -> int:
+    now = time.monotonic()
+    if _prefer_mem():
+        exp = _mem_store.get(f"cd:{key}")
+        if isinstance(exp, float) and exp > now:
+            return max(int(exp - now), 0)
     r = await _try_redis()
     if r is not None:
-        ttl = await r.ttl(f"cd:{key}")
-        return max(ttl, 0)
-    exp = _mem_store.get(f"cd:{key}")
+        try:
+            ttl = await r.ttl(f"cd:{key}")
+            return max(ttl, 0)
+        except Exception as exc:
+            logger.debug("get_cooldown_ttl redis failed ({}): mem mode", type(exc).__name__)
+    exp = _mem_get(f"cd:{key}")
     if exp is None:
         return 0
     return max(int(exp - time.monotonic()), 0)
 
 async def acquire_lock(name: str, ttl_sec: int = 60) -> bool:
-    r = await _try_redis()
+    r = None if _prefer_mem() else await _try_redis()
     if r is not None:
         try:
             return bool(await r.set(f"lock:{name}", "1", nx=True, ex=_norm_ttl(ttl_sec)))
@@ -101,59 +183,103 @@ async def acquire_lock(name: str, ttl_sec: int = 60) -> bool:
                 await r.expire(key_full, _norm_ttl(ttl_sec))
                 return True
             return False
+        except Exception as exc:
+            # Redis died mid-op: fall through to in-memory lock below.
+            logger.debug("acquire_lock redis failed ({}): mem mode", type(exc).__name__)
+    # In-memory fallback: real expiry check instead of unconditional True.
+    # NOTE: single-process only — with several bot instances and dead Redis
+    # each instance takes its own lock (same tradeoff as all mem fallbacks).
+    now = time.monotonic()
+    lk = f"lock:{name}"
+    exp = _mem_get(lk)
+    if exp is not None and exp > now:
+        return False
+    _mem_put(lk, now + float(_norm_ttl(ttl_sec)))
     return True
 
 async def release_lock(name: str) -> None:
     r = await _try_redis()
     if r is not None:
-        await r.delete(f"lock:{name}")
-    else:
-        _mem_store.pop(f"lock:{name}", None)
+        try:
+            await r.delete(f"lock:{name}")
+        except Exception as exc:
+            logger.debug("release_lock redis failed ({}): mem mode", type(exc).__name__)
+    _mem_store.pop(f"lock:{name}", None)
 
 
 async def renew_lock(name: str, ttl_sec: int) -> bool:
     """Продлить/взять лок (idempotent): используется для самолечения cron-джоб,
     чей TTL больше периода запуска."""
-    r = await _try_redis()
+    r = None if _prefer_mem() else await _try_redis()
     if r is not None:
         try:
             return bool(await r.set(f"lock:{name}", "1", xx=False, ex=_norm_ttl(ttl_sec)))
         except TypeError:
-            key_full = f"lock:{name}"
-            await r.set(key_full, "1")
-            await r.expire(key_full, _norm_ttl(ttl_sec))
-            return True
-    _mem_store[f"lock:{name}"] = time.monotonic() + float(_norm_ttl(ttl_sec))
+            try:
+                key_full = f"lock:{name}"
+                await r.set(key_full, "1")
+                await r.expire(key_full, _norm_ttl(ttl_sec))
+                return True
+            except Exception as exc:
+                logger.debug("renew_lock redis failed ({}): mem mode", type(exc).__name__)
+        except Exception as exc:
+            logger.debug("renew_lock redis failed ({}): mem mode", type(exc).__name__)
+    _mem_put(f"lock:{name}", time.monotonic() + float(_norm_ttl(ttl_sec)))
     return True
 
 async def remember_for(name: str, ttl_sec: int) -> bool:
-    r = await _try_redis()
+    r = None if _prefer_mem() else await _try_redis()
     if r is not None:
         try:
             ok = await r.set(f"every:{name}", "1", nx=True, ex=_norm_ttl(ttl_sec))
             return bool(ok)
         except Exception as exc:
-            logger.debug("remember_for redis failed ({}): mem mode", exc)
+            logger.debug("remember_for redis failed ({}): mem mode", type(exc).__name__)
     k = f"every:{name}"
     now = time.monotonic()
-    exp = _mem_store.get(k)
+    exp = _mem_get(k)
     if isinstance(exp, float) and exp > now:
         return False
-    _mem_store[k] = now + float(_norm_ttl(ttl_sec))
+    _mem_put(k, now + float(_norm_ttl(ttl_sec)))
     return True
 
+
+# Sentinel distinguishes "key absent" from "stored value None" in the mem
+# cache fallback (values are strings, so None can never collide with one).
+_MISSING = object()
+
 async def mem_cached_set(key: str, value: str, ttl_sec: int = 3600) -> str | None:
-    r = await _try_redis()
+    # Cache values written to mem during an outage aren't mirrored back to
+    # Redis; keep serving from mem until their TTLs elapse (see quarantine).
+    # NOTE: _mem_put is intentionally NOT used here — cache entries are strings,
+    # not float deadlines, and must not extend the cooldown quarantine window.
+    r = None if _prefer_mem() else await _try_redis()
     if r is not None:
-        redis_key = f"cache:{key}"
-        prev_raw = await r.getset(redis_key, value)
-        await r.expire(redis_key, _norm_ttl(ttl_sec))
-        if isinstance(prev_raw, bytes):
-            prev_raw = prev_raw.decode("utf-8", "replace")
-        return prev_raw
+        try:
+            redis_key = f"cache:{key}"
+            prev_raw = await r.getset(redis_key, value)
+            await r.expire(redis_key, _norm_ttl(ttl_sec))
+            if isinstance(prev_raw, bytes):
+                prev_raw = prev_raw.decode("utf-8", "replace")
+            return prev_raw
+        except Exception as exc:
+            # Redis died mid-op: fall through to mem cache instead of crashing.
+            logger.debug("mem_cached_set redis failed ({}): mem mode", type(exc).__name__)
     k = f"cache:{key}"
-    prev = _mem_store.get(k)
+    now = time.monotonic()
+    exp = _mem_store.get(k + ":exp")
+    # Expired entries read as absent (mirrors Redis TTL semantics).
+    if isinstance(exp, float) and exp <= now:
+        _mem_store.pop(k, None)
+        _mem_store.pop(k + ":exp", None)
+        prev = _MISSING
+    else:
+        prev = _mem_store.get(k, _MISSING)
     _mem_store[k] = value
+    _mem_store.move_to_end(k)
+    _mem_store[k + ":exp"] = now + float(_norm_ttl(ttl_sec))
+    while len(_mem_store) > _MEM_MAX_KEYS * 2:  # cache keys come in pairs
+        _mem_store.popitem(last=False)
     return prev if isinstance(prev, str) else None
 
 
