@@ -369,7 +369,7 @@ async def is_channel_subscribed(bot, user_id: int) -> bool:
     if neg is not None and neg > now:
         logger.debug(f"gate: deny {user_id} (negative cache, TTL {int(_NEG_TTL_SEC)}с)")
         return False
-    logger.info(f"gate: checking subscription for {user_id} in chats {{[c[0] or c[1] for c in chats]}}")
+    logger.info(f"gate: checking subscription for {user_id} in chats {[c[0] or c[1] for c in chats]}")
     fast = await _fast_membership_check(bot, user_id)
     if fast is True:
         if any(u for _, u in chats):
