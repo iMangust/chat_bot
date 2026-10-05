@@ -4,3 +4,9 @@ __pycache__/
 
 # Coverage reports
 .coverage
+# Local env & test artifacts
+.env
+htmlcov/
+.coverage.*
+coverage.xml
+

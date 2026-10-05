@@ -1359,7 +1359,7 @@ def _walk_rating(wtype: str) -> tuple[str, str]:
 
 def render_today(w: dict, hours: list[dict]) -> str:
     """Экран «сегодня»: крупный снимок + почасовая лента до конца суток."""
-    city = WEATHER_CITY or "Камчатка"
+    city = WEATHER_CITY or _weather_geo()[0]
     dt = local_now()
     wd = _WEEKDAY_FULL_RU[dt.weekday()].capitalize()
     lines = [f"🌍 <b>{esc(city)} · {wd}, {_date_label(dt.date())}</b>", ""]
@@ -1413,7 +1413,7 @@ def render_week(rows: list[dict]) -> str:
     Формат строки: «Понедельник, 5 октября · ⛅ −2…+3° · дождь · 🚶 хорошо».
     Полные названия дней (никаких «пн/вт»), «Сегодня»/«Завтра» для первых двух.
     """
-    city = WEATHER_CITY or "Камчатка"
+    city = WEATHER_CITY or _weather_geo()[0]
     dt0 = local_now()
     today_ = dt0.date()
     if not rows:
