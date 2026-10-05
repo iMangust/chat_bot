@@ -539,18 +539,27 @@ class TamagotchiService:
                 return self._walk_deny(pet, a)
         return None
 
-    async def feed(self, pet: Pet, effect: dict[str, float]) -> str:
+    async def feed(self, pet: Pet, effect: dict[str, float],
+                   *, with_result: bool = False):
         now = local_now()
         await self.apply_decay(pet, now)
+
+        def _out(text: str, succeeded: bool):
+            # Структурированный результат вместо «успех по подстроке»:
+            # вызывающий код (handlers/shop) сам решает, писать ли лог
+            # действия и запускать ли FX-анимацию. Раньше успех определялся
+            # поиском «Ням-ням» в тексте — хрупкая связка сервис↔i18n.
+            return (text, succeeded) if with_result else text
+
         if self.is_critical(pet):
-            return t(CRIT_MSG)
+            return _out(t(CRIT_MSG), False)
         # Страж состояний: спящего не кормят, гуляющего дома нет.
         deny = self.state_deny(pet, "feed", now)
         if deny:
-            return deny
+            return _out(deny, False)
         ok, wait = self._check_cooldown(pet, "feed", 60, now)
         if not ok:
-            return t("pet.cooldown_feed", sec=wait)
+            return _out(t("pet.cooldown_feed", sec=wait), False)
         self._set_cooldown(pet, "feed", now)
         self._mark_care(pet, now)
         hol = holiday_effect_mults(now)
@@ -581,22 +590,27 @@ class TamagotchiService:
                     pass
         await self.add_pet_xp(pet, xp)
         tail = " Очень вкусно!" if pref > 0 else (" ...не восторг, но съел." if pref < 0 else "!")
-        return t("pet.eaten", tail=tail)
+        return _out(t("pet.eaten", tail=tail), True)
 
-    async def play(self, pet: Pet, won: bool) -> str:
+    async def play(self, pet: Pet, won: bool, *, with_result: bool = False):
         now = local_now()
         await self.apply_decay(pet, now)
+
+        def _out(text: str, succeeded: bool):
+            # См. feed(): структурированный результат вместо подстрок.
+            return (text, succeeded) if with_result else text
+
         if self.is_critical(pet):
-            return t(CRIT_MSG)
+            return _out(t(CRIT_MSG), False)
         # Страж состояний: спящий не играет, гуляющего дома нет.
         deny = self.state_deny(pet, "play", now)
         if deny:
-            return deny
+            return _out(deny, False)
         if pet.energy < 15:
-            return t("pet.too_tired_play")
+            return _out(t("pet.too_tired_play"), False)
         ok, wait = self._check_cooldown(pet, "game", 120, now)
         if not ok:
-            return f"⏳ Питомец запыхался! Подожди {wait} сек."
+            return _out(f"⏳ Питомец запыхался! Подожди {wait} сек.", False)
         self._set_cooldown(pet, "game", now)
         self._mark_care(pet, now)
 
@@ -614,11 +628,11 @@ class TamagotchiService:
             pet.happiness = clamp(pet.happiness + balance.get_mult("play_win") * mult
                                   + pref + self._gear_happy_flat(pet))
             await self.add_pet_xp(pet, xp)
-            return t("pet.won_game", xp=xp)
+            return _out(t("pet.won_game", xp=xp), True)
         pet.happiness = clamp(pet.happiness + balance.get_mult("play_lose") * mult
                               + pref + self._gear_happy_flat(pet))
         await self.add_pet_xp(pet, xp)
-        return t("pet.lost_game", xp=xp)
+        return _out(t("pet.lost_game", xp=xp), True)
 
     @staticmethod
     def rps_beaten_by(hand: str) -> str:
@@ -673,18 +687,23 @@ class TamagotchiService:
         gained = int(round(slept_h * sleep_regen_per_hour(sp=_species(pet))))
         return t("pet.woken", hours=f"{slept_h:.1f}".rstrip("0").rstrip("."), energy=gained)
 
-    async def wash(self, pet: Pet) -> str:
+    async def wash(self, pet: Pet, *, with_result: bool = False):
         now = local_now()
         await self.apply_decay(pet, now)
+
+        def _out(text: str, succeeded: bool):
+            # См. feed(): структурированный результат вместо подстрок.
+            return (text, succeeded) if with_result else text
+
         if self.is_critical(pet):
-            return t(CRIT_MSG)
+            return _out(t(CRIT_MSG), False)
         # Страж состояний: во сне не купают, гуляющего негде мыть.
         deny = self.state_deny(pet, "wash", now)
         if deny:
-            return deny
+            return _out(deny, False)
         ok, wait = self._check_cooldown(pet, "wash", 300, now)
         if not ok:
-            return f"⏳ Мыться можно раз в 5 минут (осталось {wait} сек)."
+            return _out(f"⏳ Мыться можно раз в 5 минут (осталось {wait} сек).", False)
         self._set_cooldown(pet, "wash", now)
         self._mark_care(pet, now)
         pet.hygiene = clamp(pet.hygiene + int(round(
@@ -693,23 +712,28 @@ class TamagotchiService:
                               + self._gear_happy_flat(pet))
         xp = int(4 * _species(pet)["bonus"]["xp_mult"] * self.action_modifier(pet, "xp"))
         await self.add_pet_xp(pet, xp)
-        return t("pet.washed")
+        return _out(t("pet.washed"), True)
 
-    async def heal(self, pet: Pet) -> str:
+    async def heal(self, pet: Pet, *, with_result: bool = False):
         now = local_now()
         await self.apply_decay(pet, now)
+
+        def _out(text: str, succeeded: bool):
+            # См. feed(): структурированный результат вместо подстрок.
+            return (text, succeeded) if with_result else text
+
         # Страж состояний: лекарство во сне не дают, на прогулке негде лечить.
         deny = self.state_deny(pet, "heal", now)
         if deny:
-            return deny
+            return _out(deny, False)
         if pet.sick_since is None and pet.health >= 70:
-            return t("pet.not_sick")
+            return _out(t("pet.not_sick"), False)
         heal_mult = max(0.5, 1.0 + self.gear_bonuses(pet).get("heal_boost", 0.0))
         pet.health = clamp(pet.health + int(round(35 * heal_mult)))
         if pet.health >= 60:
             pet.sick_since = None
         await self.add_pet_xp(pet, 5)
-        return t("pet.healed")
+        return _out(t("pet.healed"), True)
 
     def on_walk(self, pet: Pet, dt=None) -> bool:
         if not getattr(pet, "walk_until", None):
@@ -723,7 +747,11 @@ class TamagotchiService:
         left_min = int((back - (dt or local_now())).total_seconds() // 60)
         return t("pet.walk_back_line", time=f"{back:%H:%M}", minutes=f"{left_min} мин")
 
-    async def train(self, pet: Pet, stat: str) -> str:
+    async def train(self, pet: Pet, stat: str, *, with_result: bool = False):
+        def _out(text: str, succeeded: bool):
+            # См. feed(): структурированный результат вместо подстрок.
+            return (text, succeeded) if with_result else text
+
         for st in ("strength", "agility", "intellect"):
             if getattr(pet, st) is None:
                 setattr(pet, st, 1)
@@ -732,18 +760,18 @@ class TamagotchiService:
         now = local_now()
         await self.apply_decay(pet, now)
         if self.is_critical(pet):
-            return t(CRIT_MSG)
+            return _out(t(CRIT_MSG), False)
         # Страж состояний: спящий не тренируется, гуляющему негде тренироваться.
         deny = self.state_deny(pet, "train", now)
         if deny:
-            return deny
+            return _out(deny, False)
         if stat not in ("strength", "agility", "intellect"):
-            return "❓ Неизвестная тренировка."
+            return _out("❓ Неизвестная тренировка.", False)
         if pet.energy < 20:
-            return "😩 Мало энергии для тренировки."
+            return _out("😩 Мало энергии для тренировки.", False)
         ok, wait = self._check_cooldown(pet, "train", 180, now)
         if not ok:
-            return f"⏳ Перерыв между тренировками: {wait} сек."
+            return _out(f"⏳ Перерыв между тренировками: {wait} сек.", False)
         self._set_cooldown(pet, "train", now)
         self._mark_care(pet, now)
         pet.energy = clamp(pet.energy - 10)
@@ -765,28 +793,33 @@ class TamagotchiService:
         await self.add_pet_xp(pet, xp)
         label = {"strength": t("pet.train_stat"), "agility": t("pet.train_agi"),
                  "intellect": t("pet.train_int")}[stat]
-        return t("pet.train_done", label=label, gain=gain)
+        return _out(t("pet.train_done", label=label, gain=gain), True)
 
-    async def start_walk(self, pet: Pet, hours: int = 2) -> str:
+    async def start_walk(self, pet: Pet, hours: int = 2, *,
+                         with_result: bool = False):
+        def _out(text: str, succeeded: bool):
+            # См. feed(): структурированный результат вместо подстрок.
+            return (text, succeeded) if with_result else text
+
         now = local_now()
         await self.apply_decay(pet, now)
         if self.is_critical(pet):
-            return t(CRIT_MSG)
+            return _out(t(CRIT_MSG), False)
         if pet.walk_until:
             back = _aware(pet.walk_until)
             left_min = int((back - now).total_seconds() // 60)
-            return t("pet.walk_already", time=f"{back:%H:%M}",
-                     minutes=f"{max(0, left_min)} мин")
+            return _out(t("pet.walk_already", time=f"{back:%H:%M}",
+                          minutes=f"{max(0, left_min)} мин"), False)
         # Страж состояний: спящий на прогулку не идёт.
         deny = self.state_deny(pet, "walk", now)
         if deny:
-            return deny
+            return _out(deny, False)
         pet.walk_until = now + timedelta(hours=hours)
         pet.walk_start_at = now
         pet.settings_extra = {**(pet.settings_extra or {}), "walk_hours": hours}
         self._mark_care(pet, now)
-        return t("pet.walk_started", hours=hours,
-                 time=f"{_aware(pet.walk_until):%H:%M}")
+        return _out(t("pet.walk_started", hours=hours,
+                      time=f"{_aware(pet.walk_until):%H:%M}"), True)
 
     async def end_walk(self, pet: Pet) -> str:
         now = local_now()
@@ -826,8 +859,10 @@ class TamagotchiService:
         if xp:
             reward_bits.append(f"✨ +{xp} XP")
         reward = ", ".join(reward_bits) if reward_bits else "накоплено ничего 🤷"
+        # t("pet.walk_returned_early", ...) уже содержит «+N монет» —
+        # повторный хвост с наградой дублировал строку на экране.
         return t("pet.walk_returned_early", hours=f"{hours:.1f}".rstrip("0").rstrip("."),
-                 reward=reward) + "\n" + text
+                 reward=reward)
 
     def finish_walk_event(self, pet: Pet) -> tuple[str, int, int]:
         roll = random.random()
@@ -869,10 +904,16 @@ class TamagotchiService:
             pet.energy = clamp(pet.energy + w_energy)
             energy_line = f" · ⚡ {'+' if w_energy > 0 else ''}{w_energy}"
         if roll < 0.35:
-            c = max(1, int(random.randint(5, 15) * coin_mult * w_mult))
-            wl = f" ☀️ Солнечная прогулка ×{w_mult:.1f}" if w_mult > 1 else ""
-            return (f"🪙 Нашёл монетки на прогулке! +{c} монет{wl}{energy_line}"
-                    + grow_line), c, int(10 * xp_mult * w_mult)
+            # Баланс: награда прогулки масштабируется от её длительности —
+            # раньше 2ч и 8ч давали одинаковые монеты, что делало долгие
+            # прогулки строго хуже (двойной декей за те же 🪙).
+            planned_h = float((pet.settings_extra or {}).get("walk_hours", 2)) or 2.0
+            dur_mult = max(1.0, min(2.0, planned_h / 2.0))
+            c = max(1, int(random.randint(5, 15) * coin_mult * w_mult * dur_mult))
+            wl = " ☀️ Солнечная прогулка ×{:.1f}".format(w_mult) if w_mult > 1 else ""
+            dl = " 🕗 долгая прогулка ×{:.1f}".format(dur_mult) if dur_mult > 1 else ""
+            return (f"🪙 Нашёл монетки на прогулке! +{c} монет{wl}{dl}{energy_line}"
+                    + grow_line), c, int(10 * xp_mult * w_mult * dur_mult)
         if roll < 0.45:
             pet.settings_extra = {**(pet.settings_extra or {}), "pending_friend": True}
             pet.happiness = clamp(pet.happiness + 10 + pref_bonus + w_happy)
@@ -1311,9 +1352,13 @@ class TamagotchiService:
         extra = dict(pet.settings_extra or {})
         if extra.get("color") == key:
             return "✅ Этот окрас уже активен."
-        if user.coins < price:
-            return f"🪙 Не хватает {price - user.coins} монет (окрас стоит {price})."
-        user.coins -= price
+        # Атомарное списание (условный UPDATE) — защита от гонки
+        # параллельных тапов «двойная покупка» (см. try_spend_coins).
+        from app.db.repositories import UserRepository
+        if not await UserRepository(session).try_spend_coins(user.tg_id, price):
+            have = max(0, int(user.coins or 0))
+            return f"🪙 Не хватает {max(price - have, 1)} монет (окрас стоит {price})."
+        await session.refresh(user)
         extra["color"] = key
         pet.settings_extra = extra
         await session.commit()
@@ -1349,10 +1394,14 @@ class TamagotchiService:
             return "✅ Эта вещь уже надета."
         already_owned = emoji in owned
         cost = 0 if already_owned else price
-        if user.coins < cost:
-            return f"🪙 Не хватает {cost - user.coins} монет ({title} стоит {price})."
-        if user.coins > 0 and cost > 0:
-            user.coins -= cost
+        if cost > 0:
+            # Атомарное списание — без него двойной тап мог купить одну
+            # вещь дважды (проверка и «user.coins -=» были неатомарны).
+            from app.db.repositories import UserRepository
+            if not await UserRepository(session).try_spend_coins(user.tg_id, cost):
+                have = max(0, int(user.coins or 0))
+                return f"🪙 Не хватает {max(cost - have, 1)} монет ({title} стоит {price})."
+            await session.refresh(user)
         gear[slot] = emoji
         owned.add(emoji)
         extra["gear"] = gear
@@ -1374,6 +1423,13 @@ class TamagotchiService:
     RECRUIT_PRICE = 200
 
     def is_critical(self, pet: Pet) -> bool:
+        # Критическое состояние = питомец «умирает»: здоровье на нуле И
+        # хотя бы один базовый показатель тоже на нуле. Раньше требовалось
+        # одновременное обнуление ВСЕХ четырёх статов (min(...) > 0), из-за
+        # чего реанимация была практически недостижима: hygiene/happiness
+        # доходят до нуля только при полном забвении на несколько суток, и
+        # игрок с health=0 продолжал получать «обычный уход не поможет —
+        # всё в порядке» без баннера и без доступа к реанимации.
         if pet.health > 0 or min(pet.hunger, pet.happiness,
                                  pet.energy, pet.hygiene) > 0:
             return False
@@ -1388,7 +1444,10 @@ class TamagotchiService:
 
     async def revive(self, pet: Pet) -> str:
         self._apply_revive_mechanics(pet)
-        return f"💖 {esc(pet.name)} откаормлен и полон надежды! Дальше — не запускай уход."
+        # «откаормлен» — опечатка; текст вынесен в i18n (pet.revive_done),
+        # чтобы готическая тема могла переписать его так же, как остальные
+        # строки ухода.
+        return t("pet.revive_done", name=esc(pet.name))
 
     MAX_REVIVES = 3
 

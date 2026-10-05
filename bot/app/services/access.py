@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+from collections import OrderedDict
 import html as _html_mod
 from typing import Iterable
 
@@ -10,16 +11,23 @@ from loguru import logger
 
 from app.config import get_settings
 
-_celebrated: dict[int, float] = {}
+_celebrated: "OrderedDict[int, float]" = OrderedDict()
 _CELEBRATE_COOLDOWN_SEC = 3 * 3600
+_CELEBRATED_MAX = 8192   # LRU-лимит: dict рос бы без ограничений
 _celebrate_tasks: set[asyncio.Task] = set()
 
 def _celebrate_throttled(user_id: int) -> bool:
     now = time.monotonic()
-    last = _celebrated.get(int(user_id))
+    key = int(user_id)
+    last = _celebrated.get(key)
+    if last is not None:
+        _celebrated.move_to_end(key)
     if last is not None and now - last < _CELEBRATE_COOLDOWN_SEC:
         return True
-    _celebrated[int(user_id)] = now
+    _celebrated[key] = now
+    _celebrated.move_to_end(key)
+    while len(_celebrated) > _CELEBRATED_MAX:
+        _celebrated.popitem(last=False)
     return False
 
 async def celebrate_subscription(bot, user_id: int, first_name: str = "") -> None:

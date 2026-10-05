@@ -155,3 +155,59 @@ async def mem_cached_set(key: str, value: str, ttl_sec: int = 3600) -> str | Non
     prev = _mem_store.get(k)
     _mem_store[k] = value
     return prev if isinstance(prev, str) else None
+
+
+async def incr_counter(key: str, amount: int = 1, ttl: int | None = None) -> int:
+    """Атомарно увеличивает счётчик; возвращает новое значение.
+
+    TTL продлевается только при создании ключа (чтобы дневные окна
+    не «сдвигались» с каждым инкрементом).
+    """
+    r = await _try_redis()
+    if r is not None:
+        try:
+            ck = f"cnt:{key}"
+            new = int(await r.incrby(ck, int(amount)))
+            if new == int(amount) and ttl:
+                await r.expire(ck, _norm_ttl(ttl))
+            elif ttl:
+                cur = await r.ttl(ck)
+                if cur is None or int(cur) < 0:
+                    await r.expire(ck, _norm_ttl(ttl))
+            return new
+        except Exception as exc:
+            logger.debug("incr_counter redis failed ({}): mem mode", exc)
+    ck = f"cnt:{key}"
+    now = time.monotonic()
+    exp = _mem_store.get(ck + ":exp")
+    if isinstance(exp, float) and exp <= now:
+        _mem_store.pop(ck, None)
+        _mem_store.pop(ck + ":exp", None)
+    val = int(_mem_store.get(ck, 0) or 0) + int(amount)
+    _mem_store[ck] = val
+    if ttl and (ck + ":exp") not in _mem_store:
+        _mem_store[ck + ":exp"] = now + float(_norm_ttl(ttl))
+    return val
+
+
+async def get_counter(key: str) -> int:
+    r = await _try_redis()
+    if r is not None:
+        try:
+            raw = await r.get(f"cnt:{key}")
+            if raw is None:
+                return 0
+            if isinstance(raw, bytes):
+                raw = raw.decode("utf-8", "replace")
+            return int(raw)
+        except Exception as exc:
+            logger.debug("get_counter redis failed ({}): mem mode", exc)
+    ck = f"cnt:{key}"
+    now = time.monotonic()
+    exp = _mem_store.get(ck + ":exp")
+    if isinstance(exp, float) and exp <= now:
+        return 0
+    try:
+        return int(_mem_store.get(ck, 0) or 0)
+    except (TypeError, ValueError):
+        return 0

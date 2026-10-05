@@ -64,6 +64,21 @@ class UserRepository:
             .values(xp=User.xp + xp, coins=User.coins + coins)
         )
 
+    async def try_spend_coins(self, tg_id: int, amount: int) -> bool:
+        """Атомное списание монет (условный UPDATE): False — не хватило.
+
+        Единая точка правды для всех покупок: сверка баланса и списание
+        происходят одним запросом, поэтому параллельные тапы не могут
+        списать больше, чем есть на счету.
+        """
+        if amount <= 0:
+            return True
+        res = await self.session.execute(
+            update(User).where(User.tg_id == tg_id, User.coins >= amount)
+            .values(coins=User.coins - amount)
+        )
+        return res.rowcount > 0
+
     async def top_by(self, column: str, limit: int = 10) -> list[User]:
         col = getattr(User, column)
         stmt = select(User).order_by(col.desc()).limit(limit)

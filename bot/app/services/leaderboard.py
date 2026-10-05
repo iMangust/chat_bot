@@ -197,8 +197,9 @@ async def snapshot_weekly(session: AsyncSession,
     for place, (user, _cnt) in enumerate(talkers, start=1):
         prize = WEEKLY_PRIZES.get(place, 0)
         if prize:
-            user.coins += prize
-            user.xp += prize // 2
+            # Атомарное начисление приза — без read-modify-write.
+            from app.db.repositories import UserRepository
+            await UserRepository(session).add_xp_coins(int(user.tg_id), coins=prize, xp=prize // 2)
             await queue_notification(
                 session, int(user.tg_id), "info",
                 f"🎉 Ты #{place} в недельном топе болтунов! Приз: 🪙 {prize} монет.",

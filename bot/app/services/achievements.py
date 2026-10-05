@@ -194,7 +194,10 @@ class AchievementService:
             if user:
                 from app.utils.formatting import apply_xp
                 user.level, user.xp, _ = apply_xp(user.level, user.xp, xp)
-                user.coins += coins
+                # XP уже пересчитан вручную (уровневая формула), монеты — атомарно.
+                if coins:
+                    from app.db.repositories import UserRepository
+                    await UserRepository(self.session).add_xp_coins(user_id, coins=coins)
                 await self.session.flush()
         try:
             from app.services.notifications import queue_notification

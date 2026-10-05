@@ -23,7 +23,12 @@ from app.utils.safe_edit import safe_edit_or_answer
 
 router = Router(name="shop")
 
-_SHOP_PAGE_CTX: dict[int, int] = {}
+# LRU-контейнер из раздела питомца: обычный dict растёт без ограничений —
+# каждый когда-либо открывавший магазин чат оставлял бы запись навсегда
+# (утечка памяти на долгих аптаймах).
+from app.handlers.tamagotchi import _BoundedChatCtx
+
+_SHOP_PAGE_CTX = _BoundedChatCtx()
 
 
 
@@ -212,7 +217,7 @@ async def shop_screen(cb: CallbackQuery, session: AsyncSession,
         back_cb=_nav_back_cb(cb, "shop"), pages=all_pages,
         home_cb="menu:main",
     )
-    _SHOP_PAGE_CTX[cb.message.chat.id] = page
+    _SHOP_PAGE_CTX.set(cb.message.chat.id, page)
     await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=kb)
     await cb.answer()
 
@@ -403,7 +408,13 @@ async def use_item(cb: CallbackQuery, session: AsyncSession) -> None:
         return await cb.answer(t("pet.walk_deny_medicine", name=pet.name),
                                show_alert=True)
     if item.type in ("food", "drink"):
-        result = await svc.feed(pet, {k: v for k, v in item.effect.items()})
+        # with_result=True: успех/отказ берётся из флага, а не из поиска
+        # эмодзи в тексте (старые denied_markers ломались на любой теме,
+        # где перевод строки отказа отличался от стандартного).
+        result, used = await svc.feed(pet, {k: v for k, v in item.effect.items()},
+                                      with_result=True)
+        if not used:
+            return await cb.answer(result, show_alert=True)
         buffs = svc.active_buffs(pet)
         if buffs:
             labels = [b.get("label") or b["type"]
@@ -411,26 +422,25 @@ async def use_item(cb: CallbackQuery, session: AsyncSession) -> None:
             buff_note = "\n🔥 Активные бафы: " + ", ".join(dict.fromkeys(labels))
     elif item.type == "medicine":
         if item.code == "med_pill":
-            result = await svc.heal(pet)
+            result, used = await svc.heal(pet, with_result=True)
         else:
             if pet.is_sleeping:
-                result = t("pet.sleeping_deny_heal")
+                result, used = t("pet.sleeping_deny_heal"), False
             elif svc.on_walk(pet):
-                result = t("pet.walk_deny_medicine")
+                result, used = t("pet.walk_deny_medicine"), False
             else:
                 for stat, delta in item.effect.items():
                     from app.utils.formatting import clamp
                     setattr(pet, stat, clamp(getattr(pet, stat) + delta))
-                result = f"{item.icon} {item.name} применён!"
+                result, used = f"{item.icon} {item.name} применён!", True
+        if not used:
+            return await cb.answer(result, show_alert=True)
     elif item.type == "toy":
-        result = await svc.play(pet, won=False)
+        result, used = await svc.play(pet, won=False, with_result=True)
+        if not used:
+            return await cb.answer(result, show_alert=True)
     else:
-        result = "❓ Этот предмет пока нельзя использовать."
-
-    denied_markers = ("😴", "🚨", "⏳", "😀 Питомец здоров", "запыхался",
-                      "пока нельзя")
-    if any(m in result for m in denied_markers):
-        return await cb.answer(result, show_alert=True)
+        return await cb.answer(t("pet.item_not_usable"), show_alert=True)
 
     inv.quantity -= 1
     if inv.quantity <= 0:

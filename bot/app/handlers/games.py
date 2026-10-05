@@ -190,9 +190,8 @@ async def _finish_game(cb: CallbackQuery, session: AsyncSession, pet,
             pet.walk_until = None
             pet.walk_start_at = None
             if coins:
-                user = await UserRepository(session).get(cb.from_user.id)
-                if user:
-                    user.coins += coins
+                # Атомарное начисление — без read-modify-write.
+                await UserRepository(session).add_xp_coins(cb.from_user.id, coins=coins)
             await svc.add_pet_xp(pet, xp)
             await PetRepository(session).log_action(pet.id, "walk_done", value=coins)
             prefix = f"{wtext}\n\n"
@@ -281,7 +280,9 @@ def _guess_kb(lo: int, hi: int, secret: int, chat_id: int | None) -> InlineKeybo
 
 # Снимок активной партии угадайки: chat_id -> секрет. Нужен ТОЛЬКО для
 # текстовых ходов (callback-ходы самодостаточны и его не читают).
-_CHAT_GUESS_SECRET: dict[int, int] = {}
+# LRU с лимитом: обычный dict оставлял бы запись каждого чата навсегда.
+from app.utils.chat_ctx import BoundedChatCtx
+_CHAT_GUESS_SECRET = BoundedChatCtx(maxsize=4096)
 
 
 async def _guess_start(cb: CallbackQuery, session: AsyncSession) -> None:
@@ -297,7 +298,7 @@ async def _guess_start(cb: CallbackQuery, session: AsyncSession) -> None:
         f"<b>{lo}…{hi}</b> (чем умнее питомец, тем точнее подсказка!).\n\n"
         "Нажми кнопку-вариант или напиши своё число сообщением:",
         reply_markup=_guess_kb(lo, hi, secret, _chat_of(cb)))
-    _CHAT_GUESS_SECRET[_chat_of(cb) or 0] = secret
+    _CHAT_GUESS_SECRET.set(_chat_of(cb) or 0, secret)
     await cb.answer()
 
 

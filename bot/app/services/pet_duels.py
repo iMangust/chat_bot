@@ -18,6 +18,14 @@ SCORE_LOSS = 5
 DAILY_FIGHT_LIMIT = 5
 FIGHT_COOLDOWN_SEC = 90
 WEEKLY_PRIZES = {1: 300, 2: 150, 3: 75}
+# Сила боя растёт с уровнем почти линейно (level*10), поэтому «голый»
+# разброс ±20% при встречном бою превращал арену в детерминированный
+# подсчёт очков: более высокий уровень выигрывал почти всегда, а тактика
+# и состояние питомца не решали ничего. Формула ниже делает исход
+# вероятностным: фаворит по силе выигрывает ~2/3 боёв, андердог — ~1/3.
+DUEL_BASE_ODDS = 40.0     # масштаб логистической кривой (больше = предсказуемее)
+DUEL_MIN_P_WIN = 0.10     # даже против многократно более сильного соперника
+DUEL_MAX_P_WIN = 0.90     # есть шанс апсетта; и наоборот — фаворит не непобедим
 
 def week_key(dt: datetime | None = None) -> str:
     dt = dt or local_now()
@@ -37,11 +45,26 @@ def duel_power(pet: Pet) -> int:
     return max(1, pet.level * 10 + pet.strength * 4 + pet.agility * 3
                + pet.intellect * 2 + mood_bonus + sick + tired + gear)
 
+def win_probability(power_a: int, power_b: int) -> float:
+    """Вероятность победы A против B (логистическая кривая по разнице сил).
+
+    Равные силы → 0.5; умеренный фаворит (~+40 силы) → ~0.73; при любом
+    перевесе вероятность ограничена [DUEL_MIN_P_WIN, DUEL_MAX_P_WIN],
+    чтобы арена оставалась вероятностной, а не детерминированной.
+    """
+    import math
+    diff = (int(power_a) - int(power_b)) / DUEL_BASE_ODDS
+    p = 1.0 / (1.0 + math.exp(-max(-60.0, min(60.0, diff))))
+    return max(DUEL_MIN_P_WIN, min(DUEL_MAX_P_WIN, p))
+
+
 def resolve_duel(a: Pet, b: Pet, rng: random.Random | None = None) -> tuple[Pet, Pet]:
     rng = rng or random
-    pa = duel_power(a) * rng.uniform(0.8, 1.2)
-    pb = duel_power(b) * rng.uniform(0.8, 1.2)
-    return (a, b) if pa >= pb else (b, a)
+    # Бросок против вероятности победы (см. win_probability): исход
+    # стохастичен, андердог сохраняет реальный шанс на апсетт.
+    if rng.random() < win_probability(duel_power(a), duel_power(b)):
+        return a, b
+    return b, a
 
 async def get_or_create_row(session: AsyncSession, pet_id: int, wk: str) -> PetDuel:
     row = (await session.execute(
@@ -183,7 +206,9 @@ async def finish_week(session: AsyncSession, prev_week: str | None = None) -> bo
     for place, (pet, owner, _row) in enumerate(top[:3], start=1):
         prize = WEEKLY_PRIZES.get(place, 0)
         if prize:
-            owner.coins += prize
+            # Атомарное начисление приза (owner может быть detached/устаревшим).
+            from app.db.repositories import UserRepository
+            await UserRepository(session).add_xp_coins(int(owner.tg_id), coins=prize)
             await queue_notification(
                 session, int(owner.tg_id), "info",
                 f"🏟 Питомец {pet.name} занял #{place} в недельной арене! Приз: 🪙 {prize}",

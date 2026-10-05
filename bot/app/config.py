@@ -169,6 +169,9 @@ class Settings(BaseSettings):
     xp_per_message: int = 2
     xp_level_base: float = 50.0
     coins_per_message_cap: int = 1
+    # Баланс: жёсткий дневной потолок монет за активность в чатах.
+    # Без него 🪙 можно бесконечно фармить сообщениями (auto-post/флуд).
+    coins_daily_cap: int = 25
 
     log_level: str = "INFO"
     is_dev: bool = True

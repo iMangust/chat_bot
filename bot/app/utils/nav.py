@@ -18,7 +18,7 @@
 from __future__ import annotations
 
 import json
-from collections import deque
+from collections import OrderedDict, deque
 
 from loguru import logger
 
@@ -28,7 +28,10 @@ MAX_DEPTH = 6          # глубина стека на чат
 TTL_SEC = 24 * 3600    # стек живёт сутки без активности
 
 # Локальный фолбэк, если Redis недоступен (сбрасывается при рестарте).
-_mem: dict[int, deque[str]] = {}
+# LRU с лимитом: обычный dict рос бы без ограничений на долгих аптаймах
+# (запись на каждый когда-либо навигировавший чат — утечка памяти).
+_mem: "OrderedDict[int, deque[str]]" = OrderedDict()
+_MEM_MAX_CHATS = 4096
 
 
 def _key(chat_id: int) -> str:
@@ -50,6 +53,15 @@ def mem_stack(chat_id: int | None) -> list[str]:
     return list(_mem.get(int(chat_id), ()))
 
 
+def _mem_get(chat_id: int) -> deque[str]:
+    """LRU-чтение фолбэка: freshest right."""
+    key = int(chat_id)
+    stack = _mem.get(key)
+    if stack is not None:
+        _mem.move_to_end(key)
+    return stack if stack is not None else deque()
+
+
 async def _load(chat_id: int) -> deque[str]:
     r = redis_client
     if r is not None:
@@ -61,11 +73,14 @@ async def _load(chat_id: int) -> deque[str]:
                     return items
         except Exception as exc:  # noqa: BLE001
             logger.debug("nav stack load failed: {}", type(exc).__name__)
-    return _mem.get(int(chat_id), deque())
+    return _mem_get(chat_id)
 
 
 async def _save(chat_id: int, stack: deque[str]) -> None:
     _mem[int(chat_id)] = stack
+    _mem.move_to_end(int(chat_id))
+    while len(_mem) > _MEM_MAX_CHATS:
+        _mem.popitem(last=False)   # вытесняем самый старый чат
     r = redis_client
     if r is None:
         return

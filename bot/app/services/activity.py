@@ -104,13 +104,28 @@ class ActivityService:
                 xp_gain += 1
         if is_reply:
             xp_gain += 1
-        coins_gain = self.settings.coins_per_message_cap
+        # Баланс: дневной потолок монет за активность (см. coins_daily_cap).
+        # Счётчик живёт сутки (Redis-TTL либо in-memory с экспирацией),
+        # поэтому фарм сообщениями/ботами ограничен, а не бесконечен.
+        coins_gain = 0
+        cap = int(self.settings.coins_per_message_cap)
+        daily_max = int(getattr(self.settings, "coins_daily_cap", 0))
+        if cap > 0 and daily_max != 0:
+            from app.utils.redis import get_counter, incr_counter
+            earned_today = await get_counter(f"coinEarned:{user_id}")
+            if daily_max <= 0 or earned_today < daily_max:
+                coins_gain = cap if daily_max <= 0 else min(cap, daily_max - earned_today)
+                # TTL окна — сутки от первого начисления (сдвиг не сбрасываем)
+                await incr_counter(f"coinEarned:{user_id}", coins_gain, ttl=86460)
 
         self._update_streak(user, now)
         new_level, new_xp, leveled_to = self._apply_user_xp(user, xp_gain)
         user.xp = new_xp
         user.level = new_level
-        user.coins += coins_gain
+        if coins_gain:
+            # Атомарное начисление — без read-modify-write.
+            from app.db.repositories import UserRepository
+            await UserRepository(self.session).add_xp_coins(user_id, coins=coins_gain)
         user.messages_count += 1
 
         await self.session.flush()

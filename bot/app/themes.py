@@ -19,6 +19,7 @@ from __future__ import annotations
 import contextvars
 import fnmatch
 import logging
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -33,7 +34,25 @@ CURRENT_THEME: contextvars.ContextVar[str] = contextvars.ContextVar(
 # операциях, сбрасывающих настройки пользователя.
 # ВАЖНО: значение None («юзера ещё нет в БД») в кэш НЕ кладётся — иначе
 # первый же /start до get_or_create заморозил бы тему как standard навсегда.
-_THEME_CACHE: dict[int, str] = {}
+# OrderedDict с ручным LRU: обычный dict рос бы без ограничений вместе с
+# числом когда-либо виденных пользователей (утечка памяти на аптайме).
+_THEME_CACHE: "OrderedDict[int, str]" = OrderedDict()
+_THEME_CACHE_MAX = 50_000
+
+
+def _theme_cache_put(tg_id: int, theme_key: str) -> None:
+    _THEME_CACHE[tg_id] = theme_key
+    _THEME_CACHE.move_to_end(tg_id)
+    while len(_THEME_CACHE) > _THEME_CACHE_MAX:
+        _THEME_CACHE.popitem(last=False)
+
+
+def _theme_cache_get(tg_id: int) -> str | None:
+    key = int(tg_id)
+    if key in _THEME_CACHE:
+        _THEME_CACHE.move_to_end(key)
+        return _THEME_CACHE[key]
+    return None
 
 # Последний пользователь, чья тема была установлена middleware'ом.
 # Нужен для подстраховки: aiogram 3.x запускает обработчики ошибок
@@ -69,7 +88,7 @@ def forget_and_remember(tg_id: int, theme_key: str) -> None:
     настройках».
     """
     invalidate_theme_cache(tg_id)
-    _THEME_CACHE[int(tg_id)] = theme_key
+    _theme_cache_put(int(tg_id), theme_key)
     remember_theme_owner(tg_id)
 
 
@@ -87,7 +106,7 @@ def ensure_theme_for(tg_id: int | None) -> None:
     """
     if tg_id is None:
         return
-    key = _THEME_CACHE.get(int(tg_id))
+    key = _theme_cache_get(int(tg_id))
     if key is None:
         # В кэша нет — не гадаем: оставляем как есть (для неизвестных юзеров
         # это standard, а свой выбор пользователь всегда в кэше имеет).
@@ -117,8 +136,9 @@ async def load_theme_key(tg_id: int) -> str | None:
     «тема не применяется нигде, кроме настроек» без единой зацепки в логах.
     """
     tg_id = int(tg_id)
-    if tg_id in _THEME_CACHE:
-        return _THEME_CACHE[tg_id]
+    cached = _theme_cache_get(tg_id)
+    if cached is not None:
+        return cached
     theme_key: str | None = None
     try:
         from app.db.session import session_factory
@@ -143,7 +163,7 @@ async def load_theme_key(tg_id: int) -> str | None:
     # состояние «тема не выбрана» тоже закэшировано; при выборе темы
     # обработчик set:theme:* инвалидирует кэш (invalidate_theme_cache),
     # поэтому устаревание исключено.
-    _THEME_CACHE[tg_id] = theme_key or STANDARD.key
+    _theme_cache_put(tg_id, theme_key or STANDARD.key)
     return theme_key
 
 
@@ -292,7 +312,8 @@ GOTHIC = Theme(
                                "Спасай: «🕯 Восстание из пепла» за 200 🩸 или приюти новую тень.",
         "pet.no_more_lives": "🥀 У {name} больше не осталось жизней — восстание недоступно. "
                              "Можно только приютить новую тень (старая уйдёт в хронику).",
-        "pet.revive_done": "🕯 {name} восстала из пепла! За это снято ✴ {stars}.",
+        "pet.revive_done": "🕯 {name} восстала из пепла! Следующий обряд будет дороже.",
+        "pet.revive_free": "🎁 Первый обряд — даром! Береги тень 💜",
         "pet.revive_no_money": "⛓ Не хватает крови: нужно {need}, у тебя {have}. "
                                "Зарабатывай активностью в чате!",
         "pet.not_critical": "✔ Тень в порядке — обряд не нужен.",

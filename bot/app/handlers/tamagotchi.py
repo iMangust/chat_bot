@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import random
 import re
+from collections import OrderedDict
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -24,6 +25,7 @@ from app.services.tamagotchi import (SPECIES_DATA, TamagotchiService, _aware,
 from app.services.weather import (STAT_LEGEND as _STAT_LEGEND,
                                    walk_forecast_line, weather_hint_block)
 from app.utils.local_time import now as local_now
+from app.utils.chat_ctx import BoundedChatCtx
 
 router = Router(name="tamagotchi")
 _aware_dt = _aware
@@ -52,24 +54,32 @@ def _hub_kb(svc: TamagotchiService, pet: Pet | None, chat_id,
     return pet_hub(page, critical=svc.is_critical(pet),
                    sleeping=pet.is_sleeping, walking=svc.on_walk(pet))
 
-_PET_PAGE_CTX: dict[int, int] = {}
+class _BoundedChatCtx(BoundedChatCtx):
+    """Совместимость: историческое имя класса внутри tamagotchi.py.
+
+    Полноценная реализация LRU вынесена в app.utils.chat_ctx, чтобы её
+    могли использовать другие модули без кросс-импортов хендлеров.
+    """
+
+
+_PET_PAGE_CTX = _BoundedChatCtx()
 
 def pet_page_for(chat_id: int) -> int:
     return _PET_PAGE_CTX.get(int(chat_id), 0) % max(1, pet_page_count())
 
 def set_pet_page(chat_id: int, page: int) -> int:
     page %= max(1, pet_page_count())
-    _PET_PAGE_CTX[int(chat_id)] = page
+    _PET_PAGE_CTX.set(int(chat_id), page)
     return page
 
 # Снимок последнего игрового экрана чата (callback_data кнопки хода).
 # Нужен только для ТЕКСТОВЫХ ходов угадайки: входящее текстовое сообщение
 # не содержит клавиатуру бота, а активная партия теперь не хранится в FSM.
-_GAME_SCREEN_CTX: dict[int, str] = {}
+_GAME_SCREEN_CTX = _BoundedChatCtx()
 
 def set_last_game_screen(chat_id: int, token: str | None) -> None:
     if token:
-        _GAME_SCREEN_CTX[int(chat_id)] = token
+        _GAME_SCREEN_CTX.set(int(chat_id), token)
     else:
         _GAME_SCREEN_CTX.pop(int(chat_id), None)
 
@@ -443,22 +453,28 @@ async def act_revive(cb: CallbackQuery, session: AsyncSession) -> None:
     have = user.coins if user else 0
     if have < cost:
         if user and await svc.free_revive_for_newbie(pet):
+            # Реанимация уже применена к объекту pet — обязательно коммитим,
+            # иначе на следующем тике откат/перечитывание вернёт «мёртвого»
+            # питомца и бесплатная попытка будет потрачена впустую.
             await PetRepository(session).log_action(pet.id, "revive_free")
             await session.commit()
-            return await cb.answer("🎁 Первая реанимация — бесплатная! Береги питомца 💖",
-                                   show_alert=True)
+            return await cb.answer(t("pet.revive_free"), show_alert=True)
         await session.commit()
         return await cb.answer(
             t("pet.revive_no_money", need=cost, have=have), show_alert=True)
     result = await svc.revive(pet)
-    await users.add_coins(user.tg_id, -cost)
+    # Атомное списание вместо отсутствовавшего add_coins (падало AttributeError)
+    # и вместо «проверил−потратил» (гонка параллельных тапов).
+    if not await users.try_spend_coins(user.tg_id, cost):
+        return await cb.answer(
+            t("pet.revive_no_money", need=cost, have=have), show_alert=True)
     await PetRepository(session).log_action(pet.id, "revive", value=cost)
     await session.commit()
     await safe_edit_or_answer(
         cb.message,
         f"{result}\n\n" + await svc.render_async(pet),
         reply_markup=_hub_kb(svc, pet, cb.message.chat.id if cb.message else None))
-    await cb.answer(f"⭐ −{cost}")
+    await cb.answer(f"🪙 −{cost}")
 
 @router.callback_query(F.data == "pet:adopt_confirm", AdoptConfirm.confirm)
 async def pet_adopt_confirm(cb: CallbackQuery, session: AsyncSession,
@@ -598,10 +614,9 @@ async def _after_action(cb: CallbackQuery, session: AsyncSession, result_text: s
         pet.walk_until = None
         pet.walk_start_at = None
         if coins:
-            users = UserRepository(session)
-            user = await users.get(cb.from_user.id)
-            if user:
-                user.coins += coins
+            # Атомарное начисление (UPDATE ... SET coins = coins + N):
+            # параллельные прогулки/игры не теряют начисления.
+            await UserRepository(session).add_xp_coins(cb.from_user.id, coins=coins)
         await svc.add_pet_xp(pet, xp)
         await PetRepository(session).log_action(pet.id, "walk_done", value=coins)
         prefix = f"{wtext}\n\n"
@@ -645,8 +660,7 @@ async def act_feed(cb: CallbackQuery, session: AsyncSession) -> None:
     deny = svc.state_deny(pet, "feed")
     if deny:
         return await _deny(cb, deny)
-    result = await svc.feed(pet, {"hunger": 15})
-    fed = "Ням-ням" in result
+    result, fed = await svc.feed(pet, {"hunger": 15}, with_result=True)
     if fed:
         await PetRepository(session).log_action(pet.id, "feed")
     await _after_action(cb, session, result, fx="feed" if fed else None)
@@ -752,8 +766,7 @@ async def act_train(cb: CallbackQuery, session: AsyncSession) -> None:
     deny = svc.state_deny(pet, "train")
     if deny:
         return await _deny(cb, deny)
-    result = await svc.train(pet, stat)
-    trained = "завершена" in result
+    result, trained = await svc.train(pet, stat, with_result=True)
     if trained:
         await PetRepository(session).log_action(pet.id, "train", value=1)
     await _after_action(cb, session, result, fx="train" if trained else None, stat=stat)
@@ -771,8 +784,7 @@ async def act_walk(cb: CallbackQuery, session: AsyncSession) -> None:
         hint = svc.sleeping_hint("walk") if pet.is_sleeping else None
         return await _deny(cb, hint or deny)
     forecast = await walk_forecast_line()
-    result = await svc.start_walk(pet, hours=2)
-    walked = "ушёл гулять" in result
+    result, walked = await svc.start_walk(pet, hours=2, with_result=True)
     if walked:
         await PetRepository(session).log_action(pet.id, "walk")
         if forecast:
