@@ -13,11 +13,11 @@ def utcnow() -> datetime:
     """Текущий момент для колонок created_at/last_seen.
 
     Хранилище: локальное время пользователей (TZ_OFFSET_HOURS от UTC,
-    историческая конфигурация — Камчатка UTC+12). Раньше писалось в UTC —
-    из-за этого «в базе сейчас 09:52, хотя на часах 21:52». Теперь время
-    записи и отображения совпадают; границы SQL-сравнений (db_bound)
-    подаются без сдвига. Для возврата к UTC-хранению достаточно поменять
-    эту функцию и db_bound (см. utils/local_time).
+    по умолчанию 0 = UTC; историческая конфигурация — Камчатка UTC+12).
+    Раньше писалось в UTC — из-за этого «в базе сейчас 09:52, хотя на часах
+    21:52». Теперь время записи и отображения совпадают; границы SQL-сравнений
+    (db_bound) подаются без сдвига. Для возврата к UTC-хранению достаточно
+    поменять эту функцию и db_bound (см. utils/local_time).
     """
     from app.utils.local_time import now
     return now()
@@ -26,11 +26,6 @@ def utcnow() -> datetime:
 def utcnow_naive() -> datetime:
     """Naive-момент в том же виде, в каком он лежит в колонках DateTime."""
     return utcnow().replace(tzinfo=None)
-
-def localnow() -> datetime:
-    """Камчатское время для пользовательских расчётов (день/сутки, стрики)."""
-    from app.utils.local_time import now
-    return now()
 
 class Base(DeclarativeBase):
     __table_args__ = {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"}
