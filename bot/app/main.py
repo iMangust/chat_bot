@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import signal
 import sys
+from pathlib import Path
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -137,12 +138,20 @@ async def _index_exists(conn, index_name: str) -> bool:
 # Таблицы, которые могут отсутствовать в старых БД полностью (create_all их
 # не досоздаёт, если таблица уже есть с другим набором колонок). Создаются
 # через Base.metadata.create_all(tables=[...]) по факту отсутствия.
+# NOTE: канонический способ эволюции схемы — Alembic (bot/alembic/,
+# `alembic upgrade head`). Ниже — legacy-страховка для живых БД, созданных до
+# внедрения миграций; новые колонки сюда добавлять НЕ нужно, вместо этого
+# создайте alembic-ревизию. Страховка идемпотентна и безопасна на БД,
+# которую возглавил alembic (колонки/индексы уже на месте — проверка
+# пропускает их).
 _LIGHT_TABLES: tuple[str, ...] = ("events",)
 
 _LIGHT_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "pets": [
-        ("generation", "INTEGER NOT NULL DEFAULT 1"),
+        # Индекс uq_pets_current_per_user опирается на is_archived — порядок
+        # применения (сначала колонки, потом индекс) обеспечивается ниже.
         ("is_archived", "BOOLEAN NOT NULL DEFAULT 0"),
+        ("generation", "INTEGER NOT NULL DEFAULT 1"),
         ("archived_at", "DATETIME"),
         ("archive_reason", "VARCHAR(32)"),
         ("sleep_started_at", "DATETIME"),
@@ -627,10 +636,65 @@ async def _renumber_merch_category_codes(engine) -> None:
     except Exception as exc:
         logger.debug("renumber merch category codes skipped: {}", type(exc).__name__)
 
+async def _stamp_head_if_missing(conn) -> None:
+    """Согласование Alembic с legacy-БД, созданными create_all (без alembic_version).
+
+    Если таблица alembic_version отсутствует, а схема уже совпадает с моделями
+    (ни одна из «лёгких» колонок не требуется), помечаем БД как актуальную
+    (stamp head) — иначе первая же alembic-ревизия на живом сервере упадёт или
+    попытается пересоздать существующие таблицы. Молчаливый no-op при любом
+    сбое: миграции бота не должны зависеть от состояния Alembic.
+    """
+    from sqlalchemy import text as _text
+
+    try:
+        exists = await conn.run_sync(
+            lambda sc: sa_inspect(sc).has_table("alembic_version"))
+        if exists:
+            return  # БД уже под управлением Alembic — ничего делать не нужно
+        missing_cols = []
+        for table, columns in _LIGHT_COLUMNS.items():
+            tbl_exists = await conn.run_sync(
+                lambda sc, t=table: sa_inspect(sc).has_table(t))
+            if not tbl_exists:
+                continue  # таблицу создаст сам create_all — колонки в ней есть
+            for column, _ddl in columns:
+                if not await _column_exists(conn, table, column):
+                    missing_cols.append(f"{table}.{column}")
+        if missing_cols:
+            logger.info(
+                "alembic stamp пропущен: БД требует лёгких миграций ({}) — "
+                "после их применения и `alembic stamp head` БД перейдёт под "
+                "управление Alembic", ", ".join(missing_cols[:5]))
+            return
+        from alembic.config import Config
+        from alembic.script import ScriptDirectory
+
+        root = Path(__file__).resolve().parents[1]
+        cfg = Config(str(root / "alembic.ini"))
+        heads = ScriptDirectory.from_config(cfg).get_heads()
+        if not heads:
+            return  # ревизий ещё нет (например, тестовый окружение без каталога)
+        await conn.execute(_text(
+            "CREATE TABLE IF NOT EXISTS alembic_version ("
+            "  version_num VARCHAR(32) NOT NULL,"
+            "  CONSTRAINT alembic_version_pkc PRIMARY KEY (version_num))"))
+        for head in heads:
+            await conn.execute(
+                _text("INSERT INTO alembic_version (version_num) VALUES (:v)"),
+                {"v": head})
+        logger.info("legacy-БД помечена как актуальная для Alembic (stamp {})",
+                    ", ".join(heads))
+    except Exception as exc:
+        logger.debug("alembic auto-stamp пропущен: {}: {}",
+                     type(exc).__name__, str(exc)[:200])
+
+
 async def on_startup(bot: Bot) -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await _light_migrations(conn)
+        await _stamp_head_if_missing(conn)
     # Самолечение «мертвой» кнопки «Мероприятия»: в старых/битых БД таблицы
     # events может не быть вовсе (SELECT падает с OperationalError).
     await ensure_events_table(engine)

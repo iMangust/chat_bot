@@ -1,7 +1,9 @@
 # --- Core (актуальные проверенные версии, v1.4.4 — обновлены, тесты 80 passed) ---
 aiogram>=3.31,<4.0          # long polling, callbacks, FSM, реакции (Bot API 7+/9.x)
 SQLAlchemy[asyncio]>=2.1,<2.2  # async ORM; [asyncio] => тянет greenlet (иначе ImportError в conftest на CI)
+alembic>=1.14               # версионируемые миграции схемы БД (bot/alembic/, alembic upgrade head)
 aiomysql>=0.3.2             # MySQL-драйвер (prod)
+pymysql>=1.1                # sync-драйвер для Alembic (env.py подменяет им aiomysql)
 aiosqlite>=0.22             # SQLite для тестов/dev
 greenlet>=3.0              # async-стек SQLAlchemy (требование conftest на CI)
 redis>=8.1                  # кулдауны/FSM (RESP2 protocol=2 — совместимо со старым Redis/Memurai)
