@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 from datetime import datetime, timedelta, timezone
 
 from aiogram import Bot
@@ -22,6 +23,29 @@ from app.services.tamagotchi import TamagotchiService, compute_mood
 from app.utils.redis import acquire_lock, release_lock
 from app.utils.html_text import esc
 from app.utils.local_time import localize, now as local_now, user_tz
+
+
+def _safe(fn):
+    """Обёртка cron-джоба: логирует любые исключения вместо тихого провала.
+
+    Без неё ошибка внутри задачи (например, NameError или сетевой сбой БД)
+    уходит в лог APScheduler без traceback и остаётся незамеченной; при
+    регулярных сбоях задача может быть удалена планировщиком ("was removed
+    due to misfires"). Обёртка сохраняет задачу живой, пишет полный traceback
+    и не меняет сигнатуру (functools.wraps), что важно для introspection/тестов.
+    """
+
+    @functools.wraps(fn)
+    async def wrapper(*args, **kwargs):
+        try:
+            return await fn(*args, **kwargs)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("scheduled job '{}' failed", getattr(fn, "__name__", "?"))
+
+    return wrapper
+
 
 async def decay_all_pets(bot: Bot) -> None:
     if not await acquire_lock("decay", ttl_sec=60 * 25):
@@ -379,32 +403,32 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
     # сбрасывая зону из конструктора. Поэтому зону передаём явно и здесь.
     sched.configure(timezone=tz, job_defaults={"coalesce": True, "max_instances": 1,
                                   "misfire_grace_time": 300})
-    sched.add_job(decay_all_pets, "interval", minutes=30, args=[bot],
+    sched.add_job(_safe(decay_all_pets), "interval", minutes=30, args=[bot],
                   max_instances=1, coalesce=True, id="decay")
-    sched.add_job(flush_notifications, "interval", minutes=1, args=[bot],
+    sched.add_job(_safe(flush_notifications), "interval", minutes=1, args=[bot],
                   max_instances=1, coalesce=True, id="notify")
-    sched.add_job(scan_channel_members, "interval",
+    sched.add_job(_safe(scan_channel_members), "interval",
                   minutes=get_settings().channel_scan_minutes, args=[bot],
                   max_instances=1, coalesce=True, id="chanscan")
     # 00:15 по локальному времени (TZ_OFFSET_HOURS): день гарантированно сменился
-    sched.add_job(check_streak_expiry, "cron", hour=0, minute=15, args=[bot],
+    sched.add_job(_safe(check_streak_expiry), "cron", hour=0, minute=15, args=[bot],
                   id="streaks")
     st = get_settings()
-    sched.add_job(daily_reports, "cron", hour=st.daily_report_hour, minute=5,
+    sched.add_job(_safe(daily_reports), "cron", hour=st.daily_report_hour, minute=5,
                   args=[bot], id="daily", max_instances=1, coalesce=True)
-    sched.add_job(evening_streak_warnings, "cron", hour=st.evening_reminder_hour,
+    sched.add_job(_safe(evening_streak_warnings), "cron", hour=st.evening_reminder_hour,
                   minute=40, args=[bot], id="streakwarn", max_instances=1, coalesce=True)
-    sched.add_job(weekly_leaderboard, "cron", day_of_week="mon", hour=8, minute=30,
+    sched.add_job(_safe(weekly_leaderboard), "cron", day_of_week="mon", hour=8, minute=30,
                   args=[bot], id="weeklylb", max_instances=1, coalesce=True)
-    sched.add_job(weekly_arena_finish, "cron", day_of_week="mon", hour=8, minute=40,
+    sched.add_job(_safe(weekly_arena_finish), "cron", day_of_week="mon", hour=8, minute=40,
                   args=[bot], id="weeklyarena", max_instances=1, coalesce=True)
     if st.mtproto_sync_minutes > 0 and st.telegram_api_id and st.telegram_api_hash:
-        sched.add_job(mtproto_delta_sync, "interval", minutes=st.mtproto_sync_minutes,
+        sched.add_job(_safe(mtproto_delta_sync), "interval", minutes=st.mtproto_sync_minutes,
                       args=[bot],
                       id="mtproto_sync", max_instances=1, coalesce=True,
                       next_run_time=local_now() + timedelta(seconds=90))
     weather_hours = max(0.5, float(getattr(st, "weather_refresh_hours", 3.0) or 3.0))
-    sched.add_job(weather_updater, "interval", hours=weather_hours, args=[bot],
+    sched.add_job(_safe(weather_updater), "interval", hours=weather_hours, args=[bot],
                   id="weather", max_instances=1, coalesce=True,
                   next_run_time=local_now() + timedelta(seconds=5))
     return sched
