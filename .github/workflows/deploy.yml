@@ -19,6 +19,12 @@ concurrency:
   group: deploy-production
   cancel-in-progress: false
 
+# Права GITHUB_TOKEN по умолчанию могут быть ограничены настройками
+# репозитория (Read) — тогда создание release падает с 403.
+# Объявляем явный минимум: записи release + чтение содержимого для checkout.
+permissions:
+  contents: write
+
 jobs:
   deploy:
     name: Deploy to production (${{ github.ref_name }})
