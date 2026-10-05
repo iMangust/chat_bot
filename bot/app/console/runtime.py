@@ -262,8 +262,10 @@ class BotRuntime:
             self._polling_task.cancel()
             try:
                 await self._polling_task
-            except (asyncio.CancelledError, Exception):
-                pass
+            except asyncio.CancelledError:
+                pass  # ожидаемый исход отмены polling при остановке
+            except Exception as exc:  # noqa: BLE001 — не роняем shutdown
+                logger.debug("polling task finished with error during shutdown: {}", exc)
             self._polling_task = None
         await close_redis()
         await engine.dispose()

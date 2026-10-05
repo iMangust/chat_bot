@@ -290,7 +290,8 @@ def get_settings() -> Settings:
             try:
                 object.__setattr__(s, field, int(str(env_val)))
             except ValueError:
-                pass
+                print(f"[config] WARNING: {field.upper()}={env_val!r} — "
+                      f"не целое число, значение проигнорировано")
     # CHAT_DISCUSSION_GROUP — не дублирование TRACKED_CHAT_IDS, а опциональная
     # подсказка (например, группа обсуждений при канале). Если id задан и его
     # ещё нет в списке отслеживаемых — добавляем автоматически, чтобы учёт
@@ -317,7 +318,8 @@ def apply_hot_schedule_keys(updates: dict[str, str]) -> None:
         try:
             object.__setattr__(s, field, int(str(val)))
         except ValueError:
-            pass
+            print(f"[config] WARNING: hot key {key}={val!r} — "
+                  f"не целое число, настройка не применена")
 
 
 def utc_hour_of(local_hour: int) -> int:

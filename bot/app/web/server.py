@@ -141,8 +141,8 @@ def _env_value(key: str) -> str | None:
             k, _, v = s.partition("=")
             if k.strip() == key:
                 return v.strip().strip('"').strip("'")
-    except OSError:
-        pass
+    except OSError as exc:
+        logger.debug("не удалось прочитать %s для ключа %s: %s", f, key, exc)
     return None
 
 
@@ -170,6 +170,7 @@ def _resolve_bind(host_cli: str | None, port_cli: int | None) -> tuple[str, int]
     try:
         port = int(port_raw or 8765)
     except ValueError:
+        logger.warning("DASHBOARD_PORT=%r — не число, используем 8765", port_raw)
         port = 8765
     try:
         addr = ipaddress.ip_address(host)

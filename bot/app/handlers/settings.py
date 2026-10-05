@@ -270,7 +270,9 @@ async def repaint_main_menu(bot: Bot, chat_id: int, theme_key: str) -> int:
             continue
         try:
             kb = _telethon_markup_to_aiogram(kb_src)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 — нестандартная разметка, пропускаем сообщение
+            logger.debug("telethon markup conversion failed for msg {}: {!r}",
+                         getattr(m, 'id', '?'), exc)
             continue
         cbs = [btn.callback_data or ""
                for row in kb.inline_keyboard for btn in row]
@@ -332,7 +334,9 @@ async def repaint_chat_messages(bot: Bot, chat_id: int, theme_key: str,
             continue
         try:
             kb = _telethon_markup_to_aiogram(kb_src)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001 — нестандартная разметка, пропускаем сообщение
+            logger.debug("telethon markup conversion failed for msg {}: {!r}",
+                         getattr(m, 'id', '?'), exc)
             continue
         cbs = [btn.callback_data or ""
                for row in kb.inline_keyboard for btn in row]
