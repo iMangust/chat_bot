@@ -198,7 +198,21 @@ CREATE TABLE IF NOT EXISTS channel_subscribers (
 )
 CHARSET=utf8mb4 COLLATE utf8mb4_unicode_ci ENGINE=InnoDB;
 
-CREATE INDEX ix_channel_subscribers_first_seen ON channel_subscribers (first_seen);
+-- ==== conditional index: ix_channel_subscribers_first_seen ====
+DROP PROCEDURE IF EXISTS _mk_ix_channel_subscribers_first_seen;
+DELIMITER //
+CREATE PROCEDURE _mk_ix_channel_subscribers_first_seen()
+BEGIN
+    SELECT COUNT(*) INTO @c FROM information_schema.statistics
+      WHERE table_schema = DATABASE() AND table_name = 'channel_subscribers' AND index_name = 'ix_channel_subscribers_first_seen';
+    IF @c = 0 THEN
+        CREATE INDEX `ix_channel_subscribers_first_seen` ON `channel_subscribers` (first_seen);
+    END IF;
+END//
+DELIMITER ;
+CALL _mk_ix_channel_subscribers_first_seen();
+DROP PROCEDURE _mk_ix_channel_subscribers_first_seen;
+
 
 -- ==== table: leaderboards_snapshot ====
 CREATE TABLE IF NOT EXISTS leaderboards_snapshot (
@@ -295,9 +309,37 @@ CREATE TABLE IF NOT EXISTS chat_messages_log (
 )
 CHARSET=utf8mb4 COLLATE utf8mb4_unicode_ci ENGINE=InnoDB;
 
-CREATE INDEX ix_cml_chat_created ON chat_messages_log (chat_id, created_at);
+-- ==== conditional index: ix_cml_chat_created ====
+DROP PROCEDURE IF EXISTS _mk_ix_cml_chat_created;
+DELIMITER //
+CREATE PROCEDURE _mk_ix_cml_chat_created()
+BEGIN
+    SELECT COUNT(*) INTO @c FROM information_schema.statistics
+      WHERE table_schema = DATABASE() AND table_name = 'chat_messages_log' AND index_name = 'ix_cml_chat_created';
+    IF @c = 0 THEN
+        CREATE INDEX `ix_cml_chat_created` ON `chat_messages_log` (chat_id, created_at);
+    END IF;
+END//
+DELIMITER ;
+CALL _mk_ix_cml_chat_created();
+DROP PROCEDURE _mk_ix_cml_chat_created;
 
-CREATE INDEX ix_cml_user_created ON chat_messages_log (user_id, created_at);
+
+-- ==== conditional index: ix_cml_user_created ====
+DROP PROCEDURE IF EXISTS _mk_ix_cml_user_created;
+DELIMITER //
+CREATE PROCEDURE _mk_ix_cml_user_created()
+BEGIN
+    SELECT COUNT(*) INTO @c FROM information_schema.statistics
+      WHERE table_schema = DATABASE() AND table_name = 'chat_messages_log' AND index_name = 'ix_cml_user_created';
+    IF @c = 0 THEN
+        CREATE INDEX `ix_cml_user_created` ON `chat_messages_log` (user_id, created_at);
+    END IF;
+END//
+DELIMITER ;
+CALL _mk_ix_cml_user_created();
+DROP PROCEDURE _mk_ix_cml_user_created;
+
 
 -- ==== table: reactions_log ====
 CREATE TABLE IF NOT EXISTS reactions_log (
@@ -316,7 +358,21 @@ CREATE TABLE IF NOT EXISTS reactions_log (
 )
 CHARSET=utf8mb4 COLLATE utf8mb4_unicode_ci ENGINE=InnoDB;
 
-CREATE INDEX ix_rl_to_created ON reactions_log (to_user, created_at);
+-- ==== conditional index: ix_rl_to_created ====
+DROP PROCEDURE IF EXISTS _mk_ix_rl_to_created;
+DELIMITER //
+CREATE PROCEDURE _mk_ix_rl_to_created()
+BEGIN
+    SELECT COUNT(*) INTO @c FROM information_schema.statistics
+      WHERE table_schema = DATABASE() AND table_name = 'reactions_log' AND index_name = 'ix_rl_to_created';
+    IF @c = 0 THEN
+        CREATE INDEX `ix_rl_to_created` ON `reactions_log` (to_user, created_at);
+    END IF;
+END//
+DELIMITER ;
+CALL _mk_ix_rl_to_created();
+DROP PROCEDURE _mk_ix_rl_to_created;
+
 
 -- ==== table: pet_actions_log ====
 CREATE TABLE IF NOT EXISTS pet_actions_log (
@@ -331,7 +387,21 @@ CREATE TABLE IF NOT EXISTS pet_actions_log (
 )
 CHARSET=utf8mb4 COLLATE utf8mb4_unicode_ci ENGINE=InnoDB;
 
-CREATE INDEX ix_pal_pet_created ON pet_actions_log (pet_id, created_at);
+-- ==== conditional index: ix_pal_pet_created ====
+DROP PROCEDURE IF EXISTS _mk_ix_pal_pet_created;
+DELIMITER //
+CREATE PROCEDURE _mk_ix_pal_pet_created()
+BEGIN
+    SELECT COUNT(*) INTO @c FROM information_schema.statistics
+      WHERE table_schema = DATABASE() AND table_name = 'pet_actions_log' AND index_name = 'ix_pal_pet_created';
+    IF @c = 0 THEN
+        CREATE INDEX `ix_pal_pet_created` ON `pet_actions_log` (pet_id, created_at);
+    END IF;
+END//
+DELIMITER ;
+CALL _mk_ix_pal_pet_created();
+DROP PROCEDURE _mk_ix_pal_pet_created;
+
 
 -- ==== table: pet_friends ====
 CREATE TABLE IF NOT EXISTS pet_friends (
@@ -362,7 +432,21 @@ CREATE TABLE IF NOT EXISTS pet_duels (
 )
 CHARSET=utf8mb4 COLLATE utf8mb4_unicode_ci ENGINE=InnoDB;
 
-CREATE INDEX ix_pd_week_score ON pet_duels (week_key, score);
+-- ==== conditional index: ix_pd_week_score ====
+DROP PROCEDURE IF EXISTS _mk_ix_pd_week_score;
+DELIMITER //
+CREATE PROCEDURE _mk_ix_pd_week_score()
+BEGIN
+    SELECT COUNT(*) INTO @c FROM information_schema.statistics
+      WHERE table_schema = DATABASE() AND table_name = 'pet_duels' AND index_name = 'ix_pd_week_score';
+    IF @c = 0 THEN
+        CREATE INDEX `ix_pd_week_score` ON `pet_duels` (week_key, score);
+    END IF;
+END//
+DELIMITER ;
+CALL _mk_ix_pd_week_score();
+DROP PROCEDURE _mk_ix_pd_week_score;
+
 
 -- ==== table: user_stats ====
 CREATE TABLE IF NOT EXISTS user_stats (
@@ -466,6 +550,114 @@ END//
 DELIMITER ;
 CALL _migrate_add_columns();
 DROP PROCEDURE _migrate_add_columns;
+
+
+-- ==== conditional UNIQUE keys for legacy tables (idempotent) ====
+DROP PROCEDURE IF EXISTS _mu_uq_user_ach;
+DELIMITER //
+CREATE PROCEDURE _mu_uq_user_ach()
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'user_achievements') THEN
+        SELECT COUNT(*) INTO @c FROM information_schema.statistics
+          WHERE table_schema = DATABASE() AND table_name = 'user_achievements' AND index_name = 'uq_user_ach';
+        IF @c = 0 THEN
+            ALTER TABLE `user_achievements` ADD CONSTRAINT `uq_user_ach` UNIQUE (`user_id`, `achievement_id`);
+        END IF;
+    END IF;
+END//
+DELIMITER ;
+CALL _mu_uq_user_ach();
+DROP PROCEDURE _mu_uq_user_ach;
+DROP PROCEDURE IF EXISTS _mu_uq_pet_item;
+DELIMITER //
+CREATE PROCEDURE _mu_uq_pet_item()
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'pet_inventory') THEN
+        SELECT COUNT(*) INTO @c FROM information_schema.statistics
+          WHERE table_schema = DATABASE() AND table_name = 'pet_inventory' AND index_name = 'uq_pet_item';
+        IF @c = 0 THEN
+            ALTER TABLE `pet_inventory` ADD CONSTRAINT `uq_pet_item` UNIQUE (`pet_id`, `item_id`);
+        END IF;
+    END IF;
+END//
+DELIMITER ;
+CALL _mu_uq_pet_item();
+DROP PROCEDURE _mu_uq_pet_item;
+DROP PROCEDURE IF EXISTS _mu_uq_cml_chat_msg;
+DELIMITER //
+CREATE PROCEDURE _mu_uq_cml_chat_msg()
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'chat_messages_log') THEN
+        SELECT COUNT(*) INTO @c FROM information_schema.statistics
+          WHERE table_schema = DATABASE() AND table_name = 'chat_messages_log' AND index_name = 'uq_cml_chat_msg';
+        IF @c = 0 THEN
+            ALTER TABLE `chat_messages_log` ADD CONSTRAINT `uq_cml_chat_msg` UNIQUE (`chat_id`, `message_id`);
+        END IF;
+    END IF;
+END//
+DELIMITER ;
+CALL _mu_uq_cml_chat_msg();
+DROP PROCEDURE _mu_uq_cml_chat_msg;
+DROP PROCEDURE IF EXISTS _mu_uq_reaction_once;
+DELIMITER //
+CREATE PROCEDURE _mu_uq_reaction_once()
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'reactions_log') THEN
+        SELECT COUNT(*) INTO @c FROM information_schema.statistics
+          WHERE table_schema = DATABASE() AND table_name = 'reactions_log' AND index_name = 'uq_reaction_once';
+        IF @c = 0 THEN
+            ALTER TABLE `reactions_log` ADD CONSTRAINT `uq_reaction_once` UNIQUE (`from_user`, `message_id`, `emoji`);
+        END IF;
+    END IF;
+END//
+DELIMITER ;
+CALL _mu_uq_reaction_once();
+DROP PROCEDURE _mu_uq_reaction_once;
+DROP PROCEDURE IF EXISTS _mu_uq_pet_friend;
+DELIMITER //
+CREATE PROCEDURE _mu_uq_pet_friend()
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'pet_friends') THEN
+        SELECT COUNT(*) INTO @c FROM information_schema.statistics
+          WHERE table_schema = DATABASE() AND table_name = 'pet_friends' AND index_name = 'uq_pet_friend';
+        IF @c = 0 THEN
+            ALTER TABLE `pet_friends` ADD CONSTRAINT `uq_pet_friend` UNIQUE (`pet_id`, `friend_pet_id`);
+        END IF;
+    END IF;
+END//
+DELIMITER ;
+CALL _mu_uq_pet_friend();
+DROP PROCEDURE _mu_uq_pet_friend;
+DROP PROCEDURE IF EXISTS _mu_uq_pet_duel_week;
+DELIMITER //
+CREATE PROCEDURE _mu_uq_pet_duel_week()
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'pet_duels') THEN
+        SELECT COUNT(*) INTO @c FROM information_schema.statistics
+          WHERE table_schema = DATABASE() AND table_name = 'pet_duels' AND index_name = 'uq_pet_duel_week';
+        IF @c = 0 THEN
+            ALTER TABLE `pet_duels` ADD CONSTRAINT `uq_pet_duel_week` UNIQUE (`pet_id`, `week_key`);
+        END IF;
+    END IF;
+END//
+DELIMITER ;
+CALL _mu_uq_pet_duel_week();
+DROP PROCEDURE _mu_uq_pet_duel_week;
+DROP PROCEDURE IF EXISTS _mu_uq_user_stat;
+DELIMITER //
+CREATE PROCEDURE _mu_uq_user_stat()
+BEGIN
+    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = 'user_stats') THEN
+        SELECT COUNT(*) INTO @c FROM information_schema.statistics
+          WHERE table_schema = DATABASE() AND table_name = 'user_stats' AND index_name = 'uq_user_stat';
+        IF @c = 0 THEN
+            ALTER TABLE `user_stats` ADD CONSTRAINT `uq_user_stat` UNIQUE (`user_id`, `key`);
+        END IF;
+    END IF;
+END//
+DELIMITER ;
+CALL _mu_uq_user_stat();
+DROP PROCEDURE _mu_uq_user_stat;
 
 -- ==== alembic stamp head =========================================
 CREATE TABLE IF NOT EXISTS alembic_version (
