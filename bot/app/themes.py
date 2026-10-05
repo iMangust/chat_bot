@@ -431,8 +431,8 @@ def standard_main_menu_std() -> str:
         ch, visual = channel_link()
         if ch:
             ch_line = f"\n\n📢 Новости канала: {visual} (t.me/{ch})"
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Главное меню: не удалось подставить строку канала: %s", exc)
     return (f"🏠 <b>Главное меню · {{title}}</b>\n\n"
             "{{stats}}\n\n📌 Что делать:\n" + body + ch_line)
 

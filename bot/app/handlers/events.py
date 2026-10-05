@@ -416,8 +416,9 @@ try:  # social может не импортироваться (цикличес�
     @router.callback_query(F.data == "menu:card")
     async def menu_card_bridge(cb: CallbackQuery, session) -> None:
         await _social_card(cb, session)
-except Exception:  # pragma: no cover
-    pass
+except Exception as exc:  # pragma: no cover  # noqa: BLE001
+    logger.warning("menu:card bridge не зарегистрирован (импорт social "
+                   "не удался): {!r} — кнопка уйдёт в catch-all", exc)
 
 
 @router.callback_query(_MenuFallback())

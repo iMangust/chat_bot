@@ -50,8 +50,9 @@ def _is_tracked(chat_id: int) -> bool:
         ids = _acc.watched_chat_ids()
         if not ids:  # TRACKED_CHAT_IDS пуст — не блокируем учёт совсем
             return True
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("📊 трекер: не удалось прочитать watched_chat_ids "
+                       "({!r}) — считаю чат {} неотслеживаемым", exc, chat_id)
     logger.info("📊 трекер: чат {} НЕ в списке отслеживаемых "
                 "(TRACKED_CHAT_IDS / реестр сервисных чатов) — сообщение не "
                 "будет засчитано. Проверь CHAT_DISCUSSION_GROUP/"

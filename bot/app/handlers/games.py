@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 import random
 import secrets
@@ -60,6 +61,7 @@ from app.handlers.tamagotchi import set_pet_page, _deny
 from app.services.tamagotchi import SPECIES_DATA, TamagotchiService, _species_key
 
 router = Router(name="games")
+logger = logging.getLogger(__name__)
 
 RPS_EMOJI = {"rock": "🪨", "scissors": "✂️", "paper": "📄"}
 
@@ -195,8 +197,8 @@ async def _finish_game(cb: CallbackQuery, session: AsyncSession, pet,
             await svc.add_pet_xp(pet, xp)
             await PetRepository(session).log_action(pet.id, "walk_done", value=coins)
             prefix = f"{wtext}\n\n"
-    except Exception:  # noqa: BLE001 — сбор прогулки не должен ломать итог игры
-        pass
+    except Exception as exc:  # noqa: BLE001 — сбор прогулки не должен ломать итог игры
+        logger.debug("Итоги игры: сбор прогулки не удался ({!r}) — пропускаем", exc)
     text = f"{prefix}{line}{result}\n\n{await svc.render_async(pet)}"
     markup = games_menu(_chat_of(cb))
     # Единый безопасный рендер: edit при возможности, иначе новое сообщение;
