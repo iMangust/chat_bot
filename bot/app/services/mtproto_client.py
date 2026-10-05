@@ -99,8 +99,7 @@ class MtprotoClientHolder:
             me = await client.get_me()
             self._client = client
             self._me = me
-            logger.info("MTProto: подключено (user id={} @{})",
-                        me.id, me.username or "-")
+            logger.info(f"MTProto: подключено (user id={me.id} @{me.username or '-'})")
             return client
 
     @property
@@ -116,7 +115,7 @@ class MtprotoClientHolder:
             try:
                 await self._client.disconnect()
             except Exception as exc:
-                logger.debug("MTProto disconnect: {}", exc)
+                logger.debug(f"MTProto disconnect: {exc}")
             self._client = None
             self._me = None
 
@@ -209,8 +208,7 @@ async def chat_participants_count(chat_id: int | str) -> int | None:
                     break
         return int(total) if total is not None else None
     except Exception as exc:
-        logger.debug("MTProto: chat_participants_count({}) failed: {}",
-                     chat_id, str(exc)[:120])
+        logger.debug(f"MTProto: chat_participants_count({chat_id}) failed: {str(exc)[:120]}")
         return None
 
 async def iter_all_participants(chat_id: int | str):
@@ -277,8 +275,8 @@ async def iter_all_participants(chat_id: int | str):
             collected = True
             break
         except TypeError as exc:
-            logger.debug("MTProto: participants-вызов #%d TypeError: %s",
-                         attempt, str(exc)[:120])
+            logger.debug(f"MTProto: participants-вызов #{attempt} "
+                         f"TypeError: {str(exc)[:120]}")
         except Exception as exc:
             code = str(getattr(exc, "message", None) or exc)
             if "PARTICIPANTS_TOO_LARGE" in code.upper():
@@ -341,8 +339,7 @@ async def iter_all_participants(chat_id: int | str):
     except Exception as exc:
         if not _LAST_SCAN_ERROR:
             _LAST_SCAN_ERROR = f"GetParticipantsRequest: {str(exc)[:120]}"
-        logger.debug("MTProto: iter_all_participants({}) failed: {}",
-                     chat_id, str(exc)[:150])
+        logger.debug(f"MTProto: iter_all_participants({chat_id}) failed: {str(exc)[:150]}")
     return out
 
 def _resolve_numeric_target(chat_id: int | str) -> Any:
@@ -385,7 +382,7 @@ async def get_chat_member_status(chat_id: int | str, user_id: int) -> str | None
                 entity = ent
                 access_hash = getattr(ent, "access_hash", 0) or 0
         except Exception as exc:
-            logger.debug("MTProto: cached channel entity lookup failed: {}", exc)
+            logger.debug(f"MTProto: cached channel entity lookup failed: {exc}")
         if entity is None:
             s = str(chat_id).strip()
             if s.startswith("-100") or s.isdigit():
@@ -423,7 +420,7 @@ async def get_chat_member_status(chat_id: int | str, user_id: int) -> str | None
             return "member"
         return "left"
     except Exception as exc:
-        logger.debug("MTProto member status {}→{} failed: {}", chat_id, user_id, exc)
+        logger.debug(f"MTProto member status {chat_id}→{user_id} failed: {exc}")
         return None
 
 async def resolve_channel_entity(target: str | int) -> Any:
@@ -479,8 +476,7 @@ async def resolve_channel_entity(target: str | int) -> Any:
             raise RuntimeError(f"Чат {target}: аккаунт не имеет доступа "
                                "(приватный канал?)") from err
         except Exception as exc:
-            logger.debug("MTProto: GetChannels fallback for {} failed: {}",
-                         target, exc)
+            logger.debug(f"MTProto: GetChannels fallback for {target} failed: {exc}")
         ent = _DIALOGS_CACHE.get(("c", want_channel_inner))
         if ent is not None:
             return ent

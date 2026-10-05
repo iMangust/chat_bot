@@ -29,8 +29,8 @@ async def collect_participant_ids() -> list[int]:
         try:
             entity = await resolve_channel_entity(target)
         except Exception as exc:
-            logger.error("MTProto: не удалось разрешить чат {!r}: {}"
-                         " (укажите CHANNEL_USERNAME/public-ссылку)", target, exc)
+            logger.error(f"MTProto: не удалось разрешить чат {target!r}: {exc}"
+                         " (укажите CHANNEL_USERNAME/public-ссылку)")
             continue
         users: set[int] = set()
         total_count = None
@@ -48,15 +48,13 @@ async def collect_participant_ids() -> list[int]:
         try:
             await _collect()
         except TypeError as exc:
-            logger.debug("MTProto: iter_participants({}) TypeError: {} — "
-                         "пробую get_participants()", target, exc)
+            logger.debug(f"MTProto: iter_participants({target}) TypeError: {exc} — пробую get_participants()")
             try:
                 async for p in client.get_participants(entity):
                     if not getattr(p, "bot", False):
                         users.add(int(p.id))
             except Exception as exc2:
-                logger.warning("MTProto: get_participants({}) failed: {}",
-                               target, exc2)
+                logger.warning(f"MTProto: get_participants({target}) failed: {exc2}")
         except Exception as exc:
             code = getattr(exc, "message", None) or str(exc)
             hint = ""
@@ -64,8 +62,7 @@ async def collect_participant_ids() -> list[int]:
                 hint = (" — у ГРУППЫ выключен показ списка участников: включите "
                         "Настройки группы → «Показывать список участников» "
                         "(Telegram не отдаёт его даже админу MTProto)")
-            logger.warning("MTProto: сбор участников {} не удался: {}{}",
-                           target, code, hint)
+            logger.warning(f"MTProto: сбор участников {target} не удался: {code}{hint}")
         try:
             full = (await client(GetFullChannelRequest(entity))).full_chat
             total_count = getattr(full, "participants_count", None)
@@ -73,19 +70,11 @@ async def collect_participant_ids() -> list[int]:
                 if not getattr(u, "bot", False):
                     users.add(int(u.id))
         except Exception as exc:
-            logger.debug("MTProto: get_full_channel({}) failed: {}", target, exc)
+            logger.debug(f"MTProto: get_full_channel({target}) failed: {exc}")
         if not users:
-            logger.error(
-                "MTProto: чат {} ({}) — 0 участников получено. Проверьте: "
-                "(1) MTProto-аккаунт @{} состоит в ЭТОМ чате; (2) если это "
-                "группа — в её настройках включено «Показывать список "
-                "участников» (иначе Bot/MTProto без админ-прав его не видят); "
-                "(3) у аккаунта есть права администратора канала.",
-                target, cid, (holder.me.username if holder.me else "?"))
+            logger.error(f"MTProto: чат {target} ({cid}) — 0 участников получено. Проверьте: (1) MTProto-аккаунт @{holder.me.username if holder.me else '?'} состоит в ЭТОМ чате; (2) если это группа — в её настройках включено «Показывать список участников» (иначе Bot/MTProto без админ-прав его не видят); (3) у аккаунта есть права администратора канала.")
         else:
-            logger.info("MTProto: {} — {} участник(ов) собрано (в чате всего {})",
-                        target, len(users),
-                        total_count if total_count is not None else "?")
+            logger.info(f"MTProto: {target} — {len(users)} участник(ов) собрано (в чате всего {total_count if total_count is not None else '?'})")
         ids |= users
     return sorted(ids)
 
@@ -106,8 +95,7 @@ async def collect_participants_by_chat() -> dict[int, set[int]]:
             try:
                 ids = await collect_participant_ids()
             except Exception as exc:
-                logger.warning("MTProto: сбор участников {} сорвался: {}",
-                               cid, str(exc)[:120])
+                logger.warning(f"MTProto: сбор участников {cid} сорвался: {str(exc)[:120]}")
                 ids = []
             out[chat_num] = set(ids)
     finally:
@@ -132,7 +120,7 @@ async def _bot_api_confirmed_members(chat_id: int, uids: set[int]) -> set[int]:
             if uname and f"@{uname}" not in targets:
                 targets.append(f"@{uname}")
         except Exception as exc:
-            logger.debug("MTProto sync: channel_username lookup failed: {}", exc)
+            logger.debug(f"MTProto sync: channel_username lookup failed: {exc}")
         for uid in uids:
             confirmed = False
             chat_not_found = False
@@ -148,14 +136,10 @@ async def _bot_api_confirmed_members(chat_id: int, uids: set[int]) -> set[int]:
                         chat_not_found = True
                     continue
                 except Exception as exc:
-                    logger.debug("MTProto sync: Bot API verify {} in {} failed: {}",
-                                 uid, target, type(exc).__name__)
+                    logger.debug(f"MTProto sync: Bot API verify {uid} in {target} failed: {type(exc).__name__}")
                     continue
             if chat_not_found and not confirmed:
-                logger.warning(
-                    "MTProto sync: chat {} not visible to the bot — "
-                    "treating all candidates as NOT members (config error)",
-                    chat_id)
+                logger.warning(f"MTProto sync: chat {chat_id} not visible to the bot — treating all candidates as NOT members (config error)")
                 break
             if confirmed:
                 out.add(uid)
@@ -163,7 +147,7 @@ async def _bot_api_confirmed_members(chat_id: int, uids: set[int]) -> set[int]:
         try:
             await bot.session.close()
         except Exception as exc:
-            logger.debug("MTProto sync: bot session close failed: {}", exc)
+            logger.debug(f"MTProto sync: bot session close failed: {exc}")
     return out
 
 async def sync_subscribers(first_run: bool = False) -> dict:
@@ -201,7 +185,7 @@ async def sync_subscribers(first_run: bool = False) -> dict:
         await engine.dispose()
     total = sum(len(v) for v in per_chat.values())
     result = {"total": total, "added": added}
-    logger.info("MTProto sync done: {} (проверено чатов: {})", result, len(per_chat))
+    logger.info(f"MTProto sync done: {result} (проверено чатов: {len(per_chat)})")
     return result
 
 async def full_rescan_subscribers() -> dict:
@@ -240,8 +224,7 @@ async def full_rescan_subscribers() -> dict:
                 reason = reason or ("MTProto не вернул участников (аккаунт не в "
                                     "чате / PARTICIPANTS_TOO_LARGE / нет доступа)")
                 failures.append(f"{target}: {reason}")
-                logger.warning("MTProto rescan: чат {} — участников не получено: {}",
-                               target, reason)
+                logger.warning(f"MTProto rescan: чат {target} — участников не получено: {reason}")
                 continue
             total_seen += len(members)
             new_uids = {int(m["id"]) for m in members
@@ -313,8 +296,7 @@ async def autosync_if_configured(first_run: bool | None = None) -> dict | None:
     async with factory() as session:
         known = await SubscriberRepository(session).count()
     full = (first_run if first_run is not None else known == 0)
-    logger.info("MTProto autosync: режим {} (база: {} подписчик(ов))",
-                "ПОЛНАЯ" if full else "дельта", known)
+    logger.info(f"MTProto autosync: режим {{'ПОЛНАЯ' if full else 'дельта'}} (база: {known} подписчик(ов))")
     return await sync_subscribers(first_run=full)
 
 async def login_and_print_session_string() -> str:
@@ -334,7 +316,7 @@ async def main(argv: list[str] | None = None) -> int:
         try:
             await login_and_print_session_string()
         except Exception as exc:
-            logger.error("MTProto login failed: {}", exc)
+            logger.error(f"MTProto login failed: {exc}")
             return 1
         finally:
             from app.services.mtproto_client import holder
@@ -344,7 +326,7 @@ async def main(argv: list[str] | None = None) -> int:
     try:
         res = await sync_subscribers(first_run=first_run)
     except Exception as exc:
-        logger.error("MTProto sync failed: {}", exc)
+        logger.error(f"MTProto sync failed: {exc}")
         return 1
     finally:
         from app.services.mtproto_client import holder

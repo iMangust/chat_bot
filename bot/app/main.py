@@ -70,7 +70,7 @@ def setup_logging(level: str) -> None:
                 return
             if "PersistentTimestampOutdatedError" in msg or \
                     "Persistent timestamp outdated" in msg:
-                logger.debug("telethon (pts): {}", msg)
+                logger.debug(f"telethon (pts): {msg}")
                 return
             logger.bind(telethon=True).log(
                 max(record.levelno, 10), "telethon: {}", msg)
@@ -405,8 +405,7 @@ async def _migrate_channel_subscribers_v20(engine) -> None:
             logger.info("миграция v2.0: channel_subscribers → чистый реестр "
                         "членства (PK=user_id, chats; welcome-колонки удалены)")
         except Exception as exc:
-            logger.warning("миграция channel_subscribers v2.0 пропущена: {}: {}",
-                           type(exc).__name__, str(exc)[:200])
+            logger.warning(f"миграция channel_subscribers v2.0 пропущена: {type(exc).__name__}: {str(exc)[:200]}")
 
 async def _backfill_subscriber_chats_v202(engine) -> None:
     from sqlalchemy import text
@@ -428,8 +427,7 @@ async def _backfill_subscriber_chats_v202(engine) -> None:
                     GROUP BY user_id, chat_id"""), params)
             rows = list(res.fetchall())
         except Exception as exc:
-            logger.info("backfill chats v2.0.2: chat_messages_log недоступны "
-                        "({}), пропускаем", type(exc).__name__)
+            logger.info(f"backfill chats v2.0.2: chat_messages_log недоступны ({type(exc).__name__}), пропускаем")
             return
         try:
             res = await conn.execute(text(
@@ -438,8 +436,7 @@ async def _backfill_subscriber_chats_v202(engine) -> None:
                     GROUP BY from_user, chat_id"""), params)
             rows += list(res.fetchall())
         except Exception as exc:
-            logger.info("backfill chats v2.0.2: reactions_log недоступны "
-                        "({}), пропускаем", type(exc).__name__)
+            logger.info(f"backfill chats v2.0.2: reactions_log недоступны ({type(exc).__name__}), пропускаем")
         if not rows:
             return
         import json as _json
@@ -507,8 +504,7 @@ async def _backfill_subscriber_chats_v202(engine) -> None:
                 {"uid": uid, "chats": _json.dumps(sorted(set(chats)))})
             fixed += res.rowcount or 0
         if fixed:
-            logger.info("миграция v2.0.2: чат(ы) восстановлены из истории "
-                        "сообщений/реакций для {} подписчик(ов)", fixed)
+            logger.info(f"миграция v2.0.2: чат(ы) восстановлены из истории сообщений/реакций для {fixed} подписчик(ов)")
 
 def _table_exists_in_db(db_url: str, table: str) -> bool:
     """Проверка наличия таблицы без привязки к активным connection-pool'ам.
@@ -575,16 +571,13 @@ async def ensure_events_table(engine_obj=None) -> bool:
                         try:
                             await conn.execute(text(
                                 f"ALTER TABLE events ADD COLUMN {col} {ddl}"))
-                            logger.info("миграция v2.0.3: events.{} добавлена", col)
+                            logger.info(f"миграция v2.0.3: events.{col} добавлена")
                         except Exception as exc:
-                            logger.debug("миграция events.{} пропущена: {}",
-                                         col, type(exc).__name__)
+                            logger.debug(f"миграция events.{col} пропущена: {type(exc).__name__}")
     except (OperationalError, ProgrammingError) as exc:
-        logger.error("ensure_events_table failed: {}: {}",
-                    type(exc).__name__, str(exc)[:200])
+        logger.error(f"ensure_events_table failed: {type(exc).__name__}: {str(exc)[:200]}")
     except Exception as exc:  # pragma: no cover - защита от редких диалектов
-        logger.error("ensure_events_table unexpected: {}: {}",
-                    type(exc).__name__, str(exc)[:200])
+        logger.error(f"ensure_events_table unexpected: {type(exc).__name__}: {str(exc)[:200]}")
     return created
 
 
@@ -603,8 +596,7 @@ async def _light_migrations(conn) -> None:
             if table_obj is not None:
                 await conn.run_sync(Base.metadata.create_all,
                                     tables=[table_obj])
-                logger.warning("лёгкая миграция: таблица '{}' отсутствовала — "
-                               "создана по модели ({})", tname, dialect)
+                logger.warning(f"лёгкая миграция: таблица '{tname}' отсутствовала — создана по модели ({dialect})")
 
     for table, columns in _LIGHT_COLUMNS.items():
         tbl_exists = await conn.run_sync(
@@ -616,12 +608,9 @@ async def _light_migrations(conn) -> None:
                 sql = f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}"
                 try:
                     await conn.execute(text(sql))
-                    logger.info("лёгкая миграция: {}.{} добавлена ({})", table, column, dialect)
+                    logger.info(f"лёгкая миграция: {table}.{column} добавлена ({dialect})")
                 except Exception as exc:
-                    logger.warning(
-                        "лёгкая миграция {} не применена ({}): {}",
-                        sql[:80], type(exc).__name__, exc,
-                    )
+                    logger.warning(f"лёгкая миграция {sql[:80]} не применена ({type(exc).__name__}): {exc}")
 
     idx_name = "uq_pets_current_per_user"
     if dialect in {"postgresql", "sqlite"} and not await _index_exists(conn, idx_name):
@@ -631,7 +620,7 @@ async def _light_migrations(conn) -> None:
                 "ON pets (user_id) WHERE COALESCE(is_archived, 0) = 0"
             ))
         except Exception as exc:
-            logger.debug("частичный индекс {} пропущен: {}", idx_name, type(exc).__name__)
+            logger.debug(f"частичный индекс {idx_name} пропущен: {type(exc).__name__}")
 
 async def _renumber_merch_category_codes(engine) -> None:
     """Старые символьные коды категорий (hoodie/tshirt/bag) -> порядковые id1, id2, ..."""
@@ -653,7 +642,7 @@ async def _renumber_merch_category_codes(engine) -> None:
                     _text("UPDATE merch_categories SET code = :c WHERE id = :i"),
                     {"c": want, "i": cid})
     except Exception as exc:
-        logger.debug("renumber merch category codes skipped: {}", type(exc).__name__)
+        logger.debug(f"renumber merch category codes skipped: {type(exc).__name__}")
 
 async def _stamp_head_if_missing(conn) -> None:
     """Согласование Alembic с legacy-БД, созданными create_all (без alembic_version).
@@ -681,10 +670,7 @@ async def _stamp_head_if_missing(conn) -> None:
                 if not await _column_exists(conn, table, column):
                     missing_cols.append(f"{table}.{column}")
         if missing_cols:
-            logger.info(
-                "alembic stamp пропущен: БД требует лёгких миграций ({}) — "
-                "после их применения и `alembic stamp head` БД перейдёт под "
-                "управление Alembic", ", ".join(missing_cols[:5]))
+            logger.info(f"alembic stamp пропущен: БД требует лёгких миграций ({', '.join(missing_cols[:5])}) — после их применения и `alembic stamp head` БД перейдёт под управление Alembic")
             return
         from alembic.config import Config
         from alembic.script import ScriptDirectory
@@ -702,11 +688,9 @@ async def _stamp_head_if_missing(conn) -> None:
             await conn.execute(
                 _text("INSERT INTO alembic_version (version_num) VALUES (:v)"),
                 {"v": head})
-        logger.info("legacy-БД помечена как актуальная для Alembic (stamp {})",
-                    ", ".join(heads))
+        logger.info(f"legacy-БД помечена как актуальная для Alembic (stamp {', '.join(heads)})")
     except Exception as exc:
-        logger.debug("alembic auto-stamp пропущен: {}: {}",
-                     type(exc).__name__, str(exc)[:200])
+        logger.debug(f"alembic auto-stamp пропущен: {type(exc).__name__}: {str(exc)[:200]}")
 
 
 async def on_startup(bot: Bot) -> None:
@@ -730,11 +714,9 @@ async def on_startup(bot: Bot) -> None:
             await step()
         except Exception as exc:
             failed.append(name)
-            logger.error("фаза запуска '{}' завершилась с ошибкой: {}: {}",
-                         name, type(exc).__name__, str(exc)[:300])
+            logger.error(f"фаза запуска '{name}' завершилась с ошибкой: {type(exc).__name__}: {str(exc)[:300]}")
     if failed:
-        logger.warning("запуск продолжен с {} неудачной(ми) фазой(ями): {}",
-                       len(failed), "; ".join(failed))
+        logger.warning(f"запуск продолжен с {len(failed)} неудачной(ми) фазой(ями): {{'; '.join(failed)}}")
 
 
 async def _startup_schema_phase() -> None:
@@ -751,7 +733,7 @@ async def _startup_seed_phase() -> None:
         await seed_items(session)
         seeded = await seed_merch_catalog(session)
         if seeded:
-            logger.info("merch catalog seeded: {} variants", seeded)
+            logger.info(f"merch catalog seeded: {seeded} variants")
         await session.commit()
 
 
@@ -783,12 +765,11 @@ async def _sync_bot_commands(bot: Bot) -> None:
         if st.mtproto_autosync:
             res = await autosync_if_configured()
             if res is not None:
-                logger.info("🔄 MTProto autosync: {}", res)
+                logger.info(f"🔄 MTProto autosync: {res}")
         else:
             _autosync_guard_task = asyncio.create_task(autosync_guard())  # noqa: RUF006 — strong ref held until done-callback
     except Exception as exc:
-        logger.info("MTProto autosync недоступен ({}) — работаю только на Bot API",
-                    type(exc).__name__)
+        logger.info(f"MTProto autosync недоступен ({type(exc).__name__}) — работаю только на Bot API")
 
 async def autosync_guard() -> None:
     with contextlib.suppress(Exception):
@@ -817,7 +798,7 @@ async def main() -> None:
             if me.username:
                 settings.bot_username = me.username
         except Exception as exc:
-            logger.warning("get_me for bot_username failed: %s", exc)
+            logger.warning(f"get_me for bot_username failed: {exc}")
     storage = _make_fsm_storage(settings.redis_url)
     storage = await probe_fsm_storage(storage)
 
@@ -938,7 +919,7 @@ async def main() -> None:
             await runner.setup()
             site = web.TCPSite(runner, port=settings.webhook_port)
             await site.start()
-            logger.info("webhook listening on :{}", settings.webhook_port)
+            logger.info(f"webhook listening on :{settings.webhook_port}")
 
         await stop.wait()
     finally:

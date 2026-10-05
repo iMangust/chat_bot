@@ -234,7 +234,7 @@ class TamagotchiService:
             from app.config import get_settings
             season = season_for(now) if get_settings().weather_enabled else ""
         except (ImportError, AttributeError) as exc:
-            logger.debug("season lookup failed, decay without seasonality: {}", exc)
+            logger.debug(f"season lookup failed, decay without seasonality: {exc}")
             season = ""
         try:
             from app.services.weather import weather_decay_mods
@@ -1563,7 +1563,7 @@ class TamagotchiService:
                 lines.append(back)
             return "\n".join(lines)
         except Exception as exc:
-            logger.debug("render_async weather skipped: {}: {}", type(exc).__name__, exc)
+            logger.debug(f"render_async weather skipped: {type(exc).__name__}: {exc}")
             return text
 
     def render(self, pet: Pet, owner_first_name: str = "") -> str:
@@ -1638,7 +1638,7 @@ class TamagotchiService:
             if "holiday_icon" in w:
                 lines.append(f"{w['holiday_icon']} {w['holiday_note']}")
         except (ImportError, KeyError, TypeError) as exc:
-            logger.debug("weather line skipped: {}: {}", type(exc).__name__, exc)
+            logger.debug(f"weather line skipped: {type(exc).__name__}: {exc}")
         if pet.walk_until:
             back = self.walk_back_line(pet)
             lines.append(back or "🚶 Сейчас на прогулке…")

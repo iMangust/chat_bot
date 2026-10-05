@@ -248,7 +248,7 @@ def _weather_error_text(exc: BaseException) -> str:
     по которому невозможно было понять, что сломалось. Теперь стек-трейс
     пишется в лог, а пользователю показывается короткая подсказка.
     """
-    logger.exception("weather screen failed: {}", exc)
+    logger.exception(f"weather screen failed: {exc}")
     if isinstance(exc, NameError):
         hint = "Похоже, бот запущен из устаревшего кода — перезапусти его."
     else:
@@ -651,10 +651,9 @@ async def _after_action(cb: CallbackQuery, session: AsyncSession, result_text: s
             newly = await AchievementService(session).check(cb.from_user.id, counters)
             await session.commit()
             if newly:
-                logger.info("user {} unlocked via pet action: {}", cb.from_user.id,
-                            [a.code for a in newly])
+                logger.info(f"user {cb.from_user.id} unlocked via pet action: {{[a.code for a in newly]}}")
     except Exception as exc:
-        logger.warning("achievement re-check after pet action failed: {}", exc)
+        logger.warning(f"achievement re-check after pet action failed: {exc}")
 
     if fx:
         from app.utils.fx import apply_effect

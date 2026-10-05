@@ -400,7 +400,7 @@ async def render_profile_card(session: AsyncSession, tg_id: int) -> bytes | None
             data["vitals"] = vitals(pet)
             data["stat_contribs"] = stat_contribs(pet)
         except Exception as exc:
-            logger.warning("card: pet labels skipped: {}", exc)
+            logger.warning(f"card: pet labels skipped: {exc}")
     return _renderer.render(data)
 
 def card_version(png: bytes) -> str:

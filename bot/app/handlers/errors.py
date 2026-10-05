@@ -42,9 +42,9 @@ class ErrorNotifyMiddleware(BaseMiddleware):
             return None
         except TelegramAPIError as exc:
             if "query is too old" in str(exc) or "INVALID_QUERY" in str(exc).upper():
-                logger.debug("callback query expired before answer: {}", event.data)
+                logger.debug(f"callback query expired before answer: {event.data}")
                 return None
-            logger.warning("telegram api error in {}: {}", event.data, exc)
+            logger.warning(f"telegram api error in {event.data}: {exc}")
             try:
                 await event.answer("Не получилось 😅 Попробуй ещё раз.", show_alert=True)
             except TelegramAPIError:

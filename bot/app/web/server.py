@@ -46,7 +46,7 @@ def _has_configured_panel_token() -> bool:
         if sec and sec != DEFAULT_WEBHOOK_SECRET:
             return True
     except Exception as exc:
-        logger.warning("config check for auth tokens failed: %s", exc)
+        logger.warning(f"config check for auth tokens failed: {exc}")
     for key in ("DASHBOARD_TOKEN", "WEBHOOK_SECRET_TOKEN"):
         v = os.environ.get(key) or _env_value(key)
         if v and v != DEFAULT_WEBHOOK_SECRET:
@@ -146,7 +146,7 @@ def _env_value(key: str) -> str | None:
             if k.strip() == key:
                 return v.strip().strip('"').strip("'")
     except OSError as exc:
-        logger.debug("не удалось прочитать %s для ключа %s: %s", f, key, exc)
+        logger.debug(f"не удалось прочитать {f} для ключа {key}: {exc}")
     return None
 
 
@@ -169,20 +169,17 @@ def _resolve_bind(host_cli: str | None, port_cli: int | None) -> tuple[str, int]
             port_raw = port_raw or str(s.dashboard_port)
         except Exception as exc:
             logger.warning("settings unavailable for dashboard host/port "
-                           "(falling back to defaults): %s", exc)
+                           "(falling back to defaults): {}", exc)
     host = (host or "127.0.0.1").strip()
     try:
         port = int(port_raw or 8765)
     except ValueError:
-        logger.warning("DASHBOARD_PORT=%r — не число, используем 8765", port_raw)
+        logger.warning(f"DASHBOARD_PORT={port_raw!r} — не число, используем 8765")
         port = 8765
     try:
         addr = ipaddress.ip_address(host)
         if not addr.is_unspecified and not addr.is_loopback:
-            logger.warning(
-                "DASHBOARD_HOST={} — это адрес интерфейса/NAT, а не локальный адрес. "
-                "Привязка к нему невозможна, слушаем 0.0.0.0 (доступ по белому списку IP)",
-                host)
+            logger.warning(f"DASHBOARD_HOST={host} — это адрес интерфейса/NAT, а не локальный адрес. Привязка к нему невозможна, слушаем 0.0.0.0 (доступ по белому списку IP)")
             host = "0.0.0.0"
     except ValueError:
         pass  # hostname — оставляем как есть
@@ -408,7 +405,7 @@ async def set_log_level(body: dict) -> dict:
         raise HTTPException(422, f"неизвестный уровень {lvl!r}")
     _apply_log_level(lvl)
     from loguru import logger
-    logger.info("🔧 уровень live-логов оболочки изменён на {}", lvl)
+    logger.info(f"🔧 уровень live-логов оболочки изменён на {lvl}")
     return {"ok": True, "level": lvl}
 
 @app.websocket("/ws/logs")
@@ -433,7 +430,7 @@ def _open_browser(url: str) -> None:
     try:
         webbrowser.open(url)
     except Exception as exc:
-        logger.debug("could not auto-open browser: %s", exc)
+        logger.debug(f"could not auto-open browser: {exc}")
 
 async def amain(host: str | None, port: int | None, autostart: bool, open_browser: bool) -> int:
     host, port = _resolve_bind(host, port)
@@ -447,13 +444,13 @@ async def amain(host: str | None, port: int | None, autostart: bool, open_browse
     setup_file_logging(settings.log_level)
     hub.attach()
     url = f"http://{_browser_host(host)}:{port}"
-    logger.info("🖥  панель управления: {} (Ctrl+C — остановить всё)", url)
+    logger.info(f"🖥  панель управления: {url} (Ctrl+C — остановить всё)")
 
     if autostart and settings.bot_token and settings.bot_token != "test":
         try:
             await runtime.start()
         except Exception as exc:
-            logger.error("автозапуск бота не удался: {} — исправьте настройки в панели", exc)
+            logger.error(f"автозапуск бота не удался: {exc} — исправьте настройки в панели")
     elif autostart:
         logger.warning("BOT_TOKEN не задан — панель открыта, запустите бота после настройки .env")
 

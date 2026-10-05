@@ -122,7 +122,7 @@ async def collect(session: AsyncSession, tg_id: int) -> dict | None:
         stats = await ActivityService(session).personal_stats(tg_id)
         daily = await ActivityRepository(session).daily_counts(tg_id, days=7)
     except Exception as exc:
-        logger.warning("card: activity stats skipped: {}", exc)
+        logger.warning(f"card: activity stats skipped: {exc}")
         stats, daily = {}, {}
     data["stats"] = stats
     data["daily"] = daily
@@ -138,7 +138,7 @@ async def collect(session: AsyncSession, tg_id: int) -> dict | None:
             .where(Achievement.is_hidden == False)
         )).scalar_one()
     except Exception as exc:
-        logger.warning("card: achievements count skipped: {}", exc)
+        logger.warning(f"card: achievements count skipped: {exc}")
         unlocked = total_ach = 0
     data["achievements"] = (int(unlocked or 0), int(total_ach or 0))
 
@@ -150,7 +150,7 @@ async def collect(session: AsyncSession, tg_id: int) -> dict | None:
             select(func.count(User.tg_id)).where(User.is_banned == False)
         )).scalar_one()
     except Exception as exc:
-        logger.warning("card: rank skipped: {}", exc)
+        logger.warning(f"card: rank skipped: {exc}")
         ahead = total_players = 0
     data["rank"] = (int(ahead or 0) + 1, int(total_players or 0))
 
@@ -179,7 +179,7 @@ async def collect(session: AsyncSession, tg_id: int) -> dict | None:
             data["duel"] = (row.wins if row else 0, row.losses if row else 0,
                             row.score if row else 0)
         except Exception as exc:
-            logger.warning("card: duel stats skipped: {}", exc)
+            logger.warning(f"card: duel stats skipped: {exc}")
             data["duel"] = (0, 0, 0)
         try:
             rows = (await session.execute(
@@ -193,7 +193,7 @@ async def collect(session: AsyncSession, tg_id: int) -> dict | None:
                       + care.get("blackjack", 0) + care.get("quiz", 0) + care.get("coin", 0))
             data["care_summary"] = f"Уход: кормлений {feed_n} · игр {play_n}"
         except Exception as exc:
-            logger.warning("card: care log skipped: {}", exc)
+            logger.warning(f"card: care log skipped: {exc}")
             data["care_summary"] = ""
     else:
         data["pet_info"] = None

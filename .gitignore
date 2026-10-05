@@ -1,3 +1,6 @@
+# Python bytecode and cache
 __pycache__/
 *.pyc
+
+# Coverage reports
 .coverage

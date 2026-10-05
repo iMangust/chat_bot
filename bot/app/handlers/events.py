@@ -162,8 +162,8 @@ async def _render_list(cb: CallbackQuery, session, bot: Bot | None = None) -> No
     # Дебаг-логирование входа и результата запроса. Если хендлер не вызывается,
     # в логах не будет строк «menu:events handler» — это сразу отделяет проблему
     # диспетчера (роутинг/фильтры) от проблем рендера (БД/Telegram API).
-    logger.info("menu:events handler entered (user={}, data={!r})",
-                cb.from_user.id if cb.from_user else "?", cb.data)
+    logger.info(f"menu:events handler entered "
+                f"(user={cb.from_user.id if cb.from_user else '?'}, data={cb.data!r})")
     repo = EventRepository(session)
     try:
         all_ev = await repo.all()
@@ -175,15 +175,15 @@ async def _render_list(cb: CallbackQuery, session, bot: Bot | None = None) -> No
         )
         if not isinstance(exc, (OperationalError, ProgrammingError,
                                 DisconnectionError)):
-            logger.exception("menu:events DB query failed: {}", exc)
+            logger.exception(f"menu:events DB query failed: {exc}")
             raise
         # САМОЛЕЧЕНИЕ «мертвой» кнопки: самая частая причина OperationalError
         # здесь — таблица events отсутствует в старой БД (её никогда не
         # создавали миграции). Создаём её по модели и повторяем запрос.
-        logger.warning("menu:events DB error {!r}: {} — trying self-heal "
-                       "(create 'events' table)", type(exc).__name__, exc)
+        logger.warning(f"menu:events DB error {type(exc).__name__}: {exc} "
+                       "— trying self-heal (create 'events' table)")
         all_ev = await _selfheal_reload_events(exc, session)
-    logger.info("menu:events loaded {} events from DB", len(all_ev))
+    logger.info(f"menu:events loaded {len(all_ev)} events from DB")
     # ВАЖНО (реальный баг, сентябрь 2026): в БД поле date хранится и как
     # «2026-10-01», и как «2026-10-1» (SQLite/MySQL сравнивают строки
     # лексически). Тогда прошедшее событие «2026-9-30» > «2026-10-05» — и
@@ -314,8 +314,8 @@ async def _selfheal_reload_events(exc: Exception, session) -> list:
         if created:
             logger.warning("menu:events self-heal: таблица 'events' создана")
     except Exception as heal_exc:
-        logger.warning("menu:events self-heal create failed: {!r}: {}",
-                       type(heal_exc).__name__, heal_exc)
+        logger.warning(f"menu:events self-heal create failed: "
+                       f"{type(heal_exc).__name__}: {heal_exc}")
 
     # 2) Откатить сессию апдейта (на PostgreSQL после ошибки транзакции все
     #    следующие запросы в ней падают с InFailedSqlTransaction/OperationalError).
@@ -337,8 +337,7 @@ async def _selfheal_reload_events(exc: Exception, session) -> list:
                 select(Event).order_by(Event.date, Event.id)
             )).scalars().all())
     except Exception as exc2:
-        logger.exception("menu:events self-heal reload failed: {} ({})",
-                         exc2, type(exc2).__name__)
+        logger.exception(f"menu:events self-heal reload failed: {exc2} ({type(exc2).__name__})")
         raise
 
 
@@ -367,13 +366,12 @@ async def menu_events(cb: CallbackQuery, session, bot: Bot) -> None:
             await bot(AnswerCallbackQuery(
                 callback_query_id=cb.id,
                 text="Нажми /start — покажу свежее меню 🙂", show_alert=True))
-        logger.warning("menu:events without message (user={})",
-                       cb.from_user.id if cb.from_user else "?")
+        logger.warning(f"menu:events without message (user={cb.from_user.id if cb.from_user else '?'})")
         return
     try:
         await _render_list(cb, session, bot=bot)
     except Exception as exc:
-        logger.exception("menu:events render failed: {}", exc)
+        logger.exception(f"menu:events render failed: {exc}")
         # Явная обратная связь вместо «тихого» ничего-не-происходит: если
         # сообщение отредактировать не удалось (или упал БД/Telegram),
         # показываем alert — пользователь всегда видит реакцию на нажатие.
@@ -429,8 +427,8 @@ async def menu_any_unhandled(cb: CallbackQuery, session, bot: Bot) -> None:
     лечится сама: перерисовываем актуальное главное меню прямо в этом сообщении
     (с сохранением текущей страницы), а тост объясняет, что произошло.
     """
-    logger.warning("unhandled menu callback: {!r} (user={})", cb.data,
-                   cb.from_user.id if cb.from_user else "?")
+    logger.warning(f"unhandled menu callback: {cb.data!r} "
+                   f"(user={cb.from_user.id if cb.from_user else '?'})")
     with contextlib.suppress(Exception):
         await cb.answer("Эта кнопка устарела — обновляю меню 🙂",
                         show_alert=False)
@@ -442,7 +440,7 @@ async def menu_any_unhandled(cb: CallbackQuery, session, bot: Bot) -> None:
                 page = int(cb.data.split(":")[-1])
         await _render_main_menu(cb, session, None, page=page)
     except Exception as exc:  # pragma: no cover
-        logger.debug("menu fallback re-render failed: {}", exc)
+        logger.debug(f"menu fallback re-render failed: {exc}")
 
 
 async def _detail_render(cb: CallbackQuery, session, eid: int) -> None:
@@ -515,9 +513,8 @@ async def _admin_home(cb: CallbackQuery, session) -> None:
         return
     if not _is_event_admin(cb.from_user.id):
         s = get_settings()
-        logger.warning("evadmin:home DENIED user={} (admin_ids={!r}, "
-                       "merch_admin_id={!r})", cb.from_user.id,
-                       s.admin_ids, s.merch_admin_id)
+        logger.warning(f"evadmin:home DENIED user={cb.from_user.id} "
+                       f"(admin_ids={s.admin_ids!r}, merch_admin_id={s.merch_admin_id!r})")
         await cb.answer("Только для админов. Добавь свой ID в ADMIN_IDS в .env "
                         "и перезапусти бота.", show_alert=True)
         return
@@ -652,7 +649,7 @@ async def _save_photo_as_file_id(bot: Bot | None, message: Message) -> str | Non
                 await bot.delete_message(message.chat.id, up.message_id)
         return saved
     except Exception as exc:
-        logger.warning("event photo re-save failed: {}: {}", type(exc).__name__, exc)
+        logger.warning(f"event photo re-save failed: {type(exc).__name__}: {exc}")
         return fid
 
 

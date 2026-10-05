@@ -72,7 +72,7 @@ async def _load(chat_id: int) -> deque[str]:
                 if items:
                     return items
         except Exception as exc:
-            logger.debug("nav stack load failed: {}", type(exc).__name__)
+            logger.debug(f"nav stack load failed: {type(exc).__name__}")
     return _mem_get(chat_id)
 
 
@@ -87,7 +87,7 @@ async def _save(chat_id: int, stack: deque[str]) -> None:
     try:
         await r.set(_key(chat_id), json.dumps(list(stack)), ex=TTL_SEC)
     except Exception as exc:
-        logger.debug("nav stack save failed: {}", type(exc).__name__)
+        logger.debug(f"nav stack save failed: {type(exc).__name__}")
 
 
 # Коллбэки-«шум»: клики внутри экрана (стрелки пагинации, действия), а не
@@ -180,4 +180,4 @@ async def forget(chat_id: int | None) -> None:
     try:
         await r.delete(_key(chat_id))
     except Exception as exc:
-        logger.debug("nav stack clear failed: {}", type(exc).__name__)
+        logger.debug(f"nav stack clear failed: {type(exc).__name__}")

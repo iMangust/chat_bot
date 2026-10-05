@@ -262,7 +262,7 @@ async def buy_item(cb: CallbackQuery, session: AsyncSession) -> None:
     await session.flush()
     await pets.log_action(pet.id, "buy", value=item.price, meta={"item": item.code})
     await session.commit()
-    logger.info("user {} bought {} for {}", user.tg_id, item.code, item.price)
+    logger.info(f"user {user.tg_id} bought {item.code} for {item.price}")
     await cb.answer(f"🛒 Куплено: {item.icon} {item.name}!", show_alert=False)
     await shop_screen(cb, session, page=_SHOP_PAGE_CTX.get(cb.message.chat.id, 0))
 

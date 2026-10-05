@@ -47,7 +47,7 @@ def _safe(fn):
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.exception("scheduled job '{}' failed", getattr(fn, "__name__", "?"))
+            logger.exception(f"scheduled job '{getattr(fn, '__name__', '?')}' failed")
 
     return wrapper
 
@@ -60,7 +60,7 @@ async def decay_all_pets(bot: Bot) -> None:
             from app.services.weather import apply_weather_to_pet, kamchatka_weather
             await kamchatka_weather()
         except Exception as exc:
-            logger.debug("weather refresh in decay tick failed: {}", exc)
+            logger.debug(f"weather refresh in decay tick failed: {exc}")
             apply_weather_to_pet = None
         async with session_factory() as session:
             pets = list((await session.execute(
@@ -77,9 +77,9 @@ async def decay_all_pets(bot: Bot) -> None:
                         if wline:
                             changed = True
                             weather_events += 1
-                            logger.debug("weather event pet={}: {}", pet.id, wline.replace("\n", " | "))
+                            logger.debug(f"weather event pet={pet.id}: {wline.replace(chr(10), ' | ')}")
                     except Exception as exc:
-                        logger.debug("weather effect skipped for pet {}: {}", pet.id, exc)
+                        logger.debug(f"weather effect skipped for pet {pet.id}: {exc}")
                 friends = await list_friends(session, pet.id)
                 if friends:
                     day_key = "friend_bonus_day"
@@ -97,8 +97,7 @@ async def decay_all_pets(bot: Bot) -> None:
                         await queue_notification(session, int(pet.user_id), "pet", text)
                         warned += 1
             await session.commit()
-            logger.info("decay tick done: {} pets, {} new warnings, {} weather events",
-                        len(pets), warned, weather_events)
+            logger.info(f"decay tick done: {len(pets)} pets, {warned} new warnings, {weather_events} weather events")
     finally:
         await release_lock("decay")
 
@@ -147,15 +146,14 @@ async def flush_notifications(bot: Bot) -> None:
                         from aiogram.types import InlineKeyboardMarkup
                         kb = InlineKeyboardMarkup.model_validate_json(n.payload_json)
                     except Exception as exc:
-                        logger.debug("notification {} kb parse failed: {}", n.id, exc)
+                        logger.debug(f"notification {n.id} kb parse failed: {exc}")
                 try:
                     await bot.send_message(n.user_id, n.text, parse_mode="HTML",
                                            reply_markup=kb)
                     n.sent = True
                     sent += 1
                 except TelegramAPIError as exc:
-                    logger.debug("notification {} to {} dropped: {}",
-                                 n.id, n.user_id, str(exc)[:120])
+                    logger.debug(f"notification {n.id} to {n.user_id} dropped: {str(exc)[:120]}")
                     if chat_fallback:
                         try:
                             await bot.send_message(
@@ -167,7 +165,7 @@ async def flush_notifications(bot: Bot) -> None:
                     n.sent = True
             await session.commit()
             if rows:
-                logger.info("notifications flushed: {}/{}", sent, len(rows))
+                logger.info(f"notifications flushed: {sent}/{len(rows)}")
     finally:
         await release_lock("notify_flush")
 
@@ -197,7 +195,7 @@ async def check_streak_expiry(bot: Bot) -> None:
                         ))
                     u.streak_days = 0
             await session.commit()
-            logger.info("streak check: {} streaks expired", expired)
+            logger.info(f"streak check: {expired} streaks expired")
     finally:
         await release_lock("streak_check")
 
@@ -248,7 +246,7 @@ async def daily_reports(bot: Bot) -> None:
                 if ok:
                     sent += 1
             await session.commit()
-            logger.info("daily reports queued: {}", sent)
+            logger.info(f"daily reports queued: {sent}")
     finally:
         await release_lock("daily_report")
 
@@ -279,7 +277,7 @@ async def evening_streak_warnings(bot: Bot) -> None:
                 await queue_notification(session, int(u.tg_id), "streak", text)
                 queued += 1
             await session.commit()
-            logger.info("streak warnings queued: {}", queued)
+            logger.info(f"streak warnings queued: {queued}")
     finally:
         await release_lock("streak_warn")
 
@@ -290,7 +288,7 @@ async def weekly_leaderboard(bot: Bot) -> None:
         async with session_factory() as session:
             await snapshot_weekly(session)
     except Exception as e:
-        logger.error("weekly leaderboard failed: {}", e)
+        logger.error(f"weekly leaderboard failed: {e}")
     finally:
         await release_lock("weekly_lb")
 
@@ -304,7 +302,7 @@ async def weekly_arena_finish(bot: Bot) -> None:
             if awarded:
                 logger.info("🏟 arena week closed, prizes distributed")
     except Exception as e:
-        logger.error("weekly arena finish failed: {}", e)
+        logger.error(f"weekly arena finish failed: {e}")
     finally:
         await release_lock("weekly_arena")
 
@@ -328,7 +326,7 @@ async def scan_channel_members(bot: Bot) -> None:
                 try:
                     total = await bot.get_chat_member_count(probe_chat)
                 except Exception as e:
-                    logger.debug("channel member count unavailable: {}", e)
+                    logger.debug(f"channel member count unavailable: {e}")
             if total is not None and total > known_users:
                 full_hours = max(0, int(getattr(st, "mtproto_full_scan_hours", 6) or 0))
                 if full_hours > 0:
@@ -338,11 +336,9 @@ async def scan_channel_members(bot: Bot) -> None:
                     hint = ("включите MTPROTO_FULL_SCAN_HOURS (или /syncnow rescan) — "
                             "Bot API не отдаёт список «молчунов», chat_member-апдейты "
                             "их не ловят")
-                logger.info("📢 subscribers drift: api={} db={} человек "
-                            "(строк в базе: {}) — {}",
-                            total, known_users, known_rows, hint)
+                logger.info(f"📢 subscribers drift: api={total} db={known_users} человек (строк в базе: {known_rows}) — {hint}")
     except Exception as e:
-        logger.error("channel scan failed: {}", e)
+        logger.error(f"channel scan failed: {e}")
     finally:
         await release_lock("channel_scan")
 
@@ -362,17 +358,16 @@ async def mtproto_delta_sync(bot: Bot | None = None) -> None:
         if full:
             from app.services.mtproto_sync import full_rescan_subscribers
             res = await asyncio.wait_for(full_rescan_subscribers(), timeout=280)
-            logger.info("MTProto FULL scan: {}", res)
+            logger.info(f"MTProto FULL scan: {res}")
         else:
             res = await asyncio.wait_for(sync_subscribers(first_run=False), timeout=280)
-            logger.info("MTProto delta sync: {}", res)
+            logger.info(f"MTProto delta sync: {res}")
     except asyncio.TimeoutError:
         logger.warning("MTProto delta sync: таймаут (сеть/флудконтроль?)")
     except RuntimeError:
         pass
     except Exception as exc:
-        logger.info("MTProto delta sync пропущен: {}: {}",
-                    type(exc).__name__, str(exc)[:200])
+        logger.info(f"MTProto delta sync пропущен: {type(exc).__name__}: {str(exc)[:200]}")
     finally:
         await release_lock("mtproto_sync")
 
@@ -383,11 +378,11 @@ async def weather_updater(bot: Bot) -> None:
         from app.services.weather import background_refresh
         info = await background_refresh()
         if info is not None:
-            logger.info("🌦️ weather updater: кэш обновлён ({}°C, {:.1f} м/с)",
-                        info.get("temperature", "?"),
-                        (float(info.get("wind") or 0) / 3.6))
+            logger.info(f"🌦️ weather updater: кэш обновлён "
+                        f"({info.get('temperature', '?')}°C, "
+                        f"{float(info.get('wind') or 0) / 3.6:.1f} м/с)")
     except Exception as exc:
-        logger.warning("weather updater failed: {}: {}", type(exc).__name__, exc)
+        logger.warning(f"weather updater failed: {type(exc).__name__}: {exc}")
 
 def build_scheduler(bot: Bot) -> AsyncIOScheduler:
     # Планировщик живёт в ЛОКАЛЬНОЙ зоне пользователей (TZ_OFFSET_HOURS):

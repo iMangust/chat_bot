@@ -186,7 +186,7 @@ async def _get_mtproto():
         from app.services.mtproto_client import holder
         client = await holder.get()
     except Exception as exc:
-        logger.debug("repaint: MTProto недоступен ({})", exc)
+        logger.debug(f"repaint: MTProto недоступен ({exc})")
         return None
     if client is None or not getattr(holder, "is_connected", False):
         return None
@@ -255,7 +255,7 @@ async def repaint_main_menu(bot: Bot, chat_id: int, theme_key: str) -> int:
         me = await bot.get_me()
         msgs = await _fetch_history(client, chat_id, 40)
     except Exception as exc:
-        logger.debug("repaint main menu: history unavailable ({})", exc)
+        logger.debug(f"repaint main menu: history unavailable ({exc})")
         return 0
     repainted = 0
     for m in msgs:
@@ -269,8 +269,8 @@ async def repaint_main_menu(bot: Bot, chat_id: int, theme_key: str) -> int:
         try:
             kb = _telethon_markup_to_aiogram(kb_src)
         except Exception as exc:
-            logger.debug("telethon markup conversion failed for msg {}: {!r}",
-                         getattr(m, 'id', '?'), exc)
+            logger.debug(f"telethon markup conversion failed for "
+                         f"{getattr(m, 'id', '?')}: {exc!r}")
             continue
         cbs = [btn.callback_data or ""
                for row in kb.inline_keyboard for btn in row]
@@ -317,10 +317,10 @@ async def repaint_chat_messages(bot: Bot, chat_id: int, theme_key: str,
         me = await bot.get_me()
         msgs = await _fetch_history(client, chat_id, limit)
     except TelegramAPIError as exc:
-        logger.debug("repaint: history unavailable ({})", exc)
+        logger.debug(f"repaint: history unavailable ({exc})")
         return 0
     except Exception as exc:
-        logger.debug("repaint: mtproto history failed: {}", exc)
+        logger.debug(f"repaint: mtproto history failed: {exc}")
         return 0
     for m in msgs:
         from_user = getattr(m, "from_user", None)
@@ -333,8 +333,8 @@ async def repaint_chat_messages(bot: Bot, chat_id: int, theme_key: str,
         try:
             kb = _telethon_markup_to_aiogram(kb_src)
         except Exception as exc:
-            logger.debug("telethon markup conversion failed for msg {}: {!r}",
-                         getattr(m, 'id', '?'), exc)
+            logger.debug(f"telethon markup conversion failed for "
+                         f"{getattr(m, 'id', '?')}: {exc!r}")
             continue
         cbs = [btn.callback_data or ""
                for row in kb.inline_keyboard for btn in row]
@@ -368,7 +368,7 @@ async def repaint_chat_messages(bot: Bot, chat_id: int, theme_key: str,
                 repainted += 1
                 continue
             except Exception as exc:
-                logger.debug("repaint: settings re-render failed: {}", exc)
+                logger.debug(f"repaint: settings re-render failed: {exc}")
                 new_text = _retheme_message_text(text, theme_key)
         else:  # sub
             new_text = _retheme_message_text(text, theme_key)
@@ -490,13 +490,13 @@ async def cb_set_theme(cb: CallbackQuery, session: AsyncSession,
         try:
             n_repainted += await repaint_main_menu(bot, chat_id, key)
         except Exception as exc:
-            logger.debug("theme main-menu repaint failed: {}", exc)
+            logger.debug(f"theme main-menu repaint failed: {exc}")
     # перекрашиваем старые сообщения, чтобы тема было видно СРАЗУ
     if chat_id is not None:
         try:
             n_repainted += await repaint_chat_messages(bot, chat_id, key)
         except Exception as exc:
-            logger.debug("theme repaint failed: {}", exc)
+            logger.debug(f"theme repaint failed: {exc}")
     toast = f"Тема изменена: {th.title}"
     if n_repainted:
         toast += f" · обновлено сообщений: {n_repainted}"

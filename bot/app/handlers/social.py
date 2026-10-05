@@ -94,7 +94,7 @@ async def cb_friend_add(cb: CallbackQuery, session: AsyncSession) -> None:
         await ach.unlock_by_code(int(pet.user_id), "walk_friend")
         await ach.unlock_by_code(int(other.user_id), "walk_friend")
     await session.commit()
-    logger.info("friend add {}+{}: {}", pet.id, other.id, ok)
+    logger.info(f"friend add {pet.id}+{other.id}: {ok}")
     await _friends_screen(cb, session, note=("✅ " if ok else "ℹ️ ") + msg)
     await cb.answer(msg[:50])
 

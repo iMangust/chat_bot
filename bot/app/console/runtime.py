@@ -67,7 +67,7 @@ class UiLogHandler:
             except Exception as exc:
                 # колбэк GUI не должен ронять лог-поток, но и молча терять
                 # его поломку нельзя — пишем один раз в debug
-                logger.debug("ui log callback failed: {}", exc)
+                logger.debug(f"ui log callback failed: {exc}")
 
 ui_log_handler = UiLogHandler()
 
@@ -264,7 +264,7 @@ class BotRuntime:
             return
         exc = task.exception()
         if exc is not None and self.state == "running":
-            logger.error("💥 polling crashed: {}", exc)
+            logger.error(f"💥 polling crashed: {exc}")
             self.last_error = str(exc)
             if self._loop is not None:
                 asyncio.ensure_future(self._cleanup_partial(), loop=self._loop)  # noqa: RUF006 — cleanup task, loop-bound
@@ -279,7 +279,7 @@ class BotRuntime:
             try:
                 self._scheduler.shutdown(wait=False)
             except Exception as exc:
-                logger.debug("scheduler shutdown failed: {}", exc)
+                logger.debug(f"scheduler shutdown failed: {exc}")
             self._scheduler = None
         if self._polling_task is not None:
             self._polling_task.cancel()
@@ -288,7 +288,7 @@ class BotRuntime:
             except asyncio.CancelledError:
                 pass  # ожидаемый исход отмены polling при остановке
             except Exception as exc:
-                logger.debug("polling task finished with error during shutdown: {}", exc)
+                logger.debug(f"polling task finished with error during shutdown: {exc}")
             self._polling_task = None
         await close_redis()
         await engine.dispose()
@@ -307,12 +307,12 @@ class BotRuntime:
             await close_redis()
             await engine.dispose()
         except Exception as exc:
-            logger.debug("partial cleanup (redis/engine) failed: {}", exc)
+            logger.debug(f"partial cleanup (redis/engine) failed: {exc}")
         if self.bot is not None:
             try:
                 await self.bot.session.close()
             except Exception as exc:
-                logger.debug("bot session close failed: {}", exc)
+                logger.debug(f"bot session close failed: {exc}")
             self.bot = None
         if self.dp is not None:
             _reset_router_state(self.dp)
@@ -347,8 +347,7 @@ class BotRuntime:
             with contextlib.suppress(Exception):
                 old.shutdown(wait=False)
         except Exception as exc:
-            logger.warning("reschedule_cron_jobs failed: {}: {}",
-                           type(exc).__name__, exc)
+            logger.warning(f"reschedule_cron_jobs failed: {type(exc).__name__}: {exc}")
 
 runtime = BotRuntime()
 

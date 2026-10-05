@@ -66,7 +66,7 @@ class ActivityService:
                     chat = await self.bot.get_chat(user_id)
                     user.username = (chat.username or "")[:64] or None
                 except Exception as exc:
-                    logger.debug("channel author name fetch failed: {}", exc)
+                    logger.debug(f"channel author name fetch failed: {exc}")
             await self.session.flush()
 
         now = local_now()
@@ -102,7 +102,7 @@ class ActivityService:
                 from app.handlers.tracker import MEDIA_XP_BONUS
                 xp_gain += MEDIA_XP_BONUS.get(media_type or "", 1)
             except ImportError as exc:
-                logger.debug("MEDIA_XP_BONUS import failed, fallback +1: {}", exc)
+                logger.debug(f"MEDIA_XP_BONUS import failed, fallback +1: {exc}")
                 xp_gain += 1
         if is_reply:
             xp_gain += 1
@@ -136,7 +136,7 @@ class ActivityService:
         unlocked = await self.achievements.check(user_id, counters)
 
         if leveled_to:
-            logger.info("user {} leveled up to {}", user_id, leveled_to[-1])
+            logger.info(f"user {user_id} leveled up to {leveled_to[-1]}")
         for ach in unlocked:
             logger.bind(notify=True).info("achievement {} unlocked for {}", ach.code, user_id)
 
@@ -172,8 +172,8 @@ class ActivityService:
               parse_mode="HTML",
             )
         except Exception as exc:
-            logger.debug("referral notify failed for {}: {}", inviter.tg_id, exc)
-        logger.info("referral credited: inviter={} invitee={}", inviter.tg_id, user.tg_id)
+            logger.debug(f"referral notify failed for {inviter.tg_id}: {exc}")
+        logger.info(f"referral credited: inviter={inviter.tg_id} invitee={user.tg_id}")
 
     async def log_message_only(
         self,

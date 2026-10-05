@@ -82,7 +82,7 @@ async def _notify_merch_admins(bot: Bot, text: str, kb) -> None:
         try:
             await bot.send_message(uid, text, parse_mode="HTML", reply_markup=kb)
         except Exception as exc:
-            logger.debug("merch notify {} failed: {}", uid, type(exc).__name__)
+            logger.debug(f"merch notify {uid} failed: {type(exc).__name__}")
 
 
 def _buyer_mention(v) -> str:
@@ -405,7 +405,7 @@ async def merch_reserve(cb: CallbackQuery, session, bot: Bot) -> None:
         f"✅ <b>Бронь оформлена!</b>\n\n🧢 {html.escape(desc)}\n\n"
         "Менеджер канала свяжется с тобой в личных сообщениях для оплаты и доставки 🚚",
         parse_mode="HTML", reply_markup=b.as_markup())
-    logger.info("merch reserved: variant={} by {}", vid, cb.from_user.id)
+    logger.info(f"merch reserved: variant={vid} by {cb.from_user.id}")
     await cb.answer("Забронировано ✅")
 
 # Подтверждение опасных действий с бронью. Кнопки «✅ Подтвердить продажу» /
@@ -555,8 +555,7 @@ async def merch_admin_action(cb: CallbackQuery, session) -> None:
         except Exception as exc:
             # покупатель может заблокировать бота — продажа от этого не отменяется,
             # но недоставленное уведомление должно быть видно в логе
-            logger.info("merch notify buyer {} (sale confirm) failed: {}",
-                        buyer, type(exc).__name__)
+            logger.info(f"merch notify buyer {buyer} (sale confirm) failed: {type(exc).__name__}")
         back_kb = InlineKeyboardBuilder()
         back_kb._vb("📋 К списку броней", "merch:myres")
         back_kb._vb("🏠 Управление мерчем", "madmin:home")
@@ -565,7 +564,7 @@ async def merch_admin_action(cb: CallbackQuery, session) -> None:
             f"✅ Продажа подтверждена!\n\n🧢 {html.escape(pname)} · {v.size}/{v.color}\n"
             f"👤 Покупатель: <code>{buyer}</code>\n📦 Остаток обновлён.",
             reply_markup=back_kb.as_markup())
-        logger.info("merch sale confirmed: variant={} buyer={}", vid, buyer)
+        logger.info(f"merch sale confirmed: variant={vid} buyer={buyer}")
     else:
         res = await repo.cancel_reserve(vid)
         if res is None:
@@ -579,8 +578,7 @@ async def merch_admin_action(cb: CallbackQuery, session) -> None:
                 "Если хочешь — забронируй заново в разделе «🧢 Наш мерч» 🧢",
                 parse_mode="HTML")
         except Exception as exc:
-            logger.info("merch notify buyer {} (reserve cancel) failed: {}",
-                        buyer, type(exc).__name__)
+            logger.info(f"merch notify buyer {buyer} (reserve cancel) failed: {type(exc).__name__}")
         back_kb = InlineKeyboardBuilder()
         back_kb._vb("📋 К списку броней", "merch:myres")
         back_kb._vb("🏠 Управление мерчем", "madmin:home")
@@ -589,7 +587,7 @@ async def merch_admin_action(cb: CallbackQuery, session) -> None:
             f"❌ Резерв отменён.\n\n🧢 {html.escape(pname)} · {v.size}/{v.color}\n"
             f"👤 Покупатель: <code>{buyer}</code>\nПозиция снова свободна.",
             reply_markup=back_kb.as_markup())
-        logger.info("merch reserve cancelled: variant={} buyer={}", vid, buyer)
+        logger.info(f"merch reserve cancelled: variant={vid} buyer={buyer}")
     await cb.answer("Готово ✅")
 
 async def _my_reserves_body(session, user_id: int) -> tuple[str, InlineKeyboardBuilder]:
@@ -1411,7 +1409,7 @@ async def _save_photo_as_file_id(bot: Bot, message: Message) -> str | None:
                 await bot.delete_message(message.chat.id, up.message_id)
         return saved
     except Exception as exc:
-        logger.warning("merch photo re-save failed: {}: {}", type(exc).__name__, exc)
+        logger.warning(f"merch photo re-save failed: {type(exc).__name__}: {exc}")
         return fid
 
 _PHOTO_STEPS = {"mv_photo_attach", "var_photo"}

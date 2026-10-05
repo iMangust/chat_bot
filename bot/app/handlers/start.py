@@ -284,7 +284,7 @@ async def cb_gate_check(cb: CallbackQuery, bot: Bot, session: AsyncSession,
                     api_notes.append(f"{target}: {type(exc).__name__}")
             diag.append("Bot API: " + "; ".join(api_notes))
             diag.append(f"Реестр: {await _registry_row_state(uid)}")
-        logger.info("gate:check failed for {}: {}", uid, " | ".join(diag))
+        logger.info(f"gate:check failed for {uid}: {{' | '.join(diag)}}")
         await cb.answer(
             "Подписка не найдена 😔\nЕсли ты точно в канале/группе — напиши "
             "/start ещё раз через пару минут: бот перепроверит по всем "

@@ -60,7 +60,7 @@ async def cmd_syncnow(message: Message, bot: Bot) -> None:
         try:
             res = await asyncio.wait_for(full_rescan_subscribers(), timeout=300)
         except Exception as exc:
-            logger.error("/syncnow rescan failed: {}", exc)
+            logger.error(f"/syncnow rescan failed: {exc}")
             await msg.edit_text(f"❌ Скан не удался: <code>{exc}</code>")
             return
         if "skipped" in res:
@@ -84,7 +84,7 @@ async def cmd_syncnow(message: Message, bot: Bot) -> None:
     try:
         res = await asyncio.wait_for(sync_subscribers(first_run=first_run), timeout=300)
     except Exception as exc:
-        logger.error("/syncnow failed: {}", exc)
+        logger.error(f"/syncnow failed: {exc}")
         await msg.edit_text(f"❌ Синхронизация не удалась: <code>{exc}</code>")
         return
     await msg.edit_text(

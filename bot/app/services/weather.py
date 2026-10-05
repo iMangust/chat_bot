@@ -75,7 +75,7 @@ def openweather_key() -> str:
             if tok:
                 return tok
     except Exception as exc:
-        logger.debug("weather: settings key lookup failed: {}", exc)
+        logger.debug(f"weather: settings key lookup failed: {exc}")
     return ""
 
 def weather_source_line() -> str:
@@ -109,7 +109,7 @@ async def fetch_real_weather() -> dict | None:
     try:
         owm = await mod.fetch_openweather()
     except Exception as exc:
-        logger.warning("openweather unavailable: {}: {}", type(exc).__name__, str(exc)[:200])
+        logger.warning(f"openweather unavailable: {type(exc).__name__}: {str(exc)[:200]}")
         owm = None
     if owm is None:
         logger.info("погода: OpenWeather недоступен — показываем кэш/сезонную модель")
@@ -294,11 +294,9 @@ async def fetch_openweather() -> dict | None:
                             "gust": [h["gust"] for h in hours],
                         }
                 else:
-                    logger.warning("openweather forecast: HTTP {}",
-                                   rf.status_code)
+                    logger.warning(f"openweather forecast: HTTP {rf.status_code}")
             except Exception as exc:
-                logger.debug("openweather forecast unavailable: {}",
-                             str(exc)[:120])
+                logger.debug(f"openweather forecast unavailable: {str(exc)[:120]}")
             # Если /2.5/forecast не отдал часовых точек, а снимок пришёл из
             # /2.5/weather (там hourly пуст по определению), недельный экран
             # остался бы без данных до следующего тика. Достаём точки из
@@ -324,8 +322,7 @@ async def fetch_openweather() -> dict | None:
             hint = " (DNS не резолвит api.openweathermap.org)"
         elif "ConnectTimeout" in type(exc).__name__:
             hint = " (TCP/443 к api.openweathermap.org висит — файрвол/провайдер)"
-        logger.warning("openweather unavailable: {}: {}{}", type(exc).__name__,
-                       es[:200], hint)
+        logger.warning(f"openweather unavailable: {type(exc).__name__}: {es[:200]}{hint}")
         return None
 
 def _ttl() -> float:
@@ -359,20 +356,18 @@ async def fetch_forecast_hours() -> list[dict]:
                 "lat": LAT, "lon": LON, "units": "metric", "lang": "ru",
                 "appid": key})
             if rf.status_code != 200:
-                logger.warning("openweather forecast(standalone): HTTP {}",
-                               rf.status_code)
+                logger.warning(f"openweather forecast(standalone): HTTP {rf.status_code}")
                 return []
             return _parse_owm_forecast_hours(rf.json())
     except Exception as exc:
-        logger.debug("openweather forecast(standalone) unavailable: {}",
-                     str(exc)[:120])
+        logger.debug(f"openweather forecast(standalone) unavailable: {str(exc)[:120]}")
         return []
 
 async def background_refresh() -> dict | None:
     try:
         return await _ensure_fresh(force=True)
     except Exception as exc:
-        logger.warning("weather: фоновое обновление не удалось: {}", exc)
+        logger.warning(f"weather: фоновое обновление не удалось: {exc}")
         return None
 
 WMO_MAP: dict[int, tuple[str, str, dict[str, float]]] = {
@@ -461,7 +456,7 @@ async def _do_fetch() -> dict | None:
         real = await _sys.modules[__name__].fetch_real_weather()
     except Exception as exc:
         real = None
-        logger.warning("погода: fetch исключение: {}", exc)
+        logger.warning(f"погода: fetch исключение: {exc}")
     if isinstance(real, dict) and not real:
         real = None
     ts = _mono.monotonic()
@@ -492,9 +487,7 @@ async def _do_fetch() -> dict | None:
         _hours_cache["ts"], _hours_cache["points"] = 0.0, []
     if real is None:
         _cache["next_try_mono"] = ts + RETRY_AFTER_SEC
-        logger.warning("погода: источник недоступен — показываем последний "
-                       "кэш/сезонную модель (следующая попытка через {} c)",
-                       RETRY_AFTER_SEC)
+        logger.warning(f"погода: источник недоступен — показываем последний кэш/сезонную модель (следующая попытка через {RETRY_AFTER_SEC} c)")
     else:
         _cache["next_try_mono"] = 0.0
     return real
@@ -955,7 +948,7 @@ def weather_effects_lines(eff: dict | None = None, *, walk: bool = False,
             stamp = _effects_window_stamp(pet, window_end)
             lines.append(f"   ⏳ Следующий тик погоды — {stamp}.")
         except Exception as exc:
-            logger.debug("weather: next-tick stamp failed: {}", exc)
+            logger.debug(f"weather: next-tick stamp failed: {exc}")
 
     if walk:
         wm = WALK_MODS.get(wtype) or {}
@@ -1059,7 +1052,7 @@ def apply_weather_to_pet(pet, dt=None) -> str | None:
         chance = max(0.0, chance * (1.0 + g.get("sick_chance_pct", 0.0)))
     except Exception as exc:
         # болезнь считается без модификатора экипировки — но поломку видно в логе
-        logger.debug("weather tick: gear sick-chance modifier failed: {}", exc)
+        logger.debug(f"weather tick: gear sick-chance modifier failed: {exc}")
     if chance and getattr(pet, "sick_since", None) is None and _random.random() < chance:
         pet.sick_since = dt
         pet.health = max(5, pet.health - 10)
@@ -1260,7 +1253,7 @@ async def weather_button_label() -> str:
     try:
         w = await weather_now()
     except Exception as exc:
-        logger.debug("weather_button_label: {}", exc)
+        logger.debug(f"weather_button_label: {exc}")
         return "🌦️ Погода"
     if not w["live"]:
         # Кнопка всё равно «живая»: показываем хотя бы сезонную оценку
@@ -1309,7 +1302,7 @@ async def hourly_points() -> list[dict]:
         try:
             hours = await fetch_forecast_hours()
         except Exception as exc:
-            logger.debug("hourly_points: standalone forecast failed: {}", exc)
+            logger.debug(f"hourly_points: standalone forecast failed: {exc}")
             hours = []
         if hours:
             ts = _mono.monotonic()

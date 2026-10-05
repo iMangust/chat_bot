@@ -143,7 +143,7 @@ async def set_cooldown(key: str, ttl_sec: Any) -> bool:
         except Exception as exc:
             # Redis went down mid-operation (e.g. connection lost after ping):
             # fall through to in-memory instead of crashing the caller.
-            logger.debug("set_cooldown redis failed ({}): mem mode", type(exc).__name__)
+            logger.debug(f"set_cooldown redis failed ({type(exc).__name__}): mem mode")
     now = time.monotonic()
     exp = _mem_get(f"cd:{key}")
     if exp is not None and exp > now:
@@ -163,7 +163,7 @@ async def get_cooldown_ttl(key: str) -> int:
             ttl = await r.ttl(f"cd:{key}")
             return max(ttl, 0)
         except Exception as exc:
-            logger.debug("get_cooldown_ttl redis failed ({}): mem mode", type(exc).__name__)
+            logger.debug(f"get_cooldown_ttl redis failed ({type(exc).__name__}): mem mode")
     exp = _mem_get(f"cd:{key}")
     if exp is None:
         return 0
@@ -184,7 +184,7 @@ async def acquire_lock(name: str, ttl_sec: int = 60) -> bool:
             return False
         except Exception as exc:
             # Redis died mid-op: fall through to in-memory lock below.
-            logger.debug("acquire_lock redis failed ({}): mem mode", type(exc).__name__)
+            logger.debug(f"acquire_lock redis failed ({type(exc).__name__}): mem mode")
     # In-memory fallback: real expiry check instead of unconditional True.
     # NOTE: single-process only — with several bot instances and dead Redis
     # each instance takes its own lock (same tradeoff as all mem fallbacks).
@@ -202,7 +202,7 @@ async def release_lock(name: str) -> None:
         try:
             await r.delete(f"lock:{name}")
         except Exception as exc:
-            logger.debug("release_lock redis failed ({}): mem mode", type(exc).__name__)
+            logger.debug(f"release_lock redis failed ({type(exc).__name__}): mem mode")
     _mem_store.pop(f"lock:{name}", None)
 
 
@@ -220,9 +220,9 @@ async def renew_lock(name: str, ttl_sec: int) -> bool:
                 await r.expire(key_full, _norm_ttl(ttl_sec))
                 return True
             except Exception as exc:
-                logger.debug("renew_lock redis failed ({}): mem mode", type(exc).__name__)
+                logger.debug(f"renew_lock redis failed ({type(exc).__name__}): mem mode")
         except Exception as exc:
-            logger.debug("renew_lock redis failed ({}): mem mode", type(exc).__name__)
+            logger.debug(f"renew_lock redis failed ({type(exc).__name__}): mem mode")
     _mem_put(f"lock:{name}", time.monotonic() + float(_norm_ttl(ttl_sec)))
     return True
 
@@ -233,7 +233,7 @@ async def remember_for(name: str, ttl_sec: int) -> bool:
             ok = await r.set(f"every:{name}", "1", nx=True, ex=_norm_ttl(ttl_sec))
             return bool(ok)
         except Exception as exc:
-            logger.debug("remember_for redis failed ({}): mem mode", type(exc).__name__)
+            logger.debug(f"remember_for redis failed ({type(exc).__name__}): mem mode")
     k = f"every:{name}"
     now = time.monotonic()
     exp = _mem_get(k)
@@ -263,7 +263,7 @@ async def mem_cached_set(key: str, value: str, ttl_sec: int = 3600) -> str | Non
             return prev_raw
         except Exception as exc:
             # Redis died mid-op: fall through to mem cache instead of crashing.
-            logger.debug("mem_cached_set redis failed ({}): mem mode", type(exc).__name__)
+            logger.debug(f"mem_cached_set redis failed ({type(exc).__name__}): mem mode")
     k = f"cache:{key}"
     now = time.monotonic()
     exp = _mem_store.get(k + ":exp")
@@ -301,7 +301,7 @@ async def incr_counter(key: str, amount: int = 1, ttl: int | None = None) -> int
                     await r.expire(ck, _norm_ttl(ttl))
             return new
         except Exception as exc:
-            logger.debug("incr_counter redis failed ({}): mem mode", exc)
+            logger.debug(f"incr_counter redis failed ({exc}): mem mode")
     ck = f"cnt:{key}"
     now = time.monotonic()
     exp = _mem_store.get(ck + ":exp")
@@ -326,7 +326,7 @@ async def get_counter(key: str) -> int:
                 raw = raw.decode("utf-8", "replace")
             return int(raw)
         except Exception as exc:
-            logger.debug("get_counter redis failed ({}): mem mode", exc)
+            logger.debug(f"get_counter redis failed ({exc}): mem mode")
     ck = f"cnt:{key}"
     now = time.monotonic()
     exp = _mem_store.get(ck + ":exp")

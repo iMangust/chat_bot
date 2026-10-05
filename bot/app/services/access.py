@@ -45,8 +45,7 @@ async def celebrate_subscription(bot, user_id: int, first_name: str = "") -> Non
             await UserRepository(session).add_xp_coins(user_id, reward_xp, reward_coins)
             await session.commit()
     except Exception as exc:
-        logger.warning("celebrate: reward grant failed for {}: {}", user_id,
-                       type(exc).__name__)
+        logger.warning(f"celebrate: reward grant failed for {user_id}: {type(exc).__name__}")
     text = (f"🎉 Добро пожаловать{', ' + first_name if first_name else ''}!\n\n"
             f"Подписка на канал подтверждена ✅\n"
             f"Начисляем бонус за вступление: <b>+{reward_xp} XP</b> и "
@@ -63,9 +62,9 @@ async def celebrate_subscription(bot, user_id: int, first_name: str = "") -> Non
             InlineKeyboardButton(text="▶️ Начать", callback_data="onb:start")]])
     try:
         await bot.send_message(user_id, text, parse_mode="HTML", reply_markup=kb)
-        logger.info("celebrate: welcome DM sent to {}", user_id)
+        logger.info(f"celebrate: welcome DM sent to {user_id}")
     except Exception as exc:
-        logger.debug("celebrate: send to {} failed: {}", user_id, type(exc).__name__)
+        logger.debug(f"celebrate: send to {user_id} failed: {type(exc).__name__}")
 
 def schedule_celebration(bot, user_id: int, first_name: str = "") -> None:
     task = asyncio.get_running_loop().create_task(
@@ -200,11 +199,9 @@ async def record_membership(user_id: int, chat_id: int | str | None = None, *,
                 int(user_id), cid, first_name=first_name, username=username,
                 real_event=real_event, contacted=contacted, arrived=arrived)
         if real_event and cid is not None:
-            logger.info("access: registry {} <- chat {} ({})", user_id, cid,
-                        "event" if contacted is False else "event+contact")
+            logger.info(f"access: registry {user_id} <- chat {cid} ({{'event' if contacted is False else 'event+contact'}})")
     except Exception as exc:
-        logger.warning("access: register {}@{} failed: {}: {}",
-                       user_id, chat_id, type(exc).__name__, str(exc)[:200])
+        logger.warning(f"access: register {user_id}@{chat_id} failed: {type(exc).__name__}: {str(exc)[:200]}")
 
 async def known_subscriber_ids(user_ids: Iterable[int]) -> set[int]:
     ids = {int(u) for u in user_ids if u}
@@ -221,7 +218,7 @@ async def known_subscriber_ids(user_ids: Iterable[int]) -> set[int]:
                 .where(ChannelSubscriber.user_id.in_(ids)))).all()
         return {int(uid) for uid, chats in rows if list(chats or [])}
     except Exception as exc:
-        logger.debug("access: registry read failed for {}: {}", user_ids, exc)
+        logger.debug(f"access: registry read failed for {user_ids}: {exc}")
         return set()
 
 async def remember_contact(user_id: int, *, first_name: str = "",
@@ -234,8 +231,7 @@ async def remember_contact(user_id: int, *, first_name: str = "",
                 int(user_id), None, first_name=first_name, username=username,
                 real_event=False, contacted=True)
     except Exception as exc:
-        logger.warning("access: remember_contact {} failed: {}: {}",
-                       user_id, type(exc).__name__, str(exc)[:200])
+        logger.warning(f"access: remember_contact {user_id} failed: {type(exc).__name__}: {str(exc)[:200]}")
 
 async def refresh_registry(bot, user_id: int) -> bool:
     return await _refresh_registry_impl(bot, user_id)
@@ -291,7 +287,7 @@ async def scan_chat_participants(target: str, bot=None) -> int:
         from app.services.mtproto_client import iter_all_participants
         members = await iter_all_participants(target)
     except Exception as exc:
-        logger.debug("access: MTProto scan {} failed: {}", target, exc)
+        logger.debug(f"access: MTProto scan {target} failed: {exc}")
         return 0
 
     cid = numeric_chat_id(target)
@@ -323,13 +319,9 @@ async def scan_chat_participants(target: str, bot=None) -> int:
     LAST_SCAN_TOTAL = total
 
     if added:
-        logger.info("access: живой скан {} — {} участник(ов) в реестре",
-                    target, added)
+        logger.info(f"access: живой скан {target} — {added} участник(ов) в реестре")
     if members and total and len(members) < max(2, total // 2):
-        logger.error("access: ⚠️ скан {} собрал {} из ~{} участник(ов) — выборка "
-                     "Telethon неполная; часть подписчиков осталась без записи "
-                     "(проверьте показ списка участников в группе и права "
-                     "MTProto-аккаунта)", target, len(members), total)
+        logger.error(f"access: ⚠️ скан {target} собрал {len(members)} из ~{total} участник(ов) — выборка Telethon неполная; часть подписчиков осталась без записи (проверьте показ списка участников в группе и права MTProto-аккаунта)")
     return added
 
 LAST_SCAN_SEEN: int | None = None

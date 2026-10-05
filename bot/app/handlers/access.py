@@ -79,27 +79,21 @@ async def register_member(user_id: int, chat_id: int | str | None = None, *,
                 confirmed_status = str(getattr(m, "status", "") or "")
                 break
             except TelegramForbiddenError:
-                logger.info("access: Bot API FORBIDDEN for {} in {} — бот не админ/"
-                            "приватность; запись в реестр отклонена", user_id, target)
+                logger.info(f"access: Bot API FORBIDDEN for {user_id} in {target} — бот не админ/приватность; запись в реестр отклонена")
                 return
             except Exception as exc:
                 msg = str(exc).lower()
                 if "chat not found" in msg:
-                    logger.error("access: Bot API 'chat not found' for target {} — "
-                                 "проверьте CHANNEL_USERNAME/TRACKED_CHAT_IDS; запись "
-                                 "в реестр отклонена", target)
+                    logger.error(f"access: Bot API 'chat not found' for target {target} — проверьте CHANNEL_USERNAME/TRACKED_CHAT_IDS; запись в реестр отклонена")
                     return
                 continue
         if confirmed_status is None:
-            logger.warning("access: cannot confirm membership of {} via Bot API "
-                           "(network?) — registry write skipped", user_id)
+            logger.warning(f"access: cannot confirm membership of {user_id} via Bot API (network?) — registry write skipped")
             return
         if confirmed_status not in (ChatMemberStatus.MEMBER.value,
                                     ChatMemberStatus.ADMINISTRATOR.value,
                                     ChatMemberStatus.CREATOR.value):
-            logger.info("access: skip registry write for {} in {} — Bot API "
-                        "says '{}' (event/scan said member)", user_id,
-                        chat_id, confirmed_status)
+            logger.info(f"access: skip registry write for {user_id} in {chat_id} — Bot API says '{confirmed_status}' (event/scan said member)")
             return
     await access_service.record_membership(
         user_id, chat_id, first_name=first_name, username=username,
@@ -137,8 +131,7 @@ async def handle_chat_member(update: ChatMemberUpdated, bot: Bot) -> None:
     await register_member(user.id, update.chat.id,
                           first_name=user.first_name or "", username=user.username,
                           real_event=True, arrived=arrived, bot=bot)
-    logger.info("access: chat_member {} in {} : {} -> {}", user.id, update.chat.id,
-                old_status or "?", status + ("" if arrived else " (не член)"))
+    logger.info(f"access: chat_member {user.id} in {update.chat.id} : {old_status or '?'} -> {status + ('' if arrived else ' (не член)')}")
 
 @router.chat_member()
 async def _chat_member_handler(update: ChatMemberUpdated, bot: Bot) -> None:
@@ -182,7 +175,7 @@ async def cmd_subscribers(message: Message, session: AsyncSession) -> None:
             count = len(members)
         except Exception as exc:
             count = -1
-            logger.debug("registry per-chat count failed for {}: {}", target, exc)
+            logger.debug(f"registry per-chat count failed for {target}: {exc}")
         lines.append(f"   • @{target}: {count if count >= 0 else '?'} записей")
     if not chats:
         lines.append("⚠️ Чаты не настроены (TRACKED_CHAT_IDS / CHANNEL_* пустые) — "
@@ -216,7 +209,7 @@ async def cb_gate_check(cb: CallbackQuery, bot: Bot) -> None:
     scan_err = await access_service.last_scan_error_safe()
     if scan_err:
         diag.append(f"Скан: {scan_err[:120]}")
-    logger.info("gate:check DENY {}: {}", cb.from_user.id, " | ".join(diag))
+    logger.info(f"gate:check DENY {cb.from_user.id}: {{' | '.join(diag)}}")
     await cb.answer(
         "Подписка не найдена 😔\nЕсли ты точно в канале или группе — напиши "
         "/start ещё раз через пару минут: бот перепроверит по всем источникам.",
@@ -239,4 +232,4 @@ async def notify_admins(bot: Bot, text: str) -> None:
         try:
             await bot.send_message(admin_id, text)
         except Exception as exc:
-            logger.debug("notify admin {} failed: {}", admin_id, str(exc)[:80])
+            logger.debug(f"notify admin {admin_id} failed: {str(exc)[:80]}")

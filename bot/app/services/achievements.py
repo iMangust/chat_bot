@@ -121,10 +121,10 @@ async def seed_achievements(session: AsyncSession) -> int:
             updated += 1
     if updated:
         await session.flush()
-        logger.info("synced {} achievement descriptions", updated)
+        logger.info(f"synced {updated} achievement descriptions")
     if created:
         await session.flush()
-        logger.info("seeded {} achievements", created)
+        logger.info(f"seeded {created} achievements")
     return created
 
 class AchievementService:
@@ -211,10 +211,9 @@ class AchievementService:
                     f"\n\nНаграда: +{total_xp} XP · +{total_c} 🪙")
             await queue_notification(self.session, user_id, "achievement", text)
         except Exception as e:
-            logger.debug("achievement notify skipped: {}", e)
+            logger.debug(f"achievement notify skipped: {e}")
         for a in achievements:
-            logger.info("🏆 user {} unlocked achievement {} (+{}xp +{}c)",
-                        user_id, a.code, a.reward_xp, a.reward_coins)
+            logger.info(f"🏆 user {user_id} unlocked achievement {a.code} (+{a.reward_xp}xp +{a.reward_coins}c)")
 
     async def list_for_user(self, user_id: int) -> list[tuple[Achievement, UserAchievement | None]]:
         rows = {r.achievement_id: r for r in await self.repo.get_progress_rows(user_id)}

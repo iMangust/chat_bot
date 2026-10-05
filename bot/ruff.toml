@@ -15,6 +15,11 @@ select = [
     "SIM",   # simplifications
     "RUF",   # ruff-specific rules
     "PIE",   # misc small improvements
+    "G",     # flake8-logging-format: catches broken logger calls at lint time.
+             # Real bug history (issue #13): ~230 loguru call sites used the
+             # std-logging style logger.info("msg {}", arg) (no-op braces in
+             # output) or %-style under loguru; all converted to f-strings.
+             # G rules keep the two logging flavours from drifting apart again.
     "RET504",# unnecessary assignment before return
 ]
 ignore = [
@@ -22,6 +27,10 @@ ignore = [
     "E501",   # line length handled by formatter philosophy, not enforced on legacy text blocks
     "E702",   # semicolon-separated statements — used in dense test fixtures
     "E712",   # == True comparisons — SQLAlchemy expression API requires it (column == True)
+    "G004",   # f-strings in logging allowed: the project standardises on eager
+              # f-string messages (loguru has no lazy %-args anyway; std-logging
+              # call sites are few and consistent). G001-G010 still catch the
+              # real issue #13 bug class: mixed/invalid format styles.
     "UP017",  # datetime.UTC alias — timezone.utc kept for consistency across the codebase
     "UP031",  # printf-style formatting — pervasive in logging calls, churn not worth it
     "UP041",  # TimeoutError alias — safe either way, low value

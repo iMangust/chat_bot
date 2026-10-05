@@ -30,7 +30,7 @@ async def safe_edit_or_answer(
         except TelegramBadRequest as exc:
             low = str(exc).lower()
             if "not modified" not in low:
-                logger.debug("pre-split edit failed ({}), sending new", exc)
+                logger.debug(f"pre-split edit failed ({exc}), sending new")
                 last = None
         if last is not None:
             for chunk in chunks[1:]:
@@ -68,9 +68,9 @@ async def safe_edit_or_answer(
                             reply_markup=reply_markup if i == len(chunks) - 1 else None)
                 return last
             else:
-                logger.debug("edit_text failed ({}), sending new message", exc)
+                logger.debug(f"edit_text failed ({exc}), sending new message")
         except TelegramAPIError as exc:
-            logger.debug("edit_text api error ({}), sending new message", exc)
+            logger.debug(f"edit_text api error ({exc}), sending new message")
     from app.utils.text_split import split_message
     last = target
     chunks = split_message(text)
@@ -82,7 +82,7 @@ async def safe_edit_or_answer(
         except TelegramBadRequest as exc:
             low = str(exc).lower()
             if "can't parse" in low or "entity" in low or "tag" in low:
-                logger.debug("answer HTML broken ({}), sending plain text", exc)
+                logger.debug(f"answer HTML broken ({exc}), sending plain text")
                 last = await target.answer(_strip_tags(chunk), reply_markup=markup)
             else:
                 raise
@@ -127,7 +127,7 @@ async def safe_edit_html(
             if "not modified" in msg:
                 return target
             if _looks_like_html_error(exc) and parse_mode == ParseMode.HTML:
-                logger.debug("edit HTML broken ({}), editing plain text", exc)
+                logger.debug(f"edit HTML broken ({exc}), editing plain text")
                 clean = _strip_tags(text)
                 clean_chunks = split_message(clean)
                 try:
@@ -139,10 +139,10 @@ async def safe_edit_html(
                                                    **kwargs)
                     return last
                 except TelegramAPIError as exc2:
-                    logger.debug("plain edit failed too ({})", exc2)
+                    logger.debug(f"plain edit failed too ({exc2})")
             elif "no text" not in msg and "message can't be edited" not in msg \
                     and "new text provided" not in msg:
-                logger.debug("edit_text failed ({}), sending new message", exc)
+                logger.debug(f"edit_text failed ({exc}), sending new message")
     return await safe_edit_or_answer(target, text, reply_markup=reply_markup,
                                      parse_mode=parse_mode, **kwargs)
 
@@ -158,7 +158,7 @@ async def answer_safe(message: Message, text: str, *, reply_markup=None,
         except TelegramBadRequest as exc:
             low = str(exc).lower()
             if "can't parse" in low or "entity" in low or "tag" in low:
-                logger.debug("answer HTML broken ({}), sending plain text", exc)
+                logger.debug(f"answer HTML broken ({exc}), sending plain text")
                 last = await message.answer(_strip_tags(chunk), reply_markup=markup)
             else:
                 raise

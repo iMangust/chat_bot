@@ -57,10 +57,7 @@ def _is_tracked(chat_id: int) -> bool:
     except Exception as exc:
         logger.warning("📊 трекер: не удалось прочитать watched_chat_ids "
                        "({!r}) — считаю чат {} неотслеживаемым", exc, chat_id)
-    logger.info("📊 трекер: чат {} НЕ в списке отслеживаемых "
-                "(TRACKED_CHAT_IDS / реестр сервисных чатов) — сообщение не "
-                "будет засчитано. Проверь CHAT_DISCUSSION_GROUP/"
-                "TRACKED_CHAT_IDS в .env", chat_id)
+    logger.info(f"📊 трекер: чат {chat_id} НЕ в списке отслеживаемых (TRACKED_CHAT_IDS / реестр сервисных чатов) — сообщение не будет засчитано. Проверь CHAT_DISCUSSION_GROUP/TRACKED_CHAT_IDS в .env")
     return False
 
 def detect_media_type(message: Message) -> str | None:
@@ -106,10 +103,9 @@ async def track_group_message(message: Message, session: AsyncSession) -> None:
     # отброшенный кейс — это «написал в группу, а статистика не обновилась».
     user = await UserRepository(session).get(author)
     if user is None:
-        logger.info("📊 трекер: пользователь {} ещё без реестровой записи — "
-                    "будет создан автоматически (первое сообщение)", author)
+        logger.info(f"📊 трекер: пользователь {author} ещё без реестровой записи — будет создан автоматически (первое сообщение)")
     elif user.is_banned:
-        logger.info("📊 трекер: пользователь {} забанен — не считаем", author)
+        logger.info(f"📊 трекер: пользователь {author} забанен — не считаем")
 
     if message.sender_chat is not None and message.from_user is None:
         from app.services.access import remember_contact
@@ -131,9 +127,7 @@ async def track_group_message(message: Message, session: AsyncSession) -> None:
         is_command=bool(text and text.startswith("/")),
     )
     if entry is not None and not entry.is_counted:
-        logger.info("📊 трекер: msg {} от {} в чате {} НЕ засчитана ({})",
-                    message.message_id, author, message.chat.id,
-                    entry.skip_reason)
+        logger.info(f"📊 трекер: msg {message.message_id} от {author} в чате {message.chat.id} НЕ засчитана ({entry.skip_reason})")
     if entry and entry.is_counted:
         msg_local = message.date.replace(tzinfo=timezone.utc) + timedelta(
             hours=get_settings().tz_offset_hours)
@@ -142,7 +136,7 @@ async def track_group_message(message: Message, session: AsyncSession) -> None:
             ach = AchievementService(session)
             unlocked = await ach.unlock_by_code(author, "night_owl")
             if unlocked:
-                logger.info("🎭 secret night_owl unlocked for {}", author)
+                logger.info(f"🎭 secret night_owl unlocked for {author}")
 
 def _reaction_emoji(rt) -> str | None:
     if isinstance(rt, ReactionTypeEmoji):
@@ -161,7 +155,7 @@ async def _fetch_author_via_forward(bot: Bot, chat_id: int, message_id: int) -> 
     try:
         fwd = await bot.forward_message(chat_id=me.id, from_chat_id=chat_id, message_id=message_id)
     except TelegramAPIError as exc:
-        logger.debug("reaction fetch failed (forward): {}", exc)
+        logger.debug(f"reaction fetch failed (forward): {exc}")
         return None
     uid: int | None = None
     if fwd.from_user is not None and not fwd.from_user.is_bot:
@@ -203,7 +197,7 @@ async def track_reaction_update(update: MessageReactionUpdated,
     try:
         to_user = await svc.activity.get_message_author(update.chat.id, update.message_id)
     except Exception as exc:
-        logger.debug("reaction author lookup failed (db): {}", exc)
+        logger.debug(f"reaction author lookup failed (db): {exc}")
     if to_user is None:
         to_user = await _fetch_author_via_forward(update.bot, update.chat.id, update.message_id)
     if to_user is None:
@@ -223,7 +217,4 @@ async def track_reaction_count_update(update: MessageReactionCountUpdated) -> No
     if not _is_tracked(update.chat.id):
         return
     total = sum(rc.total_count for rc in (update.reaction_count or []))
-    logger.info(
-        "анонимные реакции: chat={} msg={} всего={}",
-        update.chat.id, update.message_id, total,
-    )
+    logger.info(f"анонимные реакции: chat={update.chat.id} msg={update.message_id} всего={total}")

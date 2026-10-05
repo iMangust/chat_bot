@@ -25,14 +25,12 @@ async def start_userbot(bot) -> asyncio.Task | None:
         return None
     from app.services.mtproto_client import holder, telethon_available
     if not telethon_available():
-        logger.warning("MTPROTO_ANSWER_MODE={} но telethon не установлен — "
-                       "режим выключен (pip install 'telethon>=1.36')", mode)
+        logger.warning(f"MTPROTO_ANSWER_MODE={mode} но telethon не установлен — режим выключен (pip install 'telethon>=1.36')")
         return None
     try:
         client = await holder.get()
     except Exception as exc:
-        logger.warning("UserBot не запущен: {}: {} (нужен --login или "
-                       "MTPROTO_SESSION_STRING)", type(exc).__name__, str(exc)[:180])
+        logger.warning(f"UserBot не запущен: {type(exc).__name__}: {str(exc)[:180]} (нужен --login или MTPROTO_SESSION_STRING)")
         return None
 
     from telethon import events
@@ -60,10 +58,9 @@ async def start_userbot(bot) -> asyncio.Task | None:
         try:
             await client.send_message(chat_id, "👍")
         except Exception as exc:
-            logger.debug("UserBot reply skipped: {}", type(exc).__name__)
+            logger.debug(f"UserBot reply skipped: {type(exc).__name__}")
 
-    logger.info("🤖 UserBot активен (режим {}) — отвечаю от аккаунта id={}",
-                mode, holder.me.id if holder.me else "?")
+    logger.info(f"🤖 UserBot активен (режим {mode}) — отвечаю от аккаунта id={holder.me.id if holder.me else '?'}")
     return asyncio.current_task()
 
 async def stop_userbot() -> None:

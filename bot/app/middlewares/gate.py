@@ -97,7 +97,7 @@ async def _notify_admin(bot, text_key: str, uid: str, text: str) -> None:
     try:
         await bot.send_message(ids[0], text)
     except Exception as exc:
-        logger.warning("gate admin notice for {} failed to send: {}", uid, exc)
+        logger.warning(f"gate admin notice for {uid} failed to send: {exc}")
 
 async def known_subscriber_in_required_chats(user_id: int) -> bool:
     ids = {numeric_chat_id(cid) for cid, uname in required_chats()}
@@ -126,7 +126,7 @@ async def known_subscriber_in_required_chats(user_id: int) -> bool:
                 return True
         return False
     except Exception as exc:
-        logger.debug("gate db-fallback failed for {}: {}", user_id, exc)
+        logger.debug(f"gate db-fallback failed for {user_id}: {exc}")
         return False
 
 async def verify_membership(bot, user_id: int) -> bool | None:
@@ -200,10 +200,7 @@ async def _api_membership_verdict(bot, user_id: int):
                 continue
             except TelegramAPIError as exc:
                 if "chat not found" in str(exc).lower():
-                    logger.warning("gate: chat {} not visible to the bot — it is "
-                                   "NOT an @username channel/supergroup or the bot "
-                                   "is not in it; fix CHANNEL_USERNAME/TRACKED_CHAT_IDS",
-                                   target)
+                    logger.warning(f"gate: chat {target} not visible to the bot — it is NOT an @username channel/supergroup or the bot is not in it; fix CHANNEL_USERNAME/TRACKED_CHAT_IDS")
                     continue
                 continue
             status = getattr(member, "status", "")
@@ -220,14 +217,12 @@ async def _api_confirms_member(bot, user_id: int) -> bool | None:
     except Exception as exc:
         # Bot API недоступен/ошибся — не считаем это «не подписчиком»,
         # но и молча глотать нельзя (может ложно блокировать доступ)
-        logger.debug("gate: Bot API membership check failed for {}: {}",
-                     user_id, exc)
+        logger.debug(f"gate: Bot API membership check failed for {user_id}: {exc}")
         return None
     if verdict is True:
         return True
     if verdict is False:
-        logger.info("gate: registry row for {} ignored — Bot API confirms "
-                    "not a member (stale/phantom record)", user_id)
+        logger.info(f"gate: registry row for {user_id} ignored — Bot API confirms not a member (stale/phantom record)")
         return False
     return None
 
@@ -237,8 +232,7 @@ async def known_subscriber_in_db(user_id: int, bot=None) -> bool:
         if confirmed is True:
             return True
         if confirmed is False:
-            logger.info("gate: registry for {} ignored — Bot API confirms not a member",
-                        user_id)
+            logger.info(f"gate: registry for {user_id} ignored — Bot API confirms not a member")
             return False
     return await known_subscriber_in_required_chats(user_id)
 
@@ -253,17 +247,15 @@ async def _fast_membership_check(bot, user_id: int) -> bool | None:
         except TelegramAPIError as exc:
             msg = str(exc)
             if "chat not found" in msg.lower():
-                logger.warning("gate: fast check skipped {} — chat not visible to "
-                               "Bot API (fix CHANNEL_USERNAME/TRACKED_CHAT_IDS)", target)
+                logger.warning(f"gate: fast check skipped {target} — chat not visible to Bot API (fix CHANNEL_USERNAME/TRACKED_CHAT_IDS)")
                 continue
             return None
         status = getattr(member, "status", "")
         if status in ("member", "administrator", "creator"):
             _remember_membership(bot, user_id, cid, "bot-api")
-            logger.info("gate: allow {} (Bot API '{}' in {})", user_id, status, target)
+            logger.info(f"gate: allow {user_id} (Bot API '{status}' in {target})")
             return True
-        logger.info("gate: fast verdict for {}: Bot API '{}' in {} — not a member",
-                    user_id, status, target)
+        logger.info(f"gate: fast verdict for {user_id}: Bot API '{status}' in {target} — not a member")
         return False
     return None
 
@@ -285,8 +277,7 @@ def _remember_membership(bot, user_id: int, cid: str, source: str) -> None:
                 await SubscriberRepository(session).add_membership_sql(
                     user_id, n)
         except Exception as exc:
-            logger.warning("gate: record membership {} ({}) failed: {}",
-                           user_id, source, exc)
+            logger.warning(f"gate: record membership {user_id} ({source}) failed: {exc}")
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
@@ -309,14 +300,14 @@ async def clear_registry_membership(user_id: int) -> None:
                 await session.commit()
         reset_subscribe_cache(int(user_id))
     except Exception as exc:
-        logger.debug("gate: clear registry for {} failed: {}", user_id, exc)
+        logger.debug(f"gate: clear registry for {user_id} failed: {exc}")
 
 async def _live_scan(bot, user_id: int) -> bool:
     try:
         from app.handlers.access import ensure_registry_fresh
         await ensure_registry_fresh(bot, user_id)
     except Exception as exc:
-        logger.warning("gate: live scan fallback failed for {}: {}", user_id, exc)
+        logger.warning(f"gate: live scan fallback failed for {user_id}: {exc}")
     return await known_subscriber_in_db(user_id, bot)
 
 def _fmt_target(cid: str, uname: str) -> str:
@@ -372,15 +363,13 @@ async def is_channel_subscribed(bot, user_id: int) -> bool:
     now = time.monotonic()
     pos = _pos_cache.get(user_id)
     if pos is not None and pos > now:
-        logger.debug("gate: allow {} (positive cache)", user_id)
+        logger.debug(f"gate: allow {user_id} (positive cache)")
         return True
     neg = _neg_cache.get(user_id)
     if neg is not None and neg > now:
-        logger.debug("gate: deny {} (negative cache, TTL {}с)", user_id,
-                     int(_NEG_TTL_SEC))
+        logger.debug(f"gate: deny {user_id} (negative cache, TTL {int(_NEG_TTL_SEC)}с)")
         return False
-    logger.info("gate: checking subscription for {} in chats {}",
-                user_id, [c[0] or c[1] for c in chats])
+    logger.info(f"gate: checking subscription for {user_id} in chats {{[c[0] or c[1] for c in chats]}}")
     fast = await _fast_membership_check(bot, user_id)
     if fast is True:
         if any(u for _, u in chats):
@@ -413,23 +402,17 @@ async def is_channel_subscribed(bot, user_id: int) -> bool:
             except TelegramForbiddenError as exc:
                 api_status[target] = f"FORBIDDEN ({str(exc)[:60]})"
                 if uid_key not in _warned_no_admin:
-                    logger.warning("cannot check subscription for {}: {} — fail-open",
-                                   target, exc)
+                    logger.warning(f"cannot check subscription for {target}: {exc} — fail-open")
                 _notify_no_admin(bot, uid_key)
                 continue
             except TelegramAPIError as exc:
                 msg = str(exc)
                 if "chat not found" in msg.lower():
                     api_status[target] = "CHAT NOT FOUND (bad id/not a public channel/bot not inside)"
-                    logger.error("gate: chat {} not found via Bot API — this id is "
-                                 "NOT usable for subscription checks. Set CHANNEL_USERNAME "
-                                 "(@name of the channel where the bot is an admin) or put "
-                                 "the correct -100... id into TRACKED_CHAT_IDS/CHANNEL_CHAT_ID",
-                                 target)
+                    logger.error(f"gate: chat {target} not found via Bot API — this id is NOT usable for subscription checks. Set CHANNEL_USERNAME (@name of the channel where the bot is an admin) or put the correct -100... id into TRACKED_CHAT_IDS/CHANNEL_CHAT_ID")
                     continue
                 api_status[target] = f"API ERROR {type(exc).__name__}: {msg[:60]}"
-                logger.warning("subscription check failed for {} ({}): skip chat",
-                               target, exc)
+                logger.warning(f"subscription check failed for {target} ({exc}): skip chat")
                 continue
             api_status[target] = getattr(member, "status", "?")
             if member.status in ("member", "administrator", "creator"):
@@ -437,35 +420,26 @@ async def is_channel_subscribed(bot, user_id: int) -> bool:
                     _pos_cache[user_id] = time.monotonic() + SUBSCRIBE_CACHE_SEC
                 _neg_cache.pop(user_id, None)
                 _remember_membership(bot, user_id, cid, "bot-api")
-                logger.info("gate: allow {} (Bot API '{}' in {})",
-                            user_id, member.status, target)
+                logger.info(f"gate: allow {user_id} (Bot API '{member.status}' in {target})")
                 return True
             negative_api = True
     hard_errors = [t for t, v in api_status.items()
                    if str(v).startswith(("FORBIDDEN", "API ERROR"))]
     if hard_errors and not negative_api:
-        logger.warning("gate: API unavailable for {} ({}) — trying MTProto/live scan "
-                       "before any decision; NO fail-open without confirmation",
-                       user_id, api_status)
+        logger.warning(f"gate: API unavailable for {user_id} ({api_status}) — trying MTProto/live scan before any decision; NO fail-open without confirmation")
         if await _mtproto_and_scan_fallback(bot, user_id, chats, api_status):
             return True
-        logger.error("gate: DENY {} — subscription cannot be confirmed via Bot API "
-                     "(chat not found / no access) nor via MTProto/registry. The bot "
-                     "interacts ONLY with confirmed channel members", user_id)
+        logger.error(f"gate: DENY {user_id} — subscription cannot be confirmed via Bot API (chat not found / no access) nor via MTProto/registry. The bot interacts ONLY with confirmed channel members")
         _neg_cache[user_id] = time.monotonic() + _NEG_TTL_SEC
         return False
     if not chats:
-        logger.info("gate: DENY {} — no usable required chats configured ({})",
-                    user_id, api_status or "empty")
+        logger.info(f"gate: DENY {user_id} — no usable required chats configured ({api_status or 'empty'})")
         _neg_cache[user_id] = time.monotonic() + _NEG_TTL_SEC
         return False
     if await _mtproto_and_scan_fallback(bot, user_id, chats, api_status):
         return True
     _neg_cache[user_id] = time.monotonic() + _NEG_TTL_SEC
-    logger.warning(
-        "gate: DENY {} — all sources silent | Bot API: {} | registry: {} "
-        "| MTProto/live-scan: см. строки выше",
-        user_id, api_status, await _registry_row_state(user_id))
+    logger.warning(f"gate: DENY {user_id} — all sources silent | Bot API: {api_status} | registry: {await _registry_row_state(user_id)} | MTProto/live-scan: см. строки выше")
     return False
 
 async def _mtproto_and_scan_fallback(bot, user_id: int,
@@ -473,8 +447,7 @@ async def _mtproto_and_scan_fallback(bot, user_id: int,
                                      api_status: dict[str, str] | None = None,
                                      ) -> bool:
     if await known_subscriber_in_db(user_id, bot):
-        logger.info("gate: allow {} — not visible via Bot API (privacy?) "
-                    "but present in channel_subscribers registry", user_id)
+        logger.info(f"gate: allow {user_id} — not visible via Bot API (privacy?) but present in channel_subscribers registry")
         _pos_cache[user_id] = time.monotonic() + SUBSCRIBE_CACHE_SEC
         return True
     mt_notes: list[str] = []
@@ -491,20 +464,16 @@ async def _mtproto_and_scan_fallback(bot, user_id: int,
             mt_notes.append(f"{mt_target}: молчит ({st})")
             continue
         if st in ("member", "administrator", "creator"):
-            logger.info("gate: allow {} — visible in {} only via MTProto "
-                        "(Bot API said left-ish — privacy?)",
-                        user_id, mt_target)
+            logger.info(f"gate: allow {user_id} — visible in {mt_target} only via MTProto (Bot API said left-ish — privacy?)")
             _pos_cache[user_id] = time.monotonic() + SUBSCRIBE_CACHE_SEC
             _neg_cache.pop(user_id, None)
             _remember_membership(bot, user_id, cid, "mtproto")
             return True
         mt_notes.append(f"{mt_target}: MTProto='{st}'")
     if mt_notes:
-        logger.warning("gate: MTProto probe did not confirm {} ({}); "
-                       "trying live participants scan",
-                       user_id, "; ".join(mt_notes))
+        logger.warning(f"gate: MTProto probe did not confirm {user_id} ({{'; '.join(mt_notes)}}); trying live participants scan")
     if await _live_scan(bot, user_id):
-        logger.info("gate: allow {} — found by live participants scan", user_id)
+        logger.info(f"gate: allow {user_id} — found by live participants scan")
         _pos_cache[user_id] = time.monotonic() + SUBSCRIBE_CACHE_SEC
         return True
     with contextlib.suppress(Exception):
@@ -518,17 +487,12 @@ async def _mtproto_and_scan_fallback(bot, user_id: int,
                 if expect:
                     break
             if expect and seen < max(2, expect // 2):
-                logger.error(
-                    "gate: ⚠️ живой скан собрал только {} из {} участник(ов) — "
-                    "выборка Telethon неполная (PARTICIPANTS_TOO_LARGE/entity/"
-                    "пагинация). Отказ может быть ЛОЖНЫМ: включите показ списка "
-                    "участников в группе или проверьте, что MTProto-аккаунт "
-                    "состоит в чатах", seen, expect)
+                logger.error(f"gate: ⚠️ живой скан собрал только {seen} из {expect} участник(ов) — выборка Telethon неполная (PARTICIPANTS_TOO_LARGE/entity/пагинация). Отказ может быть ЛОЖНЫМ: включите показ списка участников в группе или проверьте, что MTProto-аккаунт состоит в чатах")
     try:
         from app.handlers.access import last_scan_stats as _lss
         seen, total = _lss()
     except Exception as exc:
-        logger.debug("gate: last_scan_stats недоступен: {}", exc)
+        logger.debug(f"gate: last_scan_stats недоступен: {exc}")
         seen = total = None
     gate_last_reason.clear()
     gate_last_reason.update({
@@ -613,7 +577,7 @@ async def _resolve_bot_username(bot) -> str:
         if getattr(me, "username", None):
             resolved = me.username.lower().lstrip("@")
     except Exception as exc:
-        logger.debug("gate: get_me failed (username unknown): {}", exc)
+        logger.debug(f"gate: get_me failed (username unknown): {exc}")
     _BOT_USERNAME_CACHE[key] = resolved
     return resolved
 
@@ -691,10 +655,9 @@ class AccessGateMiddleware(BaseMiddleware):
                     subscribed = True
                 elif verdict is False:
                     await clear_registry_membership(user.id)
-                    logger.info("gate: recheck DENY {} — Bot API says not a "
-                                "member; registry membership cleared", user.id)
+                    logger.info(f"gate: recheck DENY {user.id} — Bot API says not a member; registry membership cleared")
         except Exception:
-            logger.exception("subscription gate crashed for {} — deny (fail-closed)", user.id)
+            logger.exception(f"subscription gate crashed for {user.id} — deny (fail-closed)")
             subscribed = False
 
         if subscribed and (was_locked or recheck):

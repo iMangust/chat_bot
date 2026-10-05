@@ -91,8 +91,7 @@ async def _credit(from_uid: int, chat_id: int, msg_id: int, emoji: str) -> None:
         )
         await session.commit()
         if credited:
-            logger.info("😀 MTProto-реакция зачтена: {}→{} (msg {})",
-                        from_uid, to_user, msg_id)
+            logger.info(f"😀 MTProto-реакция зачтена: {from_uid}→{to_user} (msg {msg_id})")
 
 async def _backfill_channel_post(chat_id: int, msg_id: int) -> int | None:
     try:
@@ -119,8 +118,7 @@ async def _backfill_channel_post(chat_id: int, msg_id: int) -> int | None:
             await session.commit()
         return uid
     except Exception as exc:
-        logger.debug("MTProto backfill post {}:{} failed: {}",
-                     chat_id, msg_id, type(exc).__name__)
+        logger.debug(f"MTProto backfill post {chat_id}:{msg_id} failed: {type(exc).__name__}")
         return None
 
 def _tracked_ids() -> set[int]:
@@ -236,8 +234,7 @@ async def warm_snapshots(client, hours: int = 24) -> int:
                 _SNAPSHOTS[key] = snap
                 primed += 1
         except Exception as exc:
-            logger.debug("MTProto reactions prime {} failed: {}", cid,
-                         type(exc).__name__)
+            logger.debug(f"MTProto reactions prime {cid} failed: {type(exc).__name__}")
     _snapshot_size()
     return primed
 
@@ -253,8 +250,7 @@ async def start_reaction_listener() -> asyncio.Task | None:
     try:
         client = await holder.get()
     except Exception as exc:
-        logger.warning("MTProto reaction listener не запущен: {}: {}",
-                       type(exc).__name__, str(exc)[:160])
+        logger.warning(f"MTProto reaction listener не запущен: {type(exc).__name__}: {str(exc)[:160]}")
         return None
     from telethon import events
 
@@ -263,18 +259,16 @@ async def start_reaction_listener() -> asyncio.Task | None:
         try:
             await _on_raw_update(update)
         except Exception as exc:
-            logger.debug("MTProto reaction event error: {}: {}",
-                         type(exc).__name__, str(exc)[:200])
+            logger.debug(f"MTProto reaction event error: {type(exc).__name__}: {str(exc)[:200]}")
 
     _LISTENER_TASK = asyncio.current_task()
     logger.info("😀 MTProto reaction listener активен (реакции на любые "
                 "сообщения в отслеживаемых чатах засчитываются)")
     try:
         n = await warm_snapshots(client)
-        logger.info("😀 MTProto reactions: baseline снапшотов на {} сообщ.", n)
+        logger.info(f"😀 MTProto reactions: baseline снапшотов на {n} сообщ.")
     except Exception as exc:
-        logger.debug("MTProto reactions prime failed: {}: {}",
-                     type(exc).__name__, str(exc)[:160])
+        logger.debug(f"MTProto reactions prime failed: {type(exc).__name__}: {str(exc)[:160]}")
     return _LISTENER_TASK
 
 async def stop_reaction_listener() -> None:
