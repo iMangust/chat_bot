@@ -83,12 +83,12 @@ def from_iso(value: str | None) -> datetime | None:
 
 
 def offset_hours() -> int:
-    """Часовой пояс пользователей относительно UTC из настроек (по умолчанию Камчатка)."""
+    """Часовой пояс пользователей относительно UTC из настроек (по умолчанию UTC=0)."""
     try:
         from app.config import get_settings
         return int(get_settings().tz_offset_hours)
     except Exception:
-        return 12
+        return 0
 
 
 def user_local(dt: datetime) -> datetime:

@@ -76,15 +76,37 @@ def _session():
 
 # ============================ контроль доступа ============================
 # Панель может слушать 0.0.0.0 (удалённый доступ), поэтому все ручки данных
-# закрыты токеном: без него — 401. Токен = WEBHOOK_SECRET_TOKEN из .env, если
-# он задан и не дефолтный; иначе — BOT_TOKEN. Фронтенд получает его при
-# загрузке страницы (/api/token) и подставляет в заголовок X-Dashboard-Token.
+# закрыты токеном: без него — 401. Фронтенд получает его при загрузке страницы
+# (/api/token, доступен только localhost/allowlist) и подставляет в заголовок
+# X-Dashboard-Token.
+#
+# Безопасность (issue #4): BOT_TOKEN больше НЕ принимается как токен панели —
+# утечка ключа доступа к API Telegram давала бы полный доступ к персональным
+# данным пользователей в БД. Разрешены только явные секреты панели:
+#   1) DASHBOARD_TOKEN (приоритет);
+#   2) WEBHOOK_SECRET_TOKEN — только если задан и отличается от дефолтного.
+# Если ни один не задан, панель генерирует ephemeral-токен на запуске
+# (см. app.web.server.init_dashboard_token) — он выдаётся фронту через
+# /api/token, поэтому локальная панель работает «из коробки», но секрет
+# нигде не хранится в открытом виде и исчезает после рестарта.
+
+DEFAULT_WEBHOOK_SECRET = "change-me-in-env"
+
+# Эфемерный токен, сгенерированный при старте панели (см. server.py).
+_ephemeral_token: str = ""
+
+
+def set_ephemeral_token(value: str) -> None:
+    """Установить сгенерированный при старте ephemeral-токен панели."""
+    global _ephemeral_token
+    _ephemeral_token = value or ""
+
 
 def _api_tokens() -> set[str]:
-    """Допустимые токены панели.
+    """Допустимые токены панели (BOT_TOKEN намеренно исключён).
 
     Приоритет: DASHBOARD_TOKEN (явный токен панели) > WEBHOOK_SECRET_TOKEN
-    (если задан и не дефолтный) > BOT_TOKEN.
+    (если задан и не дефолтный) > ephemeral-токен, сгенерированный при старте.
 
     ВАЖНО: читаем .env НАПРЯМУЮ, а не только кэшированные get_settings():
     settings кешируются lru_cache при первом импорте модуля, и если процесс
@@ -97,7 +119,7 @@ def _api_tokens() -> set[str]:
     env_vals: dict[str, str] = {}
     try:
         from app.web.server import _env_value  # резолвер файла .env
-        for key in ("DASHBOARD_TOKEN", "WEBHOOK_SECRET_TOKEN", "BOT_TOKEN"):
+        for key in ("DASHBOARD_TOKEN", "WEBHOOK_SECRET_TOKEN"):
             v = _env_value(key)
             if v:
                 env_vals[key] = v
@@ -108,18 +130,16 @@ def _api_tokens() -> set[str]:
         settings = get_settings()
         dash = str(getattr(settings, "dashboard_token", "") or "")
         sec = str(getattr(settings, "webhook_secret_token", "") or "")
-        bot = str(getattr(settings, "bot_token", "") or "")
     except Exception:
-        dash = sec = bot = ""
+        dash = sec = ""
     dash = env_vals.get("DASHBOARD_TOKEN") or dash
     sec = env_vals.get("WEBHOOK_SECRET_TOKEN") or sec
-    bot = env_vals.get("BOT_TOKEN") or bot
     if dash:
         toks.add(dash)
-    if sec and sec != "change-me-in-env":
+    if sec and sec != DEFAULT_WEBHOOK_SECRET:
         toks.add(sec)
-    if len(bot) >= 8:
-        toks.add(bot)
+    if _ephemeral_token:
+        toks.add(_ephemeral_token)
     return toks
 
 
@@ -169,7 +189,10 @@ async def _ensure_db() -> None:
 
 
 def require_token(token: str | None) -> None:
-    if not token or token not in _api_tokens():
+    # сравнение через secrets.compare_digest — устойчиво к time-атакам
+    import secrets as _secrets
+    toks = _api_tokens()
+    if not token or not any(_secrets.compare_digest(token, t) for t in toks):
         raise HTTPException(401, "нет доступа: требуется токен панели")
 
 

@@ -1,8 +1,7 @@
+# Compiled/Binary files
 __pycache__/
 *.pyc
-*.pyo
+
+# Environment files
 .env
-*.sqlite3
-*.db
-venv/
-.venv/
+.env.local

@@ -13,7 +13,8 @@ except ImportError:  # pragma: no cover
 
 SECRET_KEYS = {"BOT_TOKEN", "TELEGRAM_PASSWORD", "API_HASH",
                "TELEGRAM_API_HASH", "MTPROTO_SESSION_STRING",
-               "OPENWEATHER_API_KEY", "OPENWEATHER_API_TOKEN"}
+               "OPENWEATHER_API_KEY", "OPENWEATHER_API_TOKEN",
+               "WEBHOOK_SECRET_TOKEN", "DASHBOARD_TOKEN"}
 
 # ключи без поля в Settings (или с длинным именем-полем), которые движок читает
 # напрямую/через алиасы из os.getenv — показываем их на вкладке «Настройки»

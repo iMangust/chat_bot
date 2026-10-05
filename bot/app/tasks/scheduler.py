@@ -21,7 +21,7 @@ from app.services.pet_social import list_friends
 from app.services.tamagotchi import TamagotchiService, compute_mood
 from app.utils.redis import acquire_lock, release_lock
 from app.utils.html_text import esc
-from app.utils.local_time import KAMCHATKA_TZ, localize, now as local_now, offset_hours, user_tz
+from app.utils.local_time import localize, now as local_now, user_tz
 
 async def decay_all_pets(bot: Bot) -> None:
     if not await acquire_lock("decay", ttl_sec=60 * 25):
@@ -364,20 +364,9 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
     # Планировщик живёт в ЛОКАЛЬНОЙ зоне пользователей (TZ_OFFSET_HOURS):
     # в расписании указываются привычные локальные часы (DAILY_REPORT_HOUR и
     # т.п.), а не UTC. Зона берётся из настроек, а не зашита камчатской.
-    from zoneinfo import ZoneInfo
-    tz = None
-    if offset_hours() == 12:
-        try:
-            tz = ZoneInfo("Asia/Kamchatka")
-        except Exception:
-            tz = None
-    if tz is None:
-        try:
-            # APScheduler принимает datetime.timezone напрямую; строку «UTC+12»
-            # он бы пытался открыть как имя зоны tzdata и упал — поэтому объект.
-            tz = user_tz()
-        except Exception:
-            tz = KAMCHATKA_TZ
+    # APScheduler принимает datetime.timezone напрямую; строку «UTC+12»
+    # он бы пытался открыть как имя зоны tzdata и упал — поэтому объект.
+    tz = user_tz()
     sched = AsyncIOScheduler(timezone=tz)
     # job_defaults: coalesce+max_history — если несколько запусков пропускаются
     # (например, тяжёлый MTProto-скан заблокировал цикл событий на минуту),
@@ -397,7 +386,7 @@ def build_scheduler(bot: Bot) -> AsyncIOScheduler:
     sched.add_job(scan_channel_members, "interval",
                   minutes=get_settings().channel_scan_minutes, args=[bot],
                   max_instances=1, coalesce=True, id="chanscan")
-    # 00:15 по Камчатке: к этому моменту локальный день гарантированно сменился
+    # 00:15 по локальному времени (TZ_OFFSET_HOURS): день гарантированно сменился
     sched.add_job(check_streak_expiry, "cron", hour=0, minute=15, args=[bot],
                   id="streaks")
     st = get_settings()

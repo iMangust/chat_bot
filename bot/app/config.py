@@ -185,10 +185,11 @@ class Settings(BaseSettings):
     dashboard_port: int = 8765
     dashboard_allowed_ips: str = ""
     dashboard_trust_proxy: bool = False
-    # Явный токен доступа к API панели (приоритет над WEBHOOK_SECRET_TOKEN/BOT_TOKEN)
+    # Явный токен доступа к API панели (приоритет над WEBHOOK_SECRET_TOKEN;
+    # BOT_TOKEN как токен панели больше не используется — issue #4 аудита)
     dashboard_token: str = ""
 
-    tz_offset_hours: int = 12  # Камчатка (UTC+12); см. Asia/Kamchatka
+    tz_offset_hours: int = 0  # смещение локального времени от UTC (0 = UTC)
     # Часы отправки в ЛОКАЛЬНОМ времени (TZ_OFFSET_HOURS), а не в UTC:
     # раньше назывались *_utc, но планировщик работал в MSK+9 — путаница.
     daily_report_hour: int = 21

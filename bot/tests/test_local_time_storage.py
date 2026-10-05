@@ -1,16 +1,20 @@
-"""Хранение времени в БД = локальное камчатское время.
+"""Хранение времени в БД = локальное время пользователей (TZ_OFFSET_HOURS).
 
 Воспроизводит жалобу из продакшена:
     «В базе сейчас 09:52, хотя на часах 21:52»
 
 Причина: после унификации TZ колонки created_at/last_seen заполнялись
 UTC-моментом (datetime.now(timezone.utc)), а пользователи смотрели в базу
-и видели сдвиг на -12 ч. Исправление: models.utcnow() пишет локальное
-(камчатское) время, db_bound() подаёт границы без сдвига, localize()/from_iso
-считают naive-метки локальными. Тест проверяет инвариант:
+и видели сдвиг на -tz_offset часов. Исправление: models.utcnow() пишет
+локальное время (TZ_OFFSET_HOURS от UTC), db_bound() подаёт границы без
+сдвига, localize()/from_iso считают naive-метки локальными. Тест проверяет
+инвариант:
 
     значение, записанное в created_at, совпадает с локальным временем
-    сервера (Камчатка) с точностью до минут.
+    (TZ_OFFSET_HOURS) с точностью до минут.
+
+Тест фиксирует собственный TZ_OFFSET_HOURS=12 (историческая Камчатка),
+независимо от значений по умолчанию в настройках.
 
 Запуск из каталога bot/:  pytest tests/test_local_time_storage.py -v
 """
@@ -26,6 +30,29 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 KAM_OFFSET = timedelta(hours=12)
+
+
+@pytest.fixture(autouse=True)
+def force_tz_offset_12():
+    """Фиксируем TZ_OFFSET_HOURS=12 для всех тестов этого модуля.
+
+    Дефолт в настройках — UTC (0); тест проверяет инвариант «запись =
+    локальное время» при ненулевом смещении, как в исторической конфигурации
+    (Камчатка).
+    """
+    old = os.environ.get("TZ_OFFSET_HOURS")
+    os.environ["TZ_OFFSET_HOURS"] = "12"
+    from app.config import get_settings
+
+    get_settings.cache_clear()
+    try:
+        yield
+    finally:
+        if old is None:
+            os.environ.pop("TZ_OFFSET_HOURS", None)
+        else:
+            os.environ["TZ_OFFSET_HOURS"] = old
+        get_settings.cache_clear()
 
 
 def _fresh_db_url(tmp_path: Path, name: str) -> str:
