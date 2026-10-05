@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master, dev]
+  pull_request:
+  workflow_dispatch:
+
+# Параллельные запуски одной ветки: отменять предыдущие.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    # Стандартный сервис-контейнер Redis: тесты работают и без него
+    # (mem-fallback), но с ним прогоняются реальные redis-пути локера.
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    defaults:
+      run:
+        working-directory: bot
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: bot/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # Тесты работают на in-memory SQLite и не требуют внешних сервисов,
+      # но Redis поднимается для реалистичного прогона путей redis-локера.
+
+      - name: Compile check (syntax gate — issue #2 аудита)
+        run: python -m compileall -q app alembic scripts
+
+      - name: Run pytest
+        env:
+          # Минимально валидная конфигурация: тесты подменяют настройки сами,
+          # но fail-fast валидатор вебхука (issue #8) не должен сработать.
+          BOT_TOKEN: "test-token"
+          IS_DEV: "true"
+        run: python -m pytest tests -q --tb=short -p no:cacheprovider
+
+  migration-check:
+    name: Alembic migrations apply cleanly (issue #5 аудита)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: bot
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: bot/requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Upgrade fresh SQLite DB to head
+        env:
+          BOT_TOKEN: "test-token"
+          IS_DEV: "true"
+          DATABASE_URL: "sqlite+aiosqlite:///./ci_check.db"
+        run: |
+          python -m alembic upgrade head
+          python -m alembic current
+          python -m alembic downgrade base
+          rm -f ci_check.db
