@@ -25,7 +25,6 @@ from app.keyboards.inline import (
 from app.services.pet_data import SPECIES_START_PRICE
 from app.services.tamagotchi import (
     COOLDOWN_FEED_SEC,
-    COOLDOWN_PLAY_SEC,
     COOLDOWN_TRAIN_SEC,
     COOLDOWN_WASH_SEC,
     DECAY_PER_HOUR,
@@ -34,10 +33,10 @@ from app.services.tamagotchi import (
     PLAY_ENERGY_MIN,
     SLEEP_DEFAULT_HOURS,
     SPECIES_DATA,
-    TamagotchiService,
     TRAIN_ENERGY_MIN,
     WALK_DEFAULT_HOURS,
     WASH_BASE_HYGIENE,
+    TamagotchiService,
     _aware,
     _species_key,
 )

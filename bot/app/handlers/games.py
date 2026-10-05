@@ -51,8 +51,7 @@ from app.handlers.tamagotchi import _deny, set_pet_page
 from app.i18n import t
 from app.keyboards.inline import games_menu, inline_back_kb, pet_hub
 from app.services.achievements import AchievementService
-from app.services.tamagotchi import (COOLDOWN_PLAY_SEC, PLAY_ENERGY_MIN,
-                                  SPECIES_DATA, TamagotchiService, _species_key)
+from app.services.tamagotchi import COOLDOWN_PLAY_SEC, PLAY_ENERGY_MIN, SPECIES_DATA, TamagotchiService, _species_key
 from app.utils.local_time import now as local_now
 from app.utils.safe_edit import safe_edit_or_answer
 

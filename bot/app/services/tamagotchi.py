@@ -86,7 +86,7 @@ CRIT_BLOCK_NOTE = ("Блокирует обычный уход только кр
                    "(❤️=0 И один из статов на нуле) — тогда нужна 💖 реанимация.")
 
 
-def wash_hygiene_gain(svc: "TamagotchiService", pet) -> int:
+def wash_hygiene_gain(svc: TamagotchiService, pet) -> int:
     """🫧 Реальный прирост гигиены за мытьё (для текстов и механики).
 
     Формула идентична ветке начисления в TamagotchiService.wash() — оба
@@ -97,13 +97,13 @@ def wash_hygiene_gain(svc: "TamagotchiService", pet) -> int:
         0.5, 1.0 + svc.gear_bonuses(pet).get("hygiene_wash_pct", 0.0)))
 
 
-def wash_mood_delta(svc: "TamagotchiService", pet) -> int:
+def wash_mood_delta(svc: TamagotchiService, pet) -> int:
     """Изменение 😊 от мытья: −WASH_MOOD_COST + реакция вида + экипировка."""
     return (-WASH_MOOD_COST + species_pref_delta(pet, "wash")
             + svc._gear_happy_flat(pet))
 
 
-def heal_health_gain(svc: "TamagotchiService", pet) -> int:
+def heal_health_gain(svc: TamagotchiService, pet) -> int:
     """❤️ Реальный прирост здоровья за лечение (формула как в heal())."""
     return round(HEAL_BASE_HEALTH * max(
         0.5, 1.0 + svc.gear_bonuses(pet).get("heal_boost", 0.0)))
