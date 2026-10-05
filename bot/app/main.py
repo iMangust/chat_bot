@@ -692,16 +692,42 @@ async def _stamp_head_if_missing(conn) -> None:
 
 
 async def on_startup(bot: Bot) -> None:
+    # Каждая фаза изолирована: отказ одной миграции/сида не должен срывать
+    # остальные (например, битая таблица channel_subscribers не мешает
+    # зарегистрировать команды бота и засидировать каталог). Ошибки логируются
+    # — молчаливое подавление запрещено.
+    startup_steps = (
+        ("создание схемы и лёгких миграций", _startup_schema_phase),
+        ("самолечение таблицы events", lambda: ensure_events_table(engine)),
+        ("миграция v2.0 подписчиков каналов",
+         lambda: _migrate_channel_subscribers_v20(engine)),
+        ("бэкфилл чатов подписчиков v2.0.2",
+         lambda: _backfill_subscriber_chats_v202(engine)),
+        ("посев справочников (достижения/предметы/мерч)", _startup_seed_phase),
+        ("синхронизация команд бота", lambda: _sync_bot_commands(bot)),
+    )
+    failed: list[str] = []
+    for name, step in startup_steps:
+        try:
+            await step()
+        except Exception as exc:
+            failed.append(name)
+            logger.error("фаза запуска '{}' завершилась с ошибкой: {}: {}",
+                         name, type(exc).__name__, str(exc)[:300])
+    if failed:
+        logger.warning("запуск продолжен с {} неудачной(ми) фазой(ями): {}",
+                       len(failed), "; ".join(failed))
+
+
+async def _startup_schema_phase() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await _light_migrations(conn)
         await _stamp_head_if_missing(conn)
-    # Самолечение «мертвой» кнопки «Мероприятия»: в старых/битых БД таблицы
-    # events может не быть вовсе (SELECT падает с OperationalError).
-    await ensure_events_table(engine)
+
+
+async def _startup_seed_phase() -> None:
     await _renumber_merch_category_codes(engine)
-    await _migrate_channel_subscribers_v20(engine)
-    await _backfill_subscriber_chats_v202(engine)
     async with session_factory() as session:
         await seed_achievements(session)
         await seed_items(session)
@@ -709,6 +735,9 @@ async def on_startup(bot: Bot) -> None:
         if seeded:
             logger.info("merch catalog seeded: {} variants", seeded)
         await session.commit()
+
+
+async def _sync_bot_commands(bot: Bot) -> None:
     await bot.delete_my_commands()
     await bot.delete_my_commands(scope=BotCommandScopeAllGroupChats())
     await bot.delete_my_commands(scope=BotCommandScopeAllChatAdministrators())
