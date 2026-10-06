@@ -224,6 +224,17 @@ def stats_guide_text() -> str:
     L.append(f"  более {_num(d['boredom_hours'])} часов — однократный штраф")
     L.append(f"  −{_num(d['boredom_penalty'])} 😊 («скука»). Корми, играй, гуляй —")
     L.append("  и таймер обнулится.")
+    L.append("")
+    L.append("<b>🗓 Сезоны</b> — общие поправки действуют на <i>всех</i>,")
+    L.append("  но у каждого вида есть свои видовые плюсы и минусы:")
+    for note in all_season_notes():
+        L.append(f"  • {note}")
+    sh = [sp["emoji"] + " " + sp["title"]
+          for _c, sp in SPECIES_DATA.items()
+          if species_season_notes(_c)]
+    if sh:
+        L.append("  Видовые поправки (поверх общих, перемножаются) есть у: ")
+        L.append("  " + ", ".join(sh) + " — смотри карточку своего вида.")
     return sanitize_html("\n".join(L))
 
 
@@ -272,30 +283,55 @@ def games_guide_text() -> str:
 
 # ── Карточка вида ──────────────────────────────────────────────────────────
 
-def species_season_notes(code: str) -> list[str]:
-    """Сезонные поправки к падению статов — честно из SEASON_DECAY_MULT.
+def _stat_label(stat_key: str) -> str:
+    return STAT_EMOJI.get({"happy": "happiness", "energy": "energy"}.get(
+        stat_key, stat_key), stat_key)
 
-    Множитель >1 = стат «тратится» быстрее; <1 = медленнее. Весна отдельно:
-    её коэффициент happiness живёт в SPRING_ALL_HAPPY_MULT, а не в словаре.
+
+def all_season_notes() -> list[str]:
+    """Базовые сезонные поправки, действующие на всех питомцев.
+
+    Единственный источник правды для раздела «Сезоны»: экран «📊 Показатели»
+    и карточки видов берут строки отсюда. Множитель >1 = стат тратится
+    быстрее; <1 = медленнее. Весна отдельно: её коэффициент happiness живёт
+    в SPRING_ALL_HAPPY_MULT, а не в словаре. Видовые надбавки
+    (SPECIES_SEASON_DECAY_MULT) перемножаются с базой в runtime
+    (tamagotchi.season_decay_mult) — их печатает species_season_notes().
     """
     notes: list[str] = []
-    for season, mods in SEASON_DECAY_MULT.items():
-        for stat_key, mult in sorted(mods.items()):
-            label = STAT_EMOJI.get({"happy": "happiness"}.get(stat_key, stat_key),
-                                   stat_key)
+    for season in ("winter", "summer", "autumn"):
+        for stat_key, mult in sorted(SEASON_DECAY_MULT.get(season, {}).items()):
+            label = _stat_label(stat_key)
             verdict = "быстрее" if mult > 1 else "медленнее"
             notes.append(f"{SEASON_RU[season]}: {label} падает {verdict} "
-                         f"(×{_num(mult)}, у всех)")
+                         f"(×{_num(mult)})")
     _sp_m = SPRING_ALL_HAPPY_MULT
-    notes.append(f"🌸 весну: 😊 грустнеет {'быстрее' if _sp_m > 1 else 'медленнее'} "
-                 f"(×{_num(_sp_m)}, у всех)")
+    notes.append(f"{SEASON_RU['spring']}: 😊 грустнеет "
+                 f"{'быстрее' if _sp_m > 1 else 'медленнее'} (×{_num(_sp_m)})")
+    return notes
+
+
+def species_season_notes(code: str) -> list[str]:
+    """Видовые сезонные надбавки поверх общих (SPECIES_SEASON_DECAY_MULT).
+
+    Пусто, если у вида персональных сезонных эффектов нет. Эти множители в
+    runtime УМНОЖАЮТ общие сезонные коэффициенты (см. season_decay_mult),
+    поэтому в карточке вида показываем итоговый коэффициент: база × надбавка.
+    """
+    notes: list[str] = []
     for season, mods in sorted(SPECIES_SEASON_DECAY_MULT.get(code, {}).items()):
         for stat_key, mult in sorted(mods.items()):
-            label = STAT_EMOJI.get({"happy": "happiness"}.get(stat_key, stat_key),
-                                   stat_key)
-            verdict = f"{label} тратится быстрее" if mult > 1 \
+            label = _stat_label(stat_key)
+            base = SEASON_DECAY_MULT.get(season, {}).get(stat_key, 1.0)
+            if season == "spring" and stat_key == "happy":
+                base *= SPRING_ALL_HAPPY_MULT
+            total = base * mult
+            verdict = f"{label} тратится быстрее" if total > 1 \
                 else f"{label} бережётся"
-            notes.append(f"{SEASON_RU[season]} (этот вид): ×{_num(mult)} — {verdict}")
+            extra = "" if abs(base - 1.0) < 0.005 else \
+                f" (с учётом общего ×{_num(base)})"
+            notes.append(f"{SEASON_RU[season]} (этот вид): ×{_num(total)} — "
+                         f"{verdict}{extra}")
     return notes
 
 
@@ -469,7 +505,9 @@ def species_text(code: str) -> str | None:
 
     notes = species_season_notes(code)
     if notes:
-        L.append("<b>Сезоны</b>")
+        L.append("<b>Сезоны (видовые поправки)</b>")
+        L.append("  Общие сезоны действуют на всех питомцев — они в «📊 Показатели».")
+        L.append("  Здесь — надбавки именно этого вида (умножаются на общие):")
         seen = set()
         for n in sorted(notes):
             if n in seen:

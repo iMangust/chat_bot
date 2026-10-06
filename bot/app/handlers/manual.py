@@ -24,15 +24,20 @@ router = Router(name="manual")
 # ── 📖 Гид по уходу ────────────────────────────────────────────────────────
 
 def _manual_home_kb(chat_id: int | None = None) -> InlineKeyboardMarkup:
+    # Ровная сетка 2×N: кнопки всегда по ДВЕ в ряд. Виды парами
+    # (котёнок/щенок, лисёнок/шиншилла, совёнок/дракончик), затем служебные
+    # экраны той же сеткой («📊 Показатели» + «🎮 Как устроены игры» одной
+    # строкой). Навигация with_nav() добавляется ПОСЛЕ adjust(2): append_nav
+    # вызывает .row(), который фиксирует уже набранные кнопки как готовый
+    # ряд — если вызвать adjust в конце, одиночные .row() между кнопками
+    # оставят ряды разной ширины и сетка «съедет».
     b = InlineKeyboardBuilder()
     for code, sp in pet_manual.SPECIES_DATA.items():
         b.button(text=f"{sp['emoji']} {sp['title']}",
                  callback_data=f"manual:species:{code}")
-    b.adjust(2)
-    b.row()
     b.button(text="📊 Показатели: как качать", callback_data="manual:stats")
-    b.row()
     b.button(text="🎮 Как устроены игры", callback_data="manual:games")
+    b.adjust(2)
     with_nav(b, "manual", chat_id)
     return b.as_markup()
 

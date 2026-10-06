@@ -89,39 +89,93 @@ def invite_link_for(tg_id: int) -> str:
         return ""
     return f"https://t.me/{ch}?start=invite_{tg_id}"
 
-def _main_menu_text(user, page: int = 0) -> str:
+def _main_menu_text(user, page: int = 0, pet_line: str = "") -> str:
     from app import themes
 
     need = xp_needed_for_level(user.level)
-    bar = progress_bar(user.xp, need)
     ch, visual = channel_link()
     title, _actions = MENU_PAGES[page % len(MENU_PAGES)]
-    # Тема оформления (например «🦇 Готика») может полностью заменять текст меню
-    themed = themes.main_menu_renders(
-        title=title, name=_html.escape(user.first_name or ''),
-        level=user.level, bar=bar, xp=user.xp, need=need,
-        coins=user.coins, streak=user.streak_days)
+
+    # Живые подстановки в канонический шаблон (themes.standard_main_menu_std):
+    # имя в приветствии, показатели, карточка питомца. Канон — единственный
+    # источник правды для текста меню: живой рендер, готический шаблон и
+    # перекраска старых сообщений (settings._main_menu_text_from_buttons)
+    # собираются из него, поэтому здесь больше нет продублированного списка
+    # строк (раньше копия устаревала при каждом изменении меню — мерч, строка
+    # питомца). Показатели передаются ОТДЕЛЬНЫМИ значениями (level/bar/xp/…,
+    # а не готовой строкой stats): тогда готическая замена «ступень/Капли
+    # крови» происходит в шаблоне до format() и гарантированно попадает в
+    # вывод обеих тем.
+    need = xp_needed_for_level(user.level)
+    subs = {
+        "title": title,
+        "name": _html.escape(user.first_name or ''),
+        "level": user.level,
+        "bar": progress_bar(user.xp, need),
+        "xp": user.xp,
+        "need": need,
+        "coins": user.coins,
+        "streak": user.streak_days,
+    }
+    std_text = themes.standard_main_menu_std().format(
+        **subs, pet=(pet_line or "• 🥚 Питомца пока нет — заведи его в «🐾 Питомец»: "
+                            "с ним XP и монеты капают быстрее"))
+
+    # Тема оформления (например «🦇 Готика») может полностью заменять текст
+    # меню. В готический шаблон передаём те же живые значения — иначе
+    # «ступень/Капли крови» исчезнут из готики (регрессия после перевода
+    # шаблонов на канон standard_main_menu_std(); тест
+    # test_set_theme_gothic_persists_and_recolors_menu).
+    themed = themes.main_menu_renders(pet_line=pet_line, **subs)
     if themed is not None:
-        if ch:
+        if ch and "📢 Новости канала:" in std_text:
             themed += f"\n\n🔔 Новости склепа: {visual} (t.me/{ch})"
         return themed
-    lines = [
-        f"🏠 <b>Главное меню · {title}</b>\n",
-        f"👤 {_html.escape(user.first_name or '')}, уровень {user.level} · {bar} {user.xp}/{need} XP",
-        f"🪙 Монеты: {user.coins} · 🔥 Серия: {user.streak_days} дн.",
-        "",
-        "📌 Что делать:",
-        "• 🐾 Зайди к питомцу — покорми его (голод никуда не делся!)",
-        "• 🌦️ Загляни в /weather — от живой погоды Камчатки зависят прогулки:",
-        "   солнце = +находки и 😊 Счастье, дождь/мороз = риск простуды",
-        "• 💬 Напиши в чат — засчитывается текст, фото, голос, кружок, стикер",
-        "• ❤️ Ставь реакции — за них тоже капает XP",
-        "• 🛒 Копи монеты — магазин (в «🐾 Питомец» → «🎒 Вещи») и мерч уже ждут",
-        "• ⚔️ Попробуй Арену — еженедельные дуэли питомцев за призы",
-    ]
-    if ch:
-        lines += ["", f"📢 Новости канала: {visual} (t.me/{ch})"]
-    return "\n".join(lines)
+    return std_text
+
+
+async def _main_menu_pet_line(session: AsyncSession, user) -> str:
+    """Короткая карточка текущего питомца для главного меню.
+
+    Одна-две строки: кто, какого уровня, настроение и мини-полоски статов.
+    apply_decay вызывается только в памяти (без commit) — меню не двигает
+    состояние БД, реальный распад применится на экране питомца.
+    """
+    try:
+        pet = await PetRepository(session).get_by_user(user.tg_id)
+        if pet is None:
+            return ("• 🥚 Питомца пока нет — заведи его в «🐾 Питомец»: "
+                    "с ним XP и монеты капают быстрее")
+        from app.services import tamagotchi as tg
+        with contextlib.suppress(Exception):
+            await tg.TamagotchiService().apply_decay(pet)
+        sp = SPECIES_DATA.get(getattr(pet.species, "value", ""), {})
+        emoji = sp.get("emoji", "🐾")
+        mood = tg.compute_mood(pet)
+        hint = {
+            "hungry": "проголодался — покорми!",
+            "sad": "грустит — удели внимание",
+            "sick": "болеет — нужна аптечка 💊",
+            "sleeping": "спит 💤 — не буди",
+            "ok": "всё ровно, но стоит поиграть",
+            "good": "в хорошем настроении",
+            "great": "счастлив как никогда ✨",
+        }.get(mood, "")
+        line1 = (f"• {emoji} <b>{_html.escape(pet.name)}</b> — "
+                 f"{sp.get('title', 'питомец')}, ур. {pet.level}")
+        if hint:
+            line1 += f": {hint}"
+        stats = (f"    🍎{round(pet.hunger)} · 😊{round(pet.happiness)} · "
+                 f"⚡{round(pet.energy)} · 🫧{round(pet.hygiene)}")
+        return line1 + "\n" + stats
+    except Exception as exc:
+        logger.debug(f"Главное меню: карточка питомца недоступна: {exc}")
+        return ""
+
+
+async def main_menu_text(session: AsyncSession, user, page: int = 0) -> str:
+    """Главное меню + актуальная строка питомца (для всех точек показа)."""
+    return _main_menu_text(user, page, await _main_menu_pet_line(session, user))
 
 private_only = F.chat.type == "private"
 
@@ -205,7 +259,7 @@ async def cmd_start(message: Message, state: FSMContext, session: AsyncSession,
         handled = await _handle_nav_payload(payload, message, session)
         if handled:
             return
-    text = _main_menu_text(user)
+    text = await main_menu_text(session, user)
     await message.answer(text, reply_markup=await _menu_markup(
         link=link, reward=reward, is_admin=_menu_is_admin(message.from_user.id)),
         parse_mode="HTML")
@@ -294,7 +348,7 @@ async def cb_gate_check(cb: CallbackQuery, bot: Bot, session: AsyncSession,
     user = await users.get_or_create(cb.from_user.id, cb.from_user.first_name or "",
                                      cb.from_user.username)
     await safe_edit_or_answer(
-        cb.message, _main_menu_text(user),
+        cb.message, await main_menu_text(session, user),
         reply_markup=await _menu_markup(link=invite_link_for(user.tg_id),
                                         reward=get_settings().invite_reward_coins))
     await cb.answer("Ура, добро пожаловать! 🎉")
@@ -317,7 +371,7 @@ async def cb_onboard_start(cb: CallbackQuery, state: FSMContext,
     user = await users.get_or_create(cb.from_user.id, cb.from_user.first_name or "",
                                      cb.from_user.username)
     if user.onboarded:
-        await safe_edit_or_answer(cb.message, _main_menu_text(user),
+        await safe_edit_or_answer(cb.message, await main_menu_text(session, user),
                                   reply_markup=await _menu_markup(
                                       link=invite_link_for(user.tg_id),
                                       reward=get_settings().invite_reward_coins))
@@ -553,7 +607,9 @@ async def _render_main_menu(cb: CallbackQuery, session: AsyncSession,
     # меню тоже нет: усыновление — внутри раздела питомца («🐾 Питомец» → хаб),
     # где без питомца показывается экран с предложением завести его.
     page %= len(MENU_PAGES) + (1 if _menu_is_admin(cb.from_user.id) else 0)
-    await safe_edit_or_answer(cb.message, _main_menu_text(user, min(page, len(MENU_PAGES) - 1)),
+    await safe_edit_or_answer(cb.message,
+                              await main_menu_text(
+                                  session, user, min(page, len(MENU_PAGES) - 1)),
                               reply_markup=await _menu_markup(
                                   link=link, reward=reward, page=page,
                                   is_admin=_menu_is_admin(cb.from_user.id)))

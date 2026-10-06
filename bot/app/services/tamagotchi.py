@@ -33,8 +33,21 @@ SEASON_DECAY_MULT = {
 }
 SPRING_ALL_HAPPY_MULT = 0.8
 
+# Видовые сезонные поправки: перемножаются с общими SEASON_DECAY_MULT
+# (см. season_decay_mult). У каждого питомца свои плюсы и минусы по сезонам.
 SPECIES_SEASON_DECAY_MULT = {
+    # пушистый теплолюбивый котёнок: зимой мёрзнет, летом цветёт
+    "cat":        {"winter": {"energy": 1.25}, "summer": {"energy": 0.8}},
+    # щенок обожает прохладу: летом быстрее устаёт, зимой бодряк
+    "dog":        {"summer": {"energy": 1.3}, "winter": {"hunger": 1.15}},
+    # лисёнок — северный зверёк: жару переносит тяжело, зиму любит
+    "fox":        {"summer": {"happy": 1.3}, "winter": {"happy": 0.8}},
+    # шиншилла: густой подшёрсток — грустнеет от жары, зиму бережётся
     "chinchilla": {"summer": {"happy": 1.4}, "winter": {"happy": 0.7}},
+    # совёнок — ночной и холодолюбивый: летний день выбивает из сил
+    "owl":        {"summer": {"energy": 1.35}, "winter": {"hygiene": 0.8}},
+    # дракончик — дитя огня: зимой стынет, летом купается в стихии
+    "dragon":     {"winter": {"energy": 1.5}, "summer": {"hygiene": 1.2, "energy": 0.8}},
 }
 
 def season_decay_mult(season: str, stat_key: str, species: str = "") -> float:

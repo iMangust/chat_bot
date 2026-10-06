@@ -150,24 +150,60 @@ def _main_menu_text_from_buttons(kb) -> str | None:
             break
     if title is None:
         return None
-    lines = [
-        "• 🐾 Зайди к питомцу — покорми его (голод никуда не делся!)",
-        "• 🌦️ Загляни в /weather — от живой погоды Камчатки зависят прогулки:",
-        "   солнце = +находки и 😊 Счастье, дождь/мороз = риск простуды",
-        "• 💬 Напиши в чат — засчитывается текст, фото, голос, кружок, стикер",
-        "• ❤️ Ставь реакции — за них тоже капает XP",
-        "• 🛒 Копи монеты — магазин (в «🐾 Питомец» → «🎒 Вещи») и мерч уже ждут",
-        "• ⚔️ Попробуй Арену — еженедельные дуэли питомцев за призы",
-    ]
-    body = "\n".join(lines)
-    ch_line = ""
-    with contextlib.suppress(Exception):
-        from app.handlers.start import channel_link
-        ch, visual = channel_link()
-        if ch:
-            ch_line = f"\n\n📢 Новости канала: {visual} (t.me/{ch})"
-    return (f"🏠 <b>Главное меню · {title}</b>\n\n"
-            "{stats}\n\n📌 Что делать:\n" + body + ch_line)
+    from app import themes
+    # Канон текста — в themes.standard_main_menu_std(); здесь только восстановление
+    # заголовка по кнопке «menu:noop». Раньше список «Что делать» был скопирован
+    # вручную и устаревал при изменении меню (мерч убран, добавлена строка
+    # питомца) — при перекраске старых сообщений пользователь видел прошлый ликбез.
+    text = themes.standard_main_menu_std().replace("{title}", title)
+    # standard_main_menu_std уже содержит заголовок/строки показателей/ликбез/
+    # строку канала. Маркер строки питомца {pet} убираем: при перекраске у нас
+    # нет данных о питомце, а живой рендер (/start, «🏠 Домой») подставит его
+    # сам. Оставлять "{pet}" нельзя — он дожил бы до пользователя как сырой
+    # шаблон (main_menu_renders подставляет {pet} только на живом рендере).
+    text = "\n".join(ln for ln in text.splitlines() if ln.strip() != "{pet}")
+    # Маркеры показателей («👤 {name}, уровень {level} …», «🪙 Монеты: {coins}
+    # …») заменяем сохранённой строкой статистики из старого сообщения: дампа
+    # отдельных значений нет, но исходный текст «уровень/XP/монеты» мы видим.
+    stats_line = _extract_stats_line(text)
+    if stats_line is not None:
+        text = "\n".join(
+            ln for ln in text.splitlines()
+            if not ln.startswith("👤 {name},") and not ln.startswith("🪙 Монеты:")
+        )
+        text = text.replace("\n\n\n", "\n\n")  # не плодить пустые строки
+        marker_pos = text.find("🐾 Твой питомец:")
+        if marker_pos != -1:
+            head = text[:marker_pos].rstrip("\n")
+            text = f"{head}\n{stats_line}\n\n{text[marker_pos:]}"
+    # Маркер приветствия {name}: имя автора сообщения недоступно (в дампе
+    # клавиатуры его нет), поэтому подставляем нейтральное обращение — иначе
+    # сырой "{name}" дожил бы до пользователя. В сохранённой строке
+    # статистики имя тоже неизвестно — там остаётся «друг».
+    text = text.replace("{name}", "друг")
+    return text
+
+
+def _extract_stats_line(text: str) -> str | None:
+    """Вытаскивает из старого текста меню строку «👤 … XP» (+ «🪙 …»).
+
+    Возвращает восстановленную стандартную пару строк показателей или None,
+    если сообщение слишком старое/битое (тогда маркеры шаблона чищаются
+    заменой {name} и пользователь увидит меню без показателей, но без
+    сырых «{level}»).
+    """
+    import re
+    m_lvl = re.search(r"Уровень\s+(\d+).*?(\d+)/(\d+)\s*XP", text)
+    m_coin = re.search(r"(?:Монеты|Капли крови)[:\s]*(\d+)", text)
+    m_streak = re.search(r"(?:Серия|Свеча горит)[:\s]*(\d+)\s*дн", text)
+    if not (m_lvl and m_coin):
+        return None
+    bar_m = re.search(r"[▰▱]{10}", text)
+    bar = bar_m.group(0) if bar_m else ""
+    lvl, xp, need = m_lvl.group(1), m_lvl.group(2), m_lvl.group(3)
+    streak = m_streak.group(1) if m_streak else "0"
+    return (f"👤 друг, уровень {lvl} · {bar} {xp}/{need} XP\n"
+            f"🪙 Монеты: {m_coin.group(1)} · 🔥 Серия: {streak} дн.")
 
 
 def _detect_screen(cbs: list[str]) -> str | None:

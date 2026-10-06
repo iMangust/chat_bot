@@ -247,3 +247,90 @@ def _species_cases():
     from app.services import pet_data
 
     return sorted(pet_data.SPECIES_DATA.items())
+
+
+def test_manual_home_keyboard_is_two_buttons_per_row():
+    """Экран гида — ровная сетка «по две кнопки в ряд».
+
+    Регрессия на жалобу «кнопки съезжают»: раньше между кнопками стояли
+    одиночные .row(), а adjust(2) вызывался после них, и фиксированные
+    ряды ломали сетку (Показатели/Игры шли отдельными строками). Порядок
+    теперь: все кнопки → adjust(2) → навигация своим .row().
+    """
+    from app.handlers import manual as manual_h
+
+    rows = [[b.text for b in r]
+            for r in manual_h._manual_home_kb(chat_id=None).inline_keyboard]
+    # первые четыре ряда — ровно по две кнопки
+    assert all(len(r) == 2 for r in rows[:4]), f"сетка сломана: {rows}"
+    pairs = [tuple(r) for r in rows[:4]]
+    assert ("🐱 Котёнок", "🐶 Щенок") in pairs
+    assert ("🦊 Лисёнок", "🐭 Шиншилла") in pairs
+    assert ("🦉 Совёнок", "🐉 Дракончик") in pairs
+    # Служебные экраны — одной строкой в той же сетке. Навигация («🏠 Домой»)
+    # добавляется with_nav() своим .row() ПОСЛЕ adjust(2) и не должна
+    # подменяться: проверили на первых рядах, навигация — последний ряд.
+    nav = rows[-1]
+    assert any("Домой" in t or "Меню" in t for t in nav), \
+        f"нет навигационной строки: {rows}"
+    assert any(any("Показатели" in t for t in r) and
+               any("игры" in t.lower() for t in r) for r in rows[:4]), \
+        f"нет пары служебных кнопок: {rows}"
+
+
+def test_seasons_apply_to_every_species():
+    """Сезоны влияют на ВСЕХ питомцев, и у каждого вида свои плюсы/минусы.
+
+    Регрессия на жалобы «сезоны действуют лишь на отдельных видов» и
+    «у всех одинаково»: базовые сезонные коэффициенты из
+    SEASON_DECAY_MULT/SPRING_ALL_HAPPY_MULT применяются к каждому виду, а
+    SPECIES_SEASON_DECAY_MULT добавляет персональные поправки (перемножаются
+    в runtime — см. tamagotchi.season_decay_mult). Итог: ни один вид не
+    остаётся без сезонных эффектов, и все шесть ощущают сезоны по-разному.
+    """
+    import pytest
+
+    from app.services import pet_manual as pm
+    from app.services.pet_data import SPECIES_DATA
+    from app.services.tamagotchi import (
+        SEASON_DECAY_MULT,
+        SPECIES_SEASON_DECAY_MULT,
+        SPRING_ALL_HAPPY_MULT,
+        season_decay_mult,
+    )
+
+    all_species = list(SPECIES_DATA.keys())
+    assert all_species, "SPECIES_DATA пуст"
+
+    # 1) Базовые эффекты сезона доходят до каждого вида: там, где у вида
+    #    нет поправки на эту пару (сезон, стат), итог равен базе; там, где
+    #    есть — база перемножается с видовой надбавкой.
+    for code in all_species:
+        for season, stat_key in (("winter", "energy"), ("summer", "hygiene"),
+                                 ("autumn", "happy")):
+            base = SEASON_DECAY_MULT[season][stat_key]
+            extra = SPECIES_SEASON_DECAY_MULT.get(code, {}) \
+                .get(season, {}).get(stat_key, 1.0)
+            assert season_decay_mult(season, stat_key, code) == pytest.approx(
+                base * extra)
+        assert season_decay_mult("spring", "happy", code) == pytest.approx(
+            SPRING_ALL_HAPPY_MULT)
+
+    # 2) У КАЖДОГО вида есть персональные сезонные поправки (не только у
+    #    шиншиллы) — сезоны ощущаются всеми по-разному.
+    for code in all_species:
+        assert code in SPECIES_SEASON_DECAY_MULT, f"{code} без видовых сезонов"
+        assert pm.species_season_notes(code), f"{code}: гид молчит о сезонах"
+
+    # 3) Гид честно это описывает: список общих сезонов + строка про видовые
+    #    различия на экране «Показатели», в карточке вида — его поправки.
+    stats = pm.stats_guide_text()
+    assert "Сезоны" in stats and "всех" in stats
+    for note in pm.all_season_notes():
+        assert note.split(":")[0] in stats
+    for code in all_species:
+        card = pm.species_text(code)
+        for n in pm.species_season_notes(code):
+            assert n.split(" (")[0] in card or n in card
+        if not pm.species_season_notes(code):
+            assert "Сезоны (видовые поправки)" not in card
