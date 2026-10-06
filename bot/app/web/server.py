@@ -7,6 +7,7 @@ import os
 import re
 import secrets
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -18,7 +19,24 @@ logger = logging.getLogger(__name__)
 
 WEB_DIR = Path(__file__).resolve().parent
 
-app = FastAPI(title="TamaBot Control Panel", docs_url=None, redoc_url=None)
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Если явный токен панели не настроен — сгенерировать ephemeral-токен.
+    # Панель продолжит работать «из коробки» (фронт получает токен через
+    # /api/token, закрытый localhost/allowlist), но токен не хранится в .env
+    # и не совпадает с BOT_TOKEN: его нельзя угадать по конфигу бота, и после
+    # рестарта он меняется.
+    if not _has_configured_panel_token():
+        tok = secrets.token_urlsafe(32)
+        set_ephemeral_token(tok)
+        logger.info("Панель: DASHBOARD_TOKEN/WEBHOOK_SECRET_TOKEN не заданы — "
+                    "используется ephemeral-токен, сгенерированный при старте")
+    yield
+
+
+app = FastAPI(title="TamaBot Control Panel", docs_url=None, redoc_url=None,
+              lifespan=lifespan)
 
 # Статика панели (/static/data_views.js и т.д.). Без этого mount браузер
 # получал 404 на data_views.js — все вкладки с данными оставались пустыми.
@@ -53,21 +71,6 @@ def _has_configured_panel_token() -> bool:
             return True
     return False
 
-
-@app.on_event("startup")
-async def init_dashboard_token() -> None:
-    """Если явный токен панели не настроен — сгенерировать ephemeral-токен.
-
-    Панель продолжит работать «из коробки» (фронт получает токен через
-    /api/token, закрытый localhost/allowlist), но токен не хранится в .env
-    и не совпадает с BOT_TOKEN: его нельзя угадать по конфигу бота, и после
-    рестарта он меняется.
-    """
-    if not _has_configured_panel_token():
-        tok = secrets.token_urlsafe(32)
-        set_ephemeral_token(tok)
-        logger.info("Панель: DASHBOARD_TOKEN/WEBHOOK_SECRET_TOKEN не заданы — "
-                    "используется ephemeral-токен, сгенерированный при старте")
 
 LOCALHOST_IPS = {"127.0.0.1", "::1"}
 # Пустой DASHBOARD_ALLOWED_IPS = доступ только с localhost (см. _parse_allowed)

@@ -28,6 +28,11 @@ async def are_friends(session: AsyncSession, a_id: int, b_id: int) -> bool:
 
 MAX_FRIENDS = 5
 
+# 😊 обоим питомцам при знакомстве — константа, чтобы тексты (pet_manual)
+# печатали реальное значение, а не литерал.
+FRIEND_MAKE_HAPPY = 3
+
+
 async def make_friends(session: AsyncSession, pet: Pet, other: Pet) -> tuple[bool, str]:
     if pet.id == other.id:
         return False, "Нельзя подружить питомца с самим собой 🙂"
@@ -41,8 +46,8 @@ async def make_friends(session: AsyncSession, pet: Pet, other: Pet) -> tuple[boo
         return False, f"У {other.name} уже {MAX_FRIENDS} друзей — максимум!"
     session.add(PetFriend(pet_id=pet.id, friend_pet_id=other.id))
     session.add(PetFriend(pet_id=other.id, friend_pet_id=pet.id))
-    pet.happiness = min(100.0, pet.happiness + 3)
-    other.happiness = min(100.0, other.happiness + 3)
+    pet.happiness = min(100.0, pet.happiness + FRIEND_MAKE_HAPPY)
+    other.happiness = min(100.0, other.happiness + FRIEND_MAKE_HAPPY)
     return True, f"💞 {pet.name} и {other.name} теперь друзья!"
 
 async def unfriend(session: AsyncSession, pet_id: int, other_id: int) -> None:

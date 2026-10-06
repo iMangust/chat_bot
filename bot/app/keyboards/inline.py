@@ -54,7 +54,9 @@ class _ThemedInlineKeyboardButton(_IKB):
     # — достаточно переписать ему text под активную тему.
     @classmethod
     def __get_pydantic_core_schema__(cls, source_type, handler):
-        schema = super().__get_pydantic_core_schema__(source_type, handler)
+        # Pydantic >= 2.11: super() вызывает deprecated-метод BaseModel;
+        # правильный способ получить базовую схему класса — handler(source).
+        schema = handler(source_type)
         from pydantic_core import core_schema as cs
 
         def _retheme(v, _info):

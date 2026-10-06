@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import secrets
 from datetime import datetime, timedelta
 
 from loguru import logger
@@ -69,6 +70,23 @@ COOLDOWN_FEED_SEC = 60      # перерыв между кормлениями
 COOLDOWN_WASH_SEC = 300     # мыться можно раз в 5 минут
 COOLDOWN_PLAY_SEC = 120     # «питомец запыхался» между играми
 COOLDOWN_TRAIN_SEC = 180    # перерыв между тренировками
+# Цены действий в статах. Тексты (pet_manual, HELP_TEXT, экраны handlers)
+# обязаны печатать эти значения, а не литералы — иначе справка расходится
+# с механикой (исторический баг: в экране тренировок было «15 энергии»,
+# хотя train() списывает TRAIN_COST_ENERGY=10).
+PLAY_COST_ENERGY = 6        # ⚡ трата за одну игру
+PLAY_COST_HYGIENE = 5       # 🫧 трата за одну игру
+TRAIN_COST_ENERGY = 10      # ⚡ трата за одну тренировку
+TRAIN_COST_HUNGER = 8       # 🍎 трата за одну тренировку
+
+# Виды-профилисты по тренировкам (+1 к приросту). ЕДИНЫЙ источник правды:
+# его читает train(), из него же pet_manual строит тексты справочников.
+TRAIN_PROFILE_SPECIES: dict[str, tuple[str, ...]] = {
+    "strength": ("dog",),
+    "agility": ("fox", "chinchilla"),
+    "intellect": ("owl",),
+}
+WALK_EVENT_HYGIENE = 15     # 🫧 «упал в лужу» на прогулке
 WASH_BASE_HYGIENE = 40      # 🫧 базовый прирост гигиены за мытьё (до экипировки)
 WASH_MOOD_COST = 3          # 😊 «не всякой купание в радость»: база −3 + реакция вида
 HEAL_BASE_HEALTH = 35       # ❤️ базовое лечение за 💊 (множитель — от экипировки)
@@ -696,8 +714,8 @@ class TamagotchiService:
         mult = sp["bonus"]["play_happy"] * self.action_modifier(pet, "play_happy")
         mult *= holiday_effect_mults(now).get("play_happy", 1.0)
         pref = species_pref_delta(pet, "play")
-        pet.energy = clamp(pet.energy - 6)
-        pet.hygiene = clamp(pet.hygiene - 5)
+        pet.energy = clamp(pet.energy - PLAY_COST_ENERGY)
+        pet.hygiene = clamp(pet.hygiene - PLAY_COST_HYGIENE)
         xp_base = 15 if won else 8
         xp = int(xp_base * sp["bonus"]["xp_mult"] * holiday_effect_mults(now).get("xp", 1.0)
                  * self.action_modifier(pet, "xp"))
@@ -721,7 +739,9 @@ class TamagotchiService:
 
     def guess_range(self, pet: Pet) -> tuple[int, int]:
         half = max(3, 10 - pet.intellect // 2)
-        secret = random.randint(1, GUESS_RANGE_MAX)
+        # Секрет игры не должен предсказываться из состояния PRNG процесса —
+        # берём энтропию из OS (secrets), а не random.
+        secret = secrets.randbelow(GUESS_RANGE_MAX) + 1
         lo, hi = max(1, secret - half), min(GUESS_RANGE_MAX, secret + half)
         return secret, (lo, hi)
 
@@ -855,10 +875,12 @@ class TamagotchiService:
             return _out(f"⏳ Перерыв между тренировками: {wait} сек.", False)
         self._set_cooldown(pet, "train", now)
         self._mark_care(pet, now)
-        pet.energy = clamp(pet.energy - 10)
-        pet.hunger = clamp(pet.hunger - 8)
-        stat_pref = {"strength": "dog", "agility": ("fox", "chinchilla"),
-                     "intellect": "owl"}.get(stat)
+        pet.energy = clamp(pet.energy - TRAIN_COST_ENERGY)
+        pet.hunger = clamp(pet.hunger - TRAIN_COST_HUNGER)
+        # Единый источник правды для видов-профилистов: из него же строится
+        # текст справочников (pet_manual._profile_stat_for), поэтому UI не
+        # может разойтись с механикой.
+        stat_pref = TRAIN_PROFILE_SPECIES.get(stat)
         gain = 1 + (pet.level // 5)
         if stat_pref and _species_key(pet) in (
                 stat_pref if isinstance(stat_pref, tuple) else (stat_pref,)):
@@ -1006,8 +1028,9 @@ class TamagotchiService:
             return ("🐾 Познакомился с другим питомцем! Счастье +" + str(10 + pref_bonus + w_happy)
                     + energy_line + grow_line), 0, int(12 * xp_mult)
         if roll < 0.70:
-            pet.hygiene = clamp(pet.hygiene - 15)
-            return "💦 Упал в лужу… Гигиена −15" + energy_line + grow_line, 0, int(8 * xp_mult)
+            pet.hygiene = clamp(pet.hygiene - WALK_EVENT_HYGIENE)
+            return (f"💦 Упал в лужу… Гигиена −{WALK_EVENT_HYGIENE}"
+                    + energy_line + grow_line), 0, int(8 * xp_mult)
         if roll < 0.80:
             pet.health = clamp(pet.health - 10)
             return "🤧 Простудился на ветру. Здоровье −10" + grow_line, 0, int(8 * xp_mult)

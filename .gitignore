@@ -1,22 +1,23 @@
-# Python compiled files
+# Python
 __pycache__/
 *.py[cod]
+*$py.class
 
-# Packaging / build artifacts
-build/
-dist/
-*.egg-info/
+# Virtual Environment
+.venv/
+venv/
 
-# Coverage reports
-.coverage
-.coverage.*
-coverage/
-htmlcov/
-coverage.xml
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
 
-# Local env & test artifacts
+# Logs and Temp Files
+*.log
+*.tmp
+
+# Environment Variables
 .env
 .env.local
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
+.env.*

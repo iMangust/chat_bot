@@ -33,7 +33,10 @@ from app.services.tamagotchi import (
     PLAY_ENERGY_MIN,
     SLEEP_DEFAULT_HOURS,
     SPECIES_DATA,
+    TRAIN_COST_ENERGY,
+    TRAIN_COST_HUNGER,
     TRAIN_ENERGY_MIN,
+    TRAIN_PROFILE_SPECIES,
     WALK_DEFAULT_HOURS,
     WASH_BASE_HYGIENE,
     TamagotchiService,
@@ -55,6 +58,49 @@ class AdoptConfirm(StatesGroup):
 
 async def _get_pet(session: AsyncSession, tg_id: int) -> Pet | None:
     return await PetRepository(session).get_by_user(tg_id)
+
+
+def _species_help_line() -> str:
+    """Строка «Вид важен» для /help — генерируется из предпочтений видов
+    (SPECIES_DATA.prefers), а не из ручных литералов: опечатки исключены,
+    эмодзи и названия всегда совпадают с выбором питомца и справочниками."""
+    def top_pref(sp_key: str) -> tuple[str, int]:
+        sp = SPECIES_DATA[sp_key]
+        action, val = max(sp["prefers"].items(), key=lambda kv: kv[1])
+        return action, val
+
+    parts = []
+    for key in ("cat", "dog", "owl"):
+        act, _v = top_pref(key)
+        name = {"play": "любит игры", "walk": "обожает прогулки",
+                "train": "получает больше XP с тренировок"}.get(act, "")
+        if name:
+            parts.append(f"{SPECIES_DATA[key]['emoji']} "
+                         f"{SPECIES_DATA[key]['title'].lower()} {name}")
+    fox = SPECIES_DATA["fox"]
+    parts.append(f"{fox['emoji']} {fox['title'].lower()} приносит больше "
+                 f"монет (×{_fmt_pct(fox['bonus']['coin_mult'])})")
+    dragon = SPECIES_DATA["dragon"]
+    parts.append(f"{dragon['emoji']} {dragon['title'].lower()} — универсал "
+                 f"(+{int((dragon['bonus']['xp_mult'] - 1) * 100)}% ко всем "
+                 f"наградам, {SPECIES_START_PRICE['dragon']} 🪙)")
+    return "Вид важен: " + ",\n".join(parts) + ".\n\n"
+
+
+def _fmt_pct(mult: float) -> str:
+    """×1.3 → '1,3' в русской записи для текстов справки."""
+    return f"{mult:g}".replace(".", ",")
+
+
+def _train_profiles_line(current_emoji: str) -> str:
+    """Строка профилей тренировок — генерируется из TRAIN_PROFILE_SPECIES,
+    того же словаря, что читает svc.train(). Опечатки исключены."""
+    stat_labels = {"strength": "💪", "agility": "🏃", "intellect": "🧠"}
+    parts = []
+    for stat_key, codes in TRAIN_PROFILE_SPECIES.items():
+        emojis = "·".join(SPECIES_DATA[c]["emoji"] for c in codes if c in SPECIES_DATA)
+        parts.append(f"{stat_labels[stat_key]} — профиль {emojis}")
+    return "  " + " · ".join(parts) + f" (сейчас у тебя {current_emoji})\n"
 
 
 def _hub_kb(svc: TamagotchiService, pet: Pet | None, chat_id,
@@ -162,8 +208,7 @@ HELP_TEXT = (
     f"• 🌳 Прогулка — уходит на {WALK_DEFAULT_HOURS} ч, вернётся с монетами, XP и случайным событием;\n"
     f"• 😴 Сон — восстанавливает энергию (+{SLEEP_REGEN_BASE}/час по умолчанию {SLEEP_DEFAULT_HOURS} ч), разбудить можно досрочно.\n"
     "Питомец растёт: 🥚 яйцо → 👶 малыш → 🧑 подросток → 🐉 взрослый → 👑 легенда.\n"
-    "Вид важен: 🐈 кот любит игры, 🐕 пёс — прогулки, 🦊 лиса приносит больше монет,\n"
-    f"🦉 сова получает больше XP с тренировок, 🐉 дракон — универсал ({SPECIES_START_PRICE['dragon']} 🪙).\n\n"
+    + _species_help_line() +
 
     "<b>🛒 Магазин и 🎒 инвентарь</b>\n"
     "Открывается из хаба питомца (страница «🎒 Вещи»). Там еда и энергетики,\n"
@@ -782,8 +827,9 @@ async def train_screen(cb: CallbackQuery, session: AsyncSession) -> None:
         f"🏋️ <b>Тренировки {pet.name}</b>\n",
         f"💪 Сила {pet.strength} · 🏃 Ловкость {pet.agility} · 🧠 Интеллект {pet.intellect}\n",
         "Профильная тренировка твоего вида даёт +1 к приросту:",
-        f"  💪 — профиль 🐶 · 🏃 — профиль 🦊 · 🧠 — профиль 🦉 (сейчас у тебя {sp['emoji']})\n",
-        "⚡ Тренировка стоит 15 энергии и 8 сытости.",
+        _train_profiles_line(sp["emoji"]),
+        f"⚡ Тренировка стоит {TRAIN_COST_ENERGY} энергии и "
+        f"{TRAIN_COST_HUNGER} сытости, перерыв — {COOLDOWN_TRAIN_SEC} сек.",
     ]
     await safe_edit_or_answer(cb.message, "\n".join(lines),
                               reply_markup=train_menu(

@@ -19,6 +19,84 @@ from app.utils.safe_edit import safe_edit_or_answer
 
 router = Router(name="shop")
 
+
+def _fmt_dur(sec: int) -> str:
+    """3600 -> '1 ч', 1800 -> '30 мин' — тот же формат, что в карточке питомца."""
+    return TamagotchiService._fmt_dur(sec)
+
+
+def _pct(v: float) -> str:
+    """0.25 -> '+25%', -0.5 -> '-50%' (без хвостовых нулей: 0.15 -> '+15%')."""
+    p = v * 100
+    s = f"{p:.10g}"
+    return f"+{s}%" if p > 0 else f"{s}%"
+
+
+def _effect_phrase(effect: dict) -> str:
+    """Мгновенные статы предмета — из того же словаря effect, что применяет feed().
+
+    Порядок и подписи соответствуют STAT_EMOJI в справочнике; buff-ключ
+    пропускается (его описывает _buff_phrase).
+    """
+    from app.services.pet_manual import STAT_EMOJI
+
+    order = ["hunger", "happiness", "energy", "hygiene", "health"]
+    bits = [f"{STAT_EMOJI[k]}{'+' if effect[k] >= 0 else ''}{effect[k]:g}"
+            for k in order
+            if isinstance(effect.get(k), (int, float)) and effect[k]]
+    stat_names = {"strength": "💪+1", "agility": "🏃+1", "intellect": "🧠+1"}
+    bits += [stat_names[k] for k in ("strength", "agility", "intellect")
+             if isinstance(effect.get(k), (int, float)) and effect[k]]
+    return " · ".join(bits)
+
+
+def _buff_phrase(effect: dict) -> str:
+    """Описание бафов предмета — генерируется из effect['buff']/effect['buffs'].
+
+    Раньше здесь были литералы («⚡+40; час сон восстанавливает ×2 ⚡…»),
+    которые молча расходились с механикой при правке чисел в effect.
+    Теперь цифры берутся прямо из тех же словарей, которые читает feed().
+    """
+    defs = list(effect.get("buffs") or [])
+    if isinstance(effect.get("buff"), dict):
+        defs = [effect["buff"], *defs]
+
+    def _kind_txt(tname: str, m: float) -> str:
+        if tname == "no_decay":
+            # no_decay вычитается из множителя спада: mult=0.5 → «вдвое медленнее»
+            return ("энергия почти не тратится" if m >= 1
+                    else f"энергия тратится медленнее на {abs(m) * 100:.10g}%")
+        plain = {
+            "food_feast": "еда усваивается",
+            "happy_pct": "игры дают счастье",
+            "energy_regen_pct": "сон восстанавливает энергию",
+            "train_pct": "тренировки",
+            "xp_pct": "все дела дают XP",
+            "coin_pct": "монеты с прогулок",
+        }
+        label = plain.get(tname)
+        if label is None:
+            return f"баф {tname}"
+        return f"{label} {_pct(m)}"
+
+    parts = []
+    for b in defs:
+        if not isinstance(b, dict) or not b.get("type"):
+            continue
+        tname, mult = str(b["type"]), float(b.get("mult", 0.0))
+        dur = _fmt_dur(int(b.get("duration", 1800)))
+        parts.append(f"{dur} — {_kind_txt(tname, mult)}")
+    return "; ".join(parts)
+
+
+def _item_desc(effect: dict, flavor: str) -> str:
+    """Полное описание товара: живые цифры эффекта + авторская подводка."""
+    eff_bits = [x for x in (_effect_phrase(effect), _buff_phrase(effect)) if x]
+    eff = " · ".join(eff_bits)
+    if not flavor:
+        return eff
+    return f"{eff}. {flavor}" if eff else flavor
+
 # LRU-контейнер из раздела питомца: обычный dict растёт без ограничений —
 # каждый когда-либо открывавший магазин чат оставлял бы запись навсегда
 # (утечка памяти на долгих аптаймах).
@@ -46,48 +124,50 @@ def _nav_back_cb(cb: CallbackQuery, section: str) -> str | None:
     return _common(section, chat_id, current_cb=entry)
 
 
+# Описания товаров генерируются из effect (единый источник правды: его же
+# применяет feed()/use-логика магазина) плюс короткая авторская подводка без
+# цифр (ключ flavor). Раньше числа дублировались литералами в description и
+# молча расходились с механикой; теперь description физически не может
+# содержать устаревшую цифру — он пересобирается из effect на импорте.
 ITEMS_SEED = [
     dict(code="food_bread", name="Хлеб", icon="🍞", type="food", price=5,
-         effect={"hunger": 15}, description="Просто, дёшево, сердито."),
+         effect={"hunger": 15}, flavor="Просто, дёшево, сердито."),
     dict(code="food_apple", name="Яблоко", icon="🍎", type="food", price=10,
-         effect={"hunger": 25, "health": 3}, description="Полезно!"),
+         effect={"hunger": 25, "health": 3}, flavor="Полезно!"),
     dict(code="food_carrot", name="Морковка", icon="🥕", type="food", price=8,
-         effect={"hunger": 18, "hygiene": 3}, description="Сытно и зубам хорошо."),
+         effect={"hunger": 18, "hygiene": 3}, flavor="Сытно и зубам хорошо."),
     dict(code="food_fish", name="Рыбка", icon="🐟", type="food", price=18,
-         effect={"hunger": 32, "strength": 1}, description="Камчатский улов: сила +1."),
+         effect={"hunger": 32, "strength": 1}, flavor="Камчатский улов."),
     dict(code="food_meat", name="Стейк", icon="🥩", type="food", price=25,
-         effect={"hunger": 45, "strength": 1}, description="Сытно и для силы."),
+         effect={"hunger": 45, "strength": 1}, flavor="Сытно и для силы."),
     dict(code="food_soup", name="Горячий суп", icon="🍲", type="food", price=20,
-         effect={"hunger": 38, "health": 5}, description="Согревает и лечит чуть-чуть."),
+         effect={"hunger": 38, "health": 5}, flavor="Согревает и лечит чуть-чуть."),
     dict(code="food_cake", name="Тортик", icon="🍰", type="food", price=40,
          effect={"hunger": 30, "happiness": 15, "hygiene": -5},
-         description="Вкусно, но потом мыться!"),
+         flavor="Вкусно, но потом мыться!"),
     dict(code="food_donut", name="Пончик", icon="🍩", type="food", price=15,
-         effect={"hunger": 18, "happiness": 8}, description="Сахарное счастье."),
+         effect={"hunger": 18, "happiness": 8}, flavor="Сахарное счастье."),
     dict(code="food_sushi", name="Сендвич сёмги", icon="🍣", type="food", price=45,
          effect={"hunger": 42, "happiness": 8, "intellect": 1},
-         description="Дальневосточный деликатес: ум +1."),
+         flavor="Дальневосточный деликатес."),
     dict(code="food_feast", name="Праздничный ужин", icon="🦞", type="food", price=70,
          effect={"hunger": 60, "happiness": 10,
                  "buff": {"type": "food_feast", "mult": 0.25, "duration": 1800,
-                          "label": "Сытный час"}},
-         description="+60 сытости и 30 мин еда усваивается на +25%."),
+                          "label": "Сытный час"}}),
     dict(code="food_honey", name="Бочонок мёда", icon="🍯", type="food", price=55,
          effect={"hunger": 30, "health": 8,
                  "buff": {"type": "happy_pct", "mult": 0.20, "duration": 3600,
-                          "label": "Медовое настроение"}},
-         description="Здоровье +8 и час игры дают +20% счастья."),
+                          "label": "Медовое настроение"}}),
     dict(code="drink_water", name="Водичка", icon="💧", type="drink", price=4,
-         effect={"energy": 5, "hygiene": -2}, description="Просто попить."),
+         effect={"energy": 5, "hygiene": -2}, flavor="Просто попить."),
     dict(code="drink_juice", name="Сок", icon="🧃", type="drink", price=10,
-         effect={"energy": 10, "happiness": 3}, description="Витаминный заряд."),
+         effect={"energy": 10, "happiness": 3}, flavor="Витаминный заряд."),
     dict(code="drink_milk", name="Молоко", icon="🥛", type="drink", price=12,
-         effect={"energy": 12, "health": 3, "hunger": 5}, description="Крепкие кости."),
+         effect={"energy": 12, "health": 3, "hunger": 5}, flavor="Крепкие кости."),
     dict(code="drink_coffee", name="Кофе", icon="☕", type="drink", price=20,
          effect={"energy": 20,
                  "buff": {"type": "no_decay", "mult": 0.5, "duration": 1800,
-                          "label": "Кофеиновый щит"}},
-         description="⚡+20 и 30 мин энергия тратится вдвое медленнее."),
+                          "label": "Кофеиновый щит"}}),
     dict(code="drink_energy", name="Энергетик", icon="⚡", type="drink", price=35,
          effect={"energy": 40, "happiness": -3,
                  "buffs": [
@@ -96,27 +176,44 @@ ITEMS_SEED = [
                      {"type": "train_pct", "mult": 0.5, "duration": 3600,
                       "label": "Предтрен"},
                  ]},
-         description="⚡+40; час сон восстанавливает ×2 ⚡, тренировки +50%."),
+         flavor="Бодрость любой ценой."),
     dict(code="drink_tea", name="Иван-чай", icon="🍵", type="drink", price=15,
-         effect={"energy": 8, "health": 4}, description="Камчатский травяной, бодрит мягко."),
+         effect={"energy": 8, "health": 4}, flavor="Камчатский травяной, бодрит мягко."),
     dict(code="drink_smoothie", name="Смузи из ягод", icon="🫐", type="drink", price=25,
          effect={"energy": 15, "happiness": 6,
                  "buff": {"type": "xp_pct", "mult": 0.15, "duration": 3600,
-                          "label": "Ягодная ясность"}},
-         description="⚡+15 и час все дела дают +15% XP."),
+                          "label": "Ягодная ясность"}}),
     dict(code="toy_ball", name="Мячик", icon="⚽", type="toy", price=30,
-         effect={"happiness": 10}, description="Игрушка: играет сам, чуть поднимает счастье."),
+         effect={"happiness": 10}, flavor="Игрушка: играет сам."),
     dict(code="toy_laser", name="Лазерная указка", icon="🔦", type="toy", price=80,
-         effect={"happiness": 20, "agility": 1}, description="Кошачий экстаз."),
+         effect={"happiness": 20, "agility": 1}, flavor="Кошачий экстаз."),
     dict(code="toy_puzzle", name="Головоломка", icon="🧩", type="toy", price=60,
-         effect={"happiness": 12, "intellect": 1}, description="Ум растёт, лапы не устают."),
+         effect={"happiness": 12, "intellect": 1}, flavor="Ум растёт, лапы не устают."),
     dict(code="med_pill", name="Лекарство", icon="💊", type="medicine", price=35,
-         effect={"health": 35}, description="Лечит болезни."),
+         effect={"health": 35}, flavor="Лечит болезни."),
     dict(code="med_vitamins", name="Витамины", icon="🧪", type="medicine", price=60,
-         effect={"health": 15, "energy": 15}, description="Бодрость и здоровье."),
+         effect={"health": 15, "energy": 15}, flavor="Бодрость и здоровье."),
     dict(code="med_syrup", name="Сироп от кашля", icon="🍯", type="medicine", price=45,
-         effect={"health": 25}, description="Мягкое лечение, быстрее ставит на лапы."),
+         effect={"health": 25}, flavor="Мягкое лечение, быстрее ставит на лапы."),
 ]
+
+
+# Нормализация: description каждого товара обязан быть собран из его же
+# effect (см. _item_desc). Даже если кто-то добавит новый товар и укажет
+# description вручную — на импорте оно будет перезаписано живыми цифрами.
+for _spec in ITEMS_SEED:
+    _spec["description"] = _item_desc(_spec["effect"], _spec.pop("flavor", ""))
+
+
+def _seed_kwargs(spec: dict) -> dict:
+    """Только колонки Item: защита от опечатки в ключе seed (TypeError при
+    конструировании модели ломал бы весь прогон тестов с БД)."""
+    cols = {c.name for c in Item.__table__.columns}
+    unknown = set(spec) - cols
+    if unknown:
+        raise KeyError(f"ITEMS_SEED: неизвестные ключи {unknown} у {spec.get('code')}")
+    return spec
+
 
 async def seed_items(session: AsyncSession) -> int:
     existing = set((await session.execute(select(Item.code))).scalars())
@@ -127,7 +224,7 @@ async def seed_items(session: AsyncSession) -> int:
         if spec["code"] in existing:
             continue
         next_id += 1
-        session.add(Item(id=next_id, **spec))
+        session.add(Item(id=next_id, **_seed_kwargs(spec)))
         created += 1
     if created:
         await session.flush()

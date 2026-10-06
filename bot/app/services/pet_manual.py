@@ -20,23 +20,73 @@ import html as _html
 
 from app.services import balance
 from app.services.pet_data import SPECIES_DATA, SPECIES_START_PRICE
+from app.services.pet_social import FRIEND_MAKE_HAPPY
 from app.services.tamagotchi import (
     COOLDOWN_FEED_SEC,
     COOLDOWN_PLAY_SEC,
+    COOLDOWN_TRAIN_SEC,
     COOLDOWN_WASH_SEC,
     GUESS_RANGE_MAX,
     HEAL_BASE_HEALTH,
     HUNGER_GRUEL_THRESHOLD,
     LOW_STAT_SICK_RISK,
+    PLAY_COST_ENERGY,
+    PLAY_COST_HYGIENE,
     PLAY_ENERGY_MIN,
     SEASON_DECAY_MULT,
     SICK_RECOVER_THRESHOLD,
     SICK_THRESHOLD,
     SPECIES_SEASON_DECAY_MULT,
     SPRING_ALL_HAPPY_MULT,
+    TRAIN_COST_ENERGY,
+    TRAIN_COST_HUNGER,
     TRAIN_ENERGY_MIN,
+    WALK_EVENT_HYGIENE,
     WASH_BASE_HYGIENE,
 )
+
+
+def _pref_word(delta: int) -> str:
+    """Оценка предпочтения вида по той же шкале, что и _pref_line."""
+    if delta >= 4:
+        return "обожает"
+    if delta > 0:
+        return "любит"
+    if delta == 0:
+        return "нейтрален к"
+    return "не любит"
+
+
+def _walk_happy_range() -> tuple[int, int]:
+    """Честный диапазон 😊 за прогулку — из веток finish_walk_event():
+    «хорошо погулял» = +5, «познакомился» = +10 (плюс реакция вида)."""
+    base_min = 5
+    base_max = 10
+    dmin = min(sp["prefers"].get("walk", 0) for sp in SPECIES_DATA.values())
+    dmax = max(sp["prefers"].get("walk", 0) for sp in SPECIES_DATA.values())
+    return base_min + dmin, base_max + dmax
+
+
+def _profile_stat_for(stat_key: str) -> tuple[str, list[str]]:
+    """Виды-профилисты по тренировке — из ЕДИНОГО источника TRAIN_PROFILE_SPECIES.
+
+    Тот же словарь читает tamagotchi.train(), поэтому справочник физически
+    не может разойтись с механикой (раньше здесь была ручная копия).
+    """
+    from app.services.tamagotchi import TRAIN_PROFILE_SPECIES
+
+    labels = {"strength": "💪 силу", "agility": "🏃 ловкость",
+              "intellect": "🧠 интеллект"}
+    return labels[stat_key], list(TRAIN_PROFILE_SPECIES.get(stat_key, ()))
+
+
+def train_gain_formula_text() -> str:
+    """Формула прироста тренировки, отражающая tamagotchi.train() шаг за шагом."""
+    return (f"прирост = (1 + уровень//5) +1 профильному виду, "
+            f"затем ×множитель экипировки/сетов (train_yield) и +"
+            f"плоский бонус снаряжения (flat_train), минимум 1; "
+            f"цена — −{TRAIN_COST_ENERGY} ⚡ и −{TRAIN_COST_HUNGER} 🍎, "
+            f"XP ≈ 6 × множитель вида")
 
 PREF_LABELS = {
     "play": "🎾 Игры",
@@ -75,8 +125,14 @@ def _pref_line(delta: int) -> str:
 # ── Общие разделы ──────────────────────────────────────────────────────────
 
 def stats_guide_text() -> str:
-    """Как устроен каждый показатель и чем его поднимать."""
+    """Как устроен каждый показатель и чем его поднимать.
+
+    Все числа выводятся из единых источников правды: snapshot() баланса,
+    константы tamagotchi (цены/кулдауны действий) и SPECIES_DATA — никаких
+    литералов, способных разойтись с механикой.
+    """
     d = balance.snapshot()
+    w_lo, w_hi = _walk_happy_range()
     L: list[str] = ["📊 <b>Показатели питомца</b>", "",
                     "Настроение = среднее четырёх статов (🍎 😊 ⚡ 🫧). "
                     "Все они постепенно падают — задача владельца не дать "
@@ -87,28 +143,49 @@ def stats_guide_text() -> str:
     L.append("  Вкусная еда (🍰 тортик, 🍩 пончик) даёт бонус к счастью;")
     L.append(f"  ниже {HUNGER_GRUEL_THRESHOLD} питомец объявляет голод, "
              f"ниже {LOW_STAT_SICK_RISK} начинает болеть ❤️.")
+    L.append(f"  Тренировка тратит −{TRAIN_COST_HUNGER} 🍎.")
     L.append("")
     L.append(f"<b>😊 Счастье</b> — самое «медленное»: ~{_fmt(d['happy_decay'])}/час,")
     L.append("  но его сильнее всего меняют вид, сезон и погода.")
     L.append("  Поднимают: 🎾 игры (победа ≈ +"
-             + _fmt(d["play_win"]) + " × множитель вида), прогулки (+5…+10 за")
-    L.append("  события), вкусная еда, друзья (+3 за знакомство, +1/день),")
-    L.append("  сон для сов/шиншилл. Снижают: мытьё у водобоязненных, жара")
-    L.append(f"  для шиншиллы, дождь, скука (−{_fmt(d['boredom_penalty'])} через")
+             + _fmt(d["play_win"]) + " × множитель вида), прогулки (+"
+             + str(w_lo) + "…" + str(w_hi) + " за")
+    L.append("  события), вкусная еда, друзья (+" + str(FRIEND_MAKE_HAPPY)
+             + " за знакомство),")
+    sleep_fans = [sp["emoji"] for sp in SPECIES_DATA.values()
+                  if sp["bonus"]["sleep_bonus"] > 0
+                  or sp["prefers"].get("sleep", 0) > 0]
+    L.append("  сон для " + "/".join(sleep_fans) + ". Снижают: мытьё у")
+    wash_haters = [sp["emoji"] for sp in SPECIES_DATA.values()
+                   if sp["prefers"].get("wash", 0) <= -2]
+    L.append("  водобоязненных (" + "/".join(wash_haters) + "), дождь, скука (−"
+             + _fmt(d["boredom_penalty"]) + " через")
     L.append(f"  {_fmt(d['boredom_hours'])} ч без заботы).")
     L.append("  ⚠️ Играйте даже когда «проигрываете» — за поражение тоже")
     L.append(f"  начисляется +{_fmt(d['play_lose'])} 😊.")
     L.append("")
     L.append(f"<b>⚡ Энергия</b> — падает ~{_fmt(d['energy_decay'])}/час днём.")
     L.append("  Восстанавливает только сон (~"
-             + _fmt(d["sleep_regen"]) + "/час, у совёнка и шиншиллы быстрее).")
+             + _fmt(d["sleep_regen"]) + "/час; виды с бонусом сна — "
+             + ", ".join(f"{sp['emoji']} +{_fmt(sp['bonus']['sleep_bonus'])} ⚡/ч"
+                         for sp in SPECIES_DATA.values()
+                         if sp["bonus"]["sleep_bonus"] > 0) + ").")
     L.append(f"  Ниже {PLAY_ENERGY_MIN} — игры недоступны, "
              f"ниже {TRAIN_ENERGY_MIN} — тренировки.")
+    L.append(f"  Тратят: игра −{PLAY_COST_ENERGY} ⚡, тренировка "
+             f"−{TRAIN_COST_ENERGY} ⚡.")
     L.append("")
     L.append(f"<b>🫧 Гигиена</b> — падает ~{_fmt(d['hygiene_decay'])}/час.")
     L.append(f"  Поднимает 🫧 мытьё (+{WASH_BASE_HYGIENE}, раз в "
              f"{COOLDOWN_WASH_SEC // 60} минут). Ниже {LOW_STAT_SICK_RISK} — риск болезни.")
-    L.append("  У шиншиллы пачкается вдвое медленнее, у щенка/лисёнка — быстрее.")
+    L.append(f"  Тратят: игра −{PLAY_COST_HYGIENE} 🫧, лужа на прогулке "
+             f"−{WALK_EVENT_HYGIENE} 🫧.")
+    dirt_slow = [sp["emoji"] for sp in SPECIES_DATA.values()
+                 if sp["decay"].get("hygiene", 1.0) < 0.9]
+    dirt_fast = [sp["emoji"] for sp in SPECIES_DATA.values()
+                 if sp["decay"].get("hygiene", 1.0) >= 1.2]
+    L.append("  Пачкается медленнее всех: " + "/".join(dirt_slow)
+             + "; быстрее: " + "/".join(dirt_fast) + ".")
     L.append("")
     L.append(f"<b>❤️ Здоровье</b> — тикает вниз ({_fmt(d['health_decay'])}/час) только")
     L.append(f"  когда 🍎 или 🫧 ниже {LOW_STAT_SICK_RISK}. При health &lt; "
@@ -147,7 +224,8 @@ def games_guide_text() -> str:
                     f"⏱ Кулдаун {COOLDOWN_PLAY_SEC} секунд — дальше по кнопочке",
                     "«Играть» питомец скажет «запыхался» и попросит подождать.",
                     f"⚡ Нужно минимум {PLAY_ENERGY_MIN} энергии; игра также тратит",
-                    "6 ⚡ и 5 🫧 — после игры полезно помыть.", "",
+                    f"{PLAY_COST_ENERGY} ⚡ и {PLAY_COST_HYGIENE} 🫧 — после игры "
+                    "полезно помыть.", "",
                     "Множители счастья за победу по видам:"]
     for _code, sp in SPECIES_DATA.items():
         m = sp["bonus"]["play_happy"]
@@ -156,7 +234,14 @@ def games_guide_text() -> str:
     L += ["", "<b>Ассортимент:</b>"]
     for name, tip in GAME_TIPS:
         L.append(f"  {name} — {tip}")
-    L += ["", "💘 14 февраля все игры дают счастье ×1.5."]
+    # Праздничные эффекты — из HOLIDAY_EFFECTS (единый источник правды),
+    # а не из застывшей строки про 14 февраля.
+    from app.utils.formatting import HOLIDAY_EFFECTS
+
+    valentine = HOLIDAY_EFFECTS.get((2, 14), {})
+    hol_mult = valentine.get("play_happy")
+    if hol_mult and hol_mult != 1.0:
+        L += ["", f"💘 14 февраля все игры дают счастье ×{_fmt(hol_mult)}."]
     return "\n".join(L)
 
 
@@ -190,7 +275,11 @@ def species_season_notes(code: str) -> list[str]:
 
 
 def tactics_for(code: str, sp: dict) -> list[str]:
-    """Персональные советы: что делать именно этому виду."""
+    """Персональные советы: что делать именно этому виду.
+
+    Числа (кулдауны, цены, пороги, списки профилистов и редких видов) —
+    из констант механики и SPECIES_DATA, а не из литералов текста.
+    """
     prefers = sp["prefers"]
     bonus = sp["bonus"]
     decay = sp["decay"]
@@ -201,9 +290,10 @@ def tactics_for(code: str, sp: dict) -> list[str]:
     if bonus["play_happy"] < 1.0 or prefers.get("play", 0) < 0:
         t.append("🎾 Игры он любит умеренно: не трать кулдауны зря, лучше другие")
         t.append("   занятия — там доход выше.")
+    w_lo, w_hi = _walk_happy_range()
     if prefers.get("walk", 0) >= 4:
         t.append("🚶 Прогулки — его конёк: чаще запускай, лови события «друг» и")
-        t.append("   «хорошо погулял» (+5…+10 😊).")
+        t.append(f"   «хорошо погулял» (+{w_lo}…+{w_hi} 😊).")
     if prefers.get("walk", 0) < 0:
         t.append("🚶 На прогулках скучает (−" + str(-prefers["walk"]) + " 😊) — используй")
         t.append("   их ради монет/XP, а счастье набирай иначе.")
@@ -215,8 +305,25 @@ def tactics_for(code: str, sp: dict) -> list[str]:
         t.append(f"   Мой только когда 🫧 угрожает здоровью "
                  f"(<{LOW_STAT_SICK_RISK}), иначе терпи.")
     if prefers.get("train", 0) >= 4:
-        t.append("🏋️ Тренировки — его стихия (+6 😊). Качай профильный стат:")
-        t.append("   сова — 🧠 интеллекту, щенок — 💪 силу, лиса/шиншилла — 🦋 ловкость.")
+        # Динамический список профилистов: берём из ЗЕРКАЛА train()
+        # (_profile_stat_for), поэтому текст не может разойтись с кодом.
+        profs = []
+        for key in ("strength", "agility", "intellect"):
+            label, codes = _profile_stat_for(key)
+            if code in codes:
+                profs.append(label)
+        who = ", ".join(f"{SPECIES_DATA[c]['emoji']} {SPECIES_DATA[c]['title']}"
+                        for c in sorted({c for _, cds in
+                                         ((_profile_stat_for(k)[0],
+                                           _profile_stat_for(k)[1])
+                                          for k in ("strength", "agility",
+                                                    "intellect"))
+                                         for c in cds}))
+        t.append(f"🏋️ Тренировки — его стихия: цена −{TRAIN_COST_ENERGY} ⚡ / "
+                 f"−{TRAIN_COST_HUNGER} 🍎, перерыв {COOLDOWN_TRAIN_SEC // 60} мин.")
+        t.append(f"   Его профильные стат(ы): {'; '.join(profs) or 'нет'}.")
+        t.append(f"   Профилисты по всем тренировкам: {who}.")
+        t.append(f"   Формула прироста: {train_gain_formula_text()}.")
     if bonus["sleep_bonus"] > 0:
         t.append(f"😴 Сон — его топливо (+{_fmt(bonus['sleep_bonus'])} ⚡/ч сверх нормы):")
         t.append("   спи чаще, энергии хватает на больше активностей в день.")
@@ -233,26 +340,64 @@ def tactics_for(code: str, sp: dict) -> list[str]:
         t.append("   зарабатывай на экипировку именно им.")
     if bonus["xp_mult"] > 1.0:
         t.append(f"✨ Учётся быстро: XP ×{_fmt(bonus['xp_mult'])} — расти выше других.")
-    price = SPECIES_START_PRICE.get(code)
-    if price == 800:
-        t.append("🐉 Редкий вид: универсал во всём, но капризен — компенсируй")
-        t.append("   быстрым спадом 😊 экипировкой (см. ниже).")
+    rarest_price = max(SPECIES_START_PRICE.values())
+    is_rarest = SPECIES_START_PRICE.get(code) == rarest_price and rarest_price > 0
+    if is_rarest:
+        t.append(f"🐉 Редчайший вид ({rarest_price} 🪙): универсал во всём, но капризен —")
+        t.append("   компенсируй быстрым спадом 😊 экипировкой (см. ниже).")
     return t
 
 
 def gear_tips_for(code: str, sp: dict) -> list[str]:
-    """Рекомендации экипировки под слабые места вида."""
+    """Рекомендации экипировки под слабые места вида.
+
+    Проценты берутся из PET_ACCESSORIES / PET_SETS (TamagotchiService),
+    а не из памяти автора текста: изменишь баланс вещи — справка обновится.
+    """
+    from app.services.tamagotchi import TamagotchiService
+
+    acc = TamagotchiService.PET_ACCESSORIES
+    sets = TamagotchiService.PET_SETS
+
+    def _pct(v: float) -> str:
+        p = round(v * 100)
+        return f"+{p}%" if p > 0 else f"{p}%"
+
     tips: list[str] = []
     if sp["bonus"]["play_happy"] >= 1.1:
-        tips.append("🎀 Бантик непоседы / 🩰 Пуанты — усиливают и без того сильные игры (+25%/+20% 😊)")
+        play_boosters = [f"{e} {a['title']} ({_pct(a['bonus']['play_happy_pct'])} 😊)"
+                         for e, a in acc.items()
+                         if a["bonus"].get("play_happy_pct", 0) >= 0.15]
+        if play_boosters:
+            tips.append("🎾 Усиливает и без того сильные игры: "
+                        + ", ".join(play_boosters))
     if sp["decay"].get("happiness", 1.0) >= 1.2:
-        tips.append("Сети 🕊️ Дзен или 🎩 Денди + 🛎️ колокольчик — замедляют падение 😊 (−15%)")
+        calm_sets = [f"{s['title']} ({_pct(s['bonus']['happy_decay_pct'])}/ч 😊)"
+                     for s in sets.values()
+                     if s["bonus"].get("happy_decay_pct", 0) <= -0.15]
+        if calm_sets:
+            tips.append("Замедляют падение 😊: " + ", ".join(calm_sets))
     if sp["bonus"]["play_happy"] < 1.0:
-        tips.append("🕊️ Сет «Дзен» — снижает скорость грусти, чтобы реже нужны были игры")
+        zen = sets.get("zen")
+        if zen:
+            tips.append(f"{zen['title']} — снижает скорость грусти "
+                        f"({_pct(zen['bonus']['happy_decay_pct'])}/ч), "
+                        "чтобы реже нужны были игры")
     if sp["decay"].get("hygiene", 1.0) >= 1.2:
-        tips.append("🧼 что-то на +гигиену из инвентаря, чтобы реже мыть (мытьё не всем в радость)")
+        tips.append("🧼 Что-то на +гигиену из инвентаря, чтобы реже мыть "
+                    f"(мытьё: база +{WASH_BASE_HYGIENE} 🫧, раз в "
+                    f"{COOLDOWN_WASH_SEC // 60} мин — не всем в радость)")
     if sp["prefers"].get("walk", 0) >= 4:
-        tips.append("🪙 Всё, что усиливает прогулки/монеты — его главная ферма")
+        def _coin_bonus(s: dict) -> float:
+            return sum(v for k, v in s["bonus"].items()
+                       if k in ("walk_coin_pct", "coin_mult")
+                       and isinstance(v, float))
+
+        coin_sets = [f"{s['title']} ({_pct(_coin_bonus(s))} 🪙)"
+                     for s in sets.values()
+                     if _coin_bonus(s) > 0]
+        tips.append("🪙 Его главная ферма — прогулки; усили монеты: "
+                    + ", ".join(coin_sets[:3]))
     return tips
 
 
