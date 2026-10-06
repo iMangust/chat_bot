@@ -124,7 +124,7 @@ async def _prepare_db(*, gear: dict | None = None):
         await s.commit()
 
 
-async def _press(data: str, routers=None):
+async def _press(data: str, routers=None, fake=None):
     from app.handlers import shop as shop_h
     from app.handlers import tamagotchi as tg_h
 
@@ -134,7 +134,7 @@ async def _press(data: str, routers=None):
         _detach(r)
         dp.include_router(r)
     async with _dbs.session_factory() as session:
-        fake = FakeSession()
+        fake = fake or FakeSession()
         bot = Bot(token=_s.bot_token, session=fake)
         await dp.feed_update(bot, _build_update(bot, data), session=session)
     texts = [str(d.get("text", ""))
@@ -157,6 +157,61 @@ def test_inventory_screen_has_no_self_button():
         assert "Инвентарь" in joined, f"экран инвентаря не показан: {texts}"
         assert "pet:inv" not in kb_dump, \
             f"в клавиатуре инвентаря осталась кнопка «🎒 Инвентарь» (самопетля): {kb_dump[:900]}"
+    asyncio.run(run())
+
+
+def test_empty_inventory_screen_has_no_self_button():
+    """ПУСТОЙ инвентарь тоже без самопетли.
+
+    Раньше пустой экран рендерился вкладкой «🎒 Вещи» целиком — а на ней
+    живёт кнопка входа «🎒 Инвентарь» (pet:inv). Пользователь видел кнопку
+    «Инвентарь» внутри самого инвентаря. Тест с предметами этого не ловил,
+    потому что заполненный экран использует paged_keyboard().
+    """
+    async def run():
+        await _prepare_db()
+        from sqlalchemy import delete
+
+        from app.db.models import PetInventory
+        async with _dbs.session_factory() as s:
+            await s.execute(delete(PetInventory))
+            await s.commit()
+        _fake, texts, kb_dump = await _press("pet:inv")
+        joined = "\n".join(texts)
+        assert "Инвентарь пуст" in joined, f"пустой экран не показан: {texts}"
+        assert "pet:inv" not in kb_dump, \
+            f"на пустом инвентаре есть кнопка «🎒 Инвентарь» (самопетля): {kb_dump[:900]}"
+    asyncio.run(run())
+
+
+def test_use_item_returns_to_inventory_without_self_button():
+    """После применения предмета — возврат на экран инвентаря без pet:inv."""
+    async def run():
+        await _prepare_db()
+        fake, _, _ = await _press("pet:inv")  # кладём pet:inv в стек навигации
+        from sqlalchemy import select
+
+        from app.db.models import Item, Pet, PetInventory
+        async with _dbs.session_factory() as s:
+            # Страж состояний блокирует применение спящему/гуляющему —
+            # моделируем «бодрствующего дома», иначе use_ok вернёт alert.
+            pet = (await s.execute(select(Pet).where(Pet.user_id == 42))).scalar_one()
+            pet.is_sleeping = False
+            pet.walk_until = None
+            row = (await s.execute(
+                select(PetInventory).order_by(PetInventory.item_id).limit(1)
+            )).scalar_one_or_none()
+            if row is None:
+                await s.commit()
+                return
+            item_id = row.item_id
+            item = await s.get(Item, item_id)
+            await s.commit()
+        await _press(f"use:{item_id}", fake=fake)          # окно подтверждения
+        fake, texts, kb_dump = await _press(f"use_ok:{item_id}", fake=fake)
+        assert any(item.name in t for t in texts), f"предмет не применён: {texts}"
+        assert "pet:inv" not in kb_dump, \
+            f"после применения в клавиатуре снова «🎒 Инвентарь»: {kb_dump[:900]}"
     asyncio.run(run())
 
 

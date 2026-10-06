@@ -12,7 +12,7 @@ from app.db.models import Item, PetInventory, User
 from app.db.repositories import PetRepository, UserRepository
 from app.handlers.tamagotchi import set_pet_page
 from app.i18n import t
-from app.keyboards.inline import InlineKeyboardBuilder, InlineKeyboardButton, pet_hub
+from app.keyboards.inline import InlineKeyboardBuilder, InlineKeyboardButton
 from app.keyboards.paged import paged_keyboard, paged_pages
 from app.services.tamagotchi import TamagotchiService
 from app.utils.safe_edit import safe_edit_or_answer
@@ -122,6 +122,44 @@ def _nav_back_cb(cb: CallbackQuery, section: str) -> str | None:
     chat_id = cb.message.chat.id if cb.message else None
     entry = {"shop": "pet:shop", "inv": "pet:inv"}.get(section)
     return _common(section, chat_id, current_cb=entry)
+
+
+def _inv_tab_kb_without_self():
+    """Вкладка «🎒 Вещи» хаба БЕЗ кнопки «🎒 Инвентарь».
+
+    Нужна для экрана инвентаря (пустой список / после применения предмета):
+    на вкладке кнопка входа есть — и, если рендерить её как есть, внутри
+    самого инвентаря появлялась кнопка, открывающая сам инвентарь
+    (самопетля). Копируем структуру pet_hub(1), исключая 'pet:inv'.
+    """
+    from aiogram.types import InlineKeyboardButton
+
+    from app.keyboards.inline import HOME_LABEL, PET_PAGES, _page_nav, _two_per_row
+    title, actions = PET_PAGES[1]  # вкладка «🎒 Вещи»
+    buttons = [InlineKeyboardButton(text=t, callback_data=cb_)
+               for t, cb_ in actions if cb_ != "pet:inv"]
+    kb_rows = _two_per_row(buttons)
+    kb_rows.append(_page_nav("pet", 1, len(PET_PAGES), title))
+    kb_rows.append([InlineKeyboardButton(text=HOME_LABEL,
+                                         callback_data="menu:main")])
+    from aiogram.types import InlineKeyboardMarkup
+    return InlineKeyboardMarkup(inline_keyboard=kb_rows)
+
+
+def _inv_back_kb(cb: CallbackQuery):
+    """Клавиатура возврата с экрана инвентаря: «⬅️ Назад» + «🏠 Меню».
+
+    Единый источник логики «Назад» (_nav_back_cb → вкладка «🎒 Вещи»,
+    с которой пришли). Никаких кнопок 'pet:inv' — инвентарь не открывает
+    сам себя.
+    """
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    from app.keyboards.inline import HOME_LABEL
+    back = _nav_back_cb(cb, "inv") or "pet:page:1"
+    rows = [[InlineKeyboardButton(text="⬅️ Назад", callback_data=back)],
+            [InlineKeyboardButton(text=HOME_LABEL, callback_data="menu:main")]]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 # Описания товаров генерируются из effect (единый источник правды: его же
@@ -375,9 +413,13 @@ async def inventory_screen(cb: CallbackQuery, session: AsyncSession) -> None:
         .where(PetInventory.pet_id == pet.id)
     )).all()
     if not rows:
+        # Пустой инвентарь НЕ перерисовываем вкладкой «🎒 Вещи»: там живёт
+        # кнопка «🎒 Инвентарь» → на экране инвентаря появлялась кнопка,
+        # открывающая сам инвентарь (самопетля). Рендерим вкладку точечно,
+        # исключив кнопку входа в текущий экран.
         await safe_edit_or_answer(cb.message,
             "🎒 Инвентарь пуст. Загляни в 🛒 Магазин!",
-            reply_markup=pet_hub(1),
+            reply_markup=_inv_tab_kb_without_self(),
         )
         await cb.answer()
         return
@@ -541,8 +583,12 @@ async def use_item(cb: CallbackQuery, session: AsyncSession) -> None:
     await session.flush()
     await pets.log_action(pet.id, "use", meta={"item": item.code})
     try:
+        # После применения возвращаемся на ЭКРАН ИНВЕНТАРЯ (свежий список),
+        # а не в хаб питомца и не во вкладку «🎒 Вещи» — иначе пользователь
+        # терялся, а на пустом инвентаре вкладка показывала кнопку «🎒
+        # Инвентарь» внутри самого инвентаря (самопетля).
         await safe_edit_or_answer(cb.message, f"{result}{buff_note}\n\n" + await svc.render_async(pet),
-                                  reply_markup=pet_hub(1))
+                                  reply_markup=_inv_back_kb(cb))
     finally:
         await session.commit()
     fx_kind = {"food": "feed", "drink": "item", "medicine": "heal",
