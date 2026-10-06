@@ -215,6 +215,44 @@ def test_use_item_returns_to_inventory_without_self_button():
     asyncio.run(run())
 
 
+def test_inventory_screen_has_no_inventory_word_in_buttons():
+    """Ни одна КНОПКА экрана инвентаря не содержит слово «Инвентарь».
+
+    Пользователь жаловался: открываешь инвентарь — а там кнопка
+    «Инвентарь». Раньше её роль играла декоративная пагинация-заголовок
+    «🎒 Инвентарь 📖 1/1» (callback inv:noop): callback безобидный, но
+    визуально это ровно та самая кнопка. Тест с 'pet:inv' в dump такое не
+    ловил. Теперь номер страницы — только в тексте экрана, кнопки — ◀️/▶️.
+    """
+    async def run():
+        await _prepare_db()
+        fake, _texts, _dump = await _press("pet:inv")
+
+        def _rows(kb):
+            # reply_markup в записи сессии может быть объектом InlineKeyboardMarkup
+            # или уже сериализованным dict (model_dump) — поддержать оба.
+            if kb is None:
+                return None
+            rows = getattr(kb, "inline_keyboard", None)
+            if rows is None and isinstance(kb, dict):
+                rows = kb.get("inline_keyboard")
+            return rows or None
+
+        # Собираем ТЕКСТЫ кнопок последнего reply_markup (экран инвентаря).
+        btn_texts: list[str] = []
+        for _method, data in reversed(fake.record):
+            rows = _rows(data.get("reply_markup"))
+            if rows:
+                btn_texts = [(b.text if hasattr(b, "text") else b["text"])
+                             for r in rows for b in r]
+                break
+        assert btn_texts, "не найден reply_markup экрана инвентаря"
+        offenders = [t for t in btn_texts if "инвентар" in t.lower()]
+        assert not offenders, \
+            f"на экране инвентаря кнопка со словом «Инвентарь»: {offenders} ({btn_texts})"
+    asyncio.run(run())
+
+
 # ---------------------------------------------------------------------------
 # 2) Действия на 100% заблокированы (анти-абьюз XP)
 # ---------------------------------------------------------------------------

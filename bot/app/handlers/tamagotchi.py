@@ -828,8 +828,9 @@ async def status_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     from app.keyboards.inline import with_nav
     b = InlineKeyboardBuilder()
     b.button(text="🏋️ Тренировки", callback_data="pet:train")
-    b.button(text="🎒 Инвентарь", callback_data="pet:inv")
-    b.adjust(2)
+    # «Инвентарь» на экране статуса не нужен: это не подраздел инвентаря,
+    # а карточка питомца; вход в инвентарь живёт на вкладке «🎒 Вещи».
+    b.adjust(1)
     kb = with_nav(b, "pet", cb.message.chat.id if cb.message else None).as_markup()
     await safe_edit_or_answer(cb.message, svc.status_text(pet), reply_markup=kb)
     await cb.answer()

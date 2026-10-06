@@ -3,7 +3,7 @@ from __future__ import annotations
 import html
 
 from aiogram import F, Router
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, InlineKeyboardMarkup
 from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -124,42 +124,29 @@ def _nav_back_cb(cb: CallbackQuery, section: str) -> str | None:
     return _common(section, chat_id, current_cb=entry)
 
 
-def _inv_tab_kb_without_self():
-    """Вкладка «🎒 Вещи» хаба БЕЗ кнопки «🎒 Инвентарь».
+def _inventory_kb(cb: CallbackQuery) -> InlineKeyboardMarkup:
+    """Клавиатура ЭКРАНА инвентаря — БЕЗ кнопок «🎒 Инвентарь».
 
-    Нужна для экрана инвентаря (пустой список / после применения предмета):
-    на вкладке кнопка входа есть — и, если рендерить её как есть, внутри
-    самого инвентаря появлялась кнопка, открывающая сам инвентарь
-    (самопетля). Копируем структуру pet_hub(1), исключая 'pet:inv'.
+    Инвентарь открывается из вкладки «🎒 Вещи» хаба питомца; раньше его
+    экран перерисовывался той же вкладкой, и внутри инвентаря жила кнопка,
+    открывающая сам инвентарь (самопетля). Здесь рендерятся ТОЛЬКО реальные
+    переходы: соседние подразделы «🛒 Магазин»/«✨ Стиль» (вход в инвентарь
+    'pet:inv' исключён) и строка навигации «⬅️ Назад» (во вкладку «🎒 Вещи»)
+    + «🏠 Меню». Никаких заголовков-кнопок со словом «Инвентарь» — номер
+    страницы показывается только в тексте экрана.
     """
     from aiogram.types import InlineKeyboardButton
 
-    from app.keyboards.inline import HOME_LABEL, PET_PAGES, _page_nav, _two_per_row
-    title, actions = PET_PAGES[1]  # вкладка «🎒 Вещи»
+    from app.keyboards.inline import HOME_LABEL, PET_PAGES, _two_per_row
+    _title, actions = PET_PAGES[1]  # вкладка «🎒 Вещи»
     buttons = [InlineKeyboardButton(text=t, callback_data=cb_)
                for t, cb_ in actions if cb_ != "pet:inv"]
     kb_rows = _two_per_row(buttons)
-    kb_rows.append(_page_nav("pet", 1, len(PET_PAGES), title))
-    kb_rows.append([InlineKeyboardButton(text=HOME_LABEL,
-                                         callback_data="menu:main")])
-    from aiogram.types import InlineKeyboardMarkup
-    return InlineKeyboardMarkup(inline_keyboard=kb_rows)
-
-
-def _inv_back_kb(cb: CallbackQuery):
-    """Клавиатура возврата с экрана инвентаря: «⬅️ Назад» + «🏠 Меню».
-
-    Единый источник логики «Назад» (_nav_back_cb → вкладка «🎒 Вещи»,
-    с которой пришли). Никаких кнопок 'pet:inv' — инвентарь не открывает
-    сам себя.
-    """
-    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-
-    from app.keyboards.inline import HOME_LABEL
     back = _nav_back_cb(cb, "inv") or "pet:page:1"
-    rows = [[InlineKeyboardButton(text="⬅️ Назад", callback_data=back)],
-            [InlineKeyboardButton(text=HOME_LABEL, callback_data="menu:main")]]
-    return InlineKeyboardMarkup(inline_keyboard=rows)
+    kb_rows.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=back),
+                    InlineKeyboardButton(text=HOME_LABEL,
+                                         callback_data="menu:main")])
+    return InlineKeyboardMarkup(inline_keyboard=kb_rows)
 
 
 # Описания товаров генерируются из effect (единый источник правды: его же
@@ -413,13 +400,13 @@ async def inventory_screen(cb: CallbackQuery, session: AsyncSession) -> None:
         .where(PetInventory.pet_id == pet.id)
     )).all()
     if not rows:
-        # Пустой инвентарь НЕ перерисовываем вкладкой «🎒 Вещи»: там живёт
-        # кнопка «🎒 Инвентарь» → на экране инвентаря появлялась кнопка,
-        # открывающая сам инвентарь (самопетля). Рендерим вкладку точечно,
-        # исключив кнопку входа в текущий экран.
+        # Пустой инвентарь НЕ перерисовываем вкладкой «🎒 Вещи» как есть:
+        # там живёт кнопка «🎒 Инвентарь» → на экране инвентаря появлялась
+        # кнопка, открывающая сам инвентарь (самопетля). Рендерим точечную
+        # клавиатуру экрана инвентаря без входа в текущий экран.
         await safe_edit_or_answer(cb.message,
             "🎒 Инвентарь пуст. Загляни в 🛒 Магазин!",
-            reply_markup=_inv_tab_kb_without_self(),
+            reply_markup=_inventory_kb(cb),
         )
         await cb.answer()
         return
@@ -445,12 +432,23 @@ async def inventory_screen(cb: CallbackQuery, session: AsyncSession) -> None:
              + (f" · стр. {page + 1}/{total_pages}" if total_pages > 1 else ""), ""]
     for inv, item in chunk:
         lines.append(f"{item.icon} {html.escape(item.name)} ×{inv.quantity}")
-    kb, page = paged_keyboard(
-        content_buttons, prefix="inv", title="🎒 Инвентарь", page=page,
-        back_cb=_nav_back_cb(cb, "inv"), pages=all_pages,
-        home_cb="menu:main",
-    )
-    await safe_edit_or_answer(cb.message, "\n".join(lines), reply_markup=kb)
+    # Клавиатура экрана инвентаря: страницы предметов + пагинация (◀️ 📖 ▶️,
+    # без слова «Инвентарь» в подписи) + «Назад/Меню». Кнопки «🎒 Инвентарь»
+    # здесь нет — она вела бы в текущий экран (самопетля).
+    from app.keyboards.inline import InlineKeyboardButton as _IKB
+    kb_rows = [list(r) for r in all_pages[page]]
+    if total_pages > 1:
+        prev_cb = f"inv:page:{(page - 1) % total_pages}"
+        next_cb = f"inv:page:{(page + 1) % total_pages}"
+        kb_rows.append([_IKB(text="◀️", callback_data=prev_cb),
+                        _IKB(text=f"📖 {page + 1}/{total_pages}",
+                             callback_data="inv:noop"),
+                        _IKB(text="▶️", callback_data=next_cb)])
+    nav_kb = _inventory_kb(cb)
+    kb_rows.extend(nav_kb.inline_keyboard)
+    await safe_edit_or_answer(cb.message, "\n".join(lines),
+                              reply_markup=InlineKeyboardMarkup(
+                                  inline_keyboard=kb_rows))
     await cb.answer()
 
 @router.callback_query(F.data.startswith("use:"))
@@ -588,7 +586,7 @@ async def use_item(cb: CallbackQuery, session: AsyncSession) -> None:
         # терялся, а на пустом инвентаре вкладка показывала кнопку «🎒
         # Инвентарь» внутри самого инвентаря (самопетля).
         await safe_edit_or_answer(cb.message, f"{result}{buff_note}\n\n" + await svc.render_async(pet),
-                                  reply_markup=_inv_back_kb(cb))
+                                  reply_markup=_inventory_kb(cb))
     finally:
         await session.commit()
     fx_kind = {"food": "feed", "drink": "item", "medicine": "heal",
