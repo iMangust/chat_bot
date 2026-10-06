@@ -92,6 +92,25 @@ async def cmd_manual(message: Message, session: AsyncSession) -> None:
         reply_markup=_manual_home_kb(message.chat.id))
 
 
+async def route_manual_callback(cb: CallbackQuery, session: AsyncSession) -> None:
+    """Программный диспетчер всех «manual:*» — один обработчик на все случаи.
+
+    Нужен как «мост» для роутеров, зарегистрированных без manual.router
+    (см. events.py): кнопки гида не должны молчать, если порядок регистрации
+    роутеров где-то сбился. Делегирует тем же функциям-хендлерам, что и
+    маршруты выше, поэтому поведение идентично.
+    """
+    data = cb.data or ""
+    if data.startswith("manual:species:"):
+        await cb_manual_species(cb, session)
+    elif data == "manual:stats":
+        await cb_manual_stats(cb, session)
+    elif data == "manual:games":
+        await cb_manual_games(cb, session)
+    else:  # manual:home и любые будущие подэкраны корня гида
+        await cb_manual_home(cb, session)
+
+
 # ── ⚙️ Баланс (только администраторы) ─────────────────────────────────────
 
 def _is_admin(user_id: int) -> bool:

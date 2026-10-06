@@ -129,8 +129,8 @@ def _build_update(bot, data: str) -> Update:
 ROUTER_ORDER = [
     "errors.error_router", "admin.router", "access_handlers.router",
     "start.router", "tracker.router", "tamagotchi.router", "games.router",
-    "shop.router", "merch.router", "events.router", "social.router",
-    "arena.router", "stats.router", "settings_h.router",
+    "shop.router", "merch.router", "manual.router", "events.router",
+    "social.router", "arena.router", "stats.router", "settings_h.router",
 ]
 
 
@@ -148,6 +148,7 @@ async def _build_dp():
         errors,
         events,
         games,
+        manual,
         merch,
         shop,
         social,
@@ -168,7 +169,8 @@ async def _build_dp():
     dp.callback_query.outer_middleware(errors.ErrorNotifyMiddleware())
 
     modmap = dict(access_handlers=access_handlers, admin=admin, arena=arena,
-                  errors=errors, events=events, games=games, merch=merch,
+                  errors=errors, events=events, games=games, manual=manual,
+                  merch=merch,
                   settings_h=settings_h, shop=shop, social=social,
                   start=start, stats=stats, tamagotchi=tamagotchi,
                   tracker=tracker)

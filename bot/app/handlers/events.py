@@ -418,6 +418,23 @@ except Exception as exc:  # pragma: no cover
                    "не удался): {!r} — кнопка уйдёт в catch-all", exc)
 
 
+# Мост для гида по уходу («manual:*»). Настоящие обработчики живут в
+# manual.router; этот мост — самовосстановление на случай, если manual.router
+# не зарегистрирован (или зарегистрирован позже events), чтобы кнопки вида
+# «🐱 Котёнок»/«🐶 Щенок» не глохли молча: без него коллбэк не матчится даже
+# catch-all'ом (тот фильтрует только «menu:*») и пользователь не получает
+# вообще никакой реакции на нажатие.
+try:
+    from app.handlers.manual import route_manual_callback as _manual_route
+
+    @router.callback_query(F.data.startswith("manual:"))
+    async def manual_bridge(cb: CallbackQuery, session) -> None:
+        await _manual_route(cb, session)
+except Exception as exc:  # pragma: no cover
+    logger.warning("manual:* bridge не зарегистрирован (импорт manual "
+                   "не удался): {!r} — кнопка уйдёт без ответа", exc)
+
+
 @router.callback_query(_MenuFallback())
 async def menu_any_unhandled(cb: CallbackQuery, session, bot: Bot) -> None:
     """Catch-all для «menu:*», которые никем не сматчились.
