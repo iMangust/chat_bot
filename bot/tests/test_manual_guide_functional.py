@@ -50,7 +50,6 @@ _dbs.session_factory = async_sessionmaker(
     _dbs.engine, class_=_dbs.AsyncSession, expire_on_commit=False)
 
 from aiogram.client.session.base import BaseSession
-from aiogram.methods import GetMe, SendChatAction
 from aiogram.types import CallbackQuery, Chat, Message, Update, User
 
 _captured_logs: list[str] = []
@@ -210,15 +209,15 @@ def test_species_card_renders_for_every_species():
 def test_manual_router_handles_all_home_buttons():
     """manual.router покрывает каждую кнопку домашнего экрана гида."""
     from app.handlers import manual as manual_h
-    from app.services import pet_data, pet_manual
+    from app.services import pet_data
 
     def _matches(data: str) -> bool:
         cb = CallbackQuery.model_construct(
             id="1", from_user=None, chat_instance="x", data=data, message=None)
-        for h in manual_h.router.callback_query.handlers:
-            if all(f.magic.resolve(cb) for f in h.filters):
-                return True
-        return False
+        return any(
+            all(f.magic.resolve(cb) for f in h.filters)
+            for h in manual_h.router.callback_query.handlers
+        )
 
     assert _matches("manual:home")
     assert _matches("manual:stats")
@@ -226,8 +225,6 @@ def test_manual_router_handles_all_home_buttons():
     for code in pet_data.SPECIES_DATA:
         assert _matches(f"manual:species:{code}"), \
             f"manual.router не обрабатывает кнопку вида {code!r}"
-    # и все кнопки, которые реально рисуются на домашнем экране гида
-    from aiogram.types import InlineKeyboardMarkup  # noqa: F401
 
 
 def test_species_buttons_work_without_manual_router():
