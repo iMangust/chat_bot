@@ -8,6 +8,7 @@ from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -810,6 +811,29 @@ async def act_wash(cb: CallbackQuery, session: AsyncSession) -> None:
     await PetRepository(session).log_action(pet.id, "wash")
     await _after_action(cb, session, result, fx="wash")
 
+@router.callback_query(F.data == "pet:status")
+async def status_screen(cb: CallbackQuery, session: AsyncSession) -> None:
+    """📋 Статус питомца — подробная карточка.
+
+    Показатели с полосками, боевые характеристики, снаряжение по слотам
+    (⚔️ Оружие: Клинок ветерана (+6 💪)), суммарные бонусы экипировки,
+    активные комплекты и временные баффы. Сборка — в TamagotchiService
+    .status_text() (единый источник для UI).
+    """
+    svc = TamagotchiService(session)
+    pet = await _get_pet(session, cb.from_user.id)
+    if pet is None:
+        return await cb.answer()
+    await svc.apply_decay(pet)
+    from app.keyboards.inline import with_nav
+    b = InlineKeyboardBuilder()
+    b.button(text="🏋️ Тренировки", callback_data="pet:train")
+    b.button(text="🎒 Инвентарь", callback_data="pet:inv")
+    b.adjust(2)
+    kb = with_nav(b, "pet", cb.message.chat.id if cb.message else None).as_markup()
+    await safe_edit_or_answer(cb.message, svc.status_text(pet), reply_markup=kb)
+    await cb.answer()
+
 @router.callback_query(F.data == "pet:train")
 async def train_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     pet = await _get_pet(session, cb.from_user.id)
@@ -822,19 +846,29 @@ async def train_screen(cb: CallbackQuery, session: AsyncSession) -> None:
     if deny:
         return await _deny(cb, deny)
     set_pet_page(cb.message.chat.id, 0)
+    text = await train_screen_text(svc, pet)
+    await safe_edit_or_answer(cb.message, text,
+                              reply_markup=train_menu(
+                                  cb.message.chat.id if cb.message else None))
+    await cb.answer()
+
+async def train_screen_text(svc: TamagotchiService, pet) -> str:
+    """Собирает текст экрана тренировок (заголовок + статы + таймер)."""
     sp = SPECIES_DATA.get(_species_key(pet), SPECIES_DATA["cat"])
+    left = svc.cooldown_left(pet, "train", COOLDOWN_TRAIN_SEC)
+    timer_line = (f"⏳ Перерыв после тренировки: {left} сек." if left > 0
+                  else "✅ Можно тренироваться!")
     lines = [
-        f"🏋️ <b>Тренировки {pet.name}</b>\n",
-        f"💪 Сила {pet.strength} · 🏃 Ловкость {pet.agility} · 🧠 Интеллект {pet.intellect}\n",
+        f"🏋️ <b>Тренировки {esc(pet.name)}</b>\n",
+        f"💪 Сила {pet.strength} · 🏃 Ловкость {pet.agility} · "
+        f"🧠 Интеллект {pet.intellect}\n",
         "Профильная тренировка твоего вида даёт +1 к приросту:",
         _train_profiles_line(sp["emoji"]),
         f"⚡ Тренировка стоит {TRAIN_COST_ENERGY} энергии и "
         f"{TRAIN_COST_HUNGER} сытости, перерыв — {COOLDOWN_TRAIN_SEC} сек.",
+        timer_line,
     ]
-    await safe_edit_or_answer(cb.message, "\n".join(lines),
-                              reply_markup=train_menu(
-                                  cb.message.chat.id if cb.message else None))
-    await cb.answer()
+    return "\n".join(lines)
 
 @router.callback_query(F.data.startswith("pet:train:"))
 async def act_train(cb: CallbackQuery, session: AsyncSession) -> None:
@@ -851,7 +885,29 @@ async def act_train(cb: CallbackQuery, session: AsyncSession) -> None:
     result, trained = await svc.train(pet, stat, with_result=True)
     if trained:
         await PetRepository(session).log_action(pet.id, "train", value=1)
-    await _after_action(cb, session, result, fx="train" if trained else None, stat=stat)
+        try:
+            await session.commit()
+        except Exception:
+            pass
+    # Пользователь СИДИТ на экране тренировок: после тапа остаёмся там же
+    # (перерисовываем экран с результатом и честным таймером), а не уводим
+    # в хаб питомца. При промахе (кулдаун/мало энергии) — тоже остаёмся.
+    if cb.message and cb.message.chat:
+        set_pet_page(cb.message.chat.id, 0)
+        text = await train_screen_text(svc, pet)
+        await safe_edit_or_answer(
+            cb.message, f"{result}\n\n{text}",
+            reply_markup=train_menu(cb.message.chat.id))
+    else:
+        await answer_safe(cb.message if cb.message else None, result)
+    await session.commit()
+    if trained:
+        from app.utils.fx import apply_effect
+        toast = result.split("\n")[0].strip()
+        await apply_effect(cb, "train", stat=stat,
+                           toast_override=toast[:200] or None)
+    else:
+        await cb.answer()
 
 @router.callback_query(F.data == "pet:walk")
 async def act_walk(cb: CallbackQuery, session: AsyncSession) -> None:

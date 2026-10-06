@@ -487,7 +487,8 @@ class TamagotchiService:
         return changed or walk_finished
 
     def _check_cooldown(self, pet: Pet, action: str, seconds: int,
-                        now: datetime) -> tuple[bool, int]:
+                        now: datetime, *, strict: bool = False,
+                        consume: bool = True) -> tuple[bool, int]:
         key = f"{action}_at"
         uses_key = f"{action}_uses"
         extra = pet.settings_extra or {}
@@ -503,9 +504,55 @@ class TamagotchiService:
         if elapsed >= seconds:
             self._reset_uses(pet, action)
             return True, 0
-        if int(extra.get(uses_key, 0)) <= int(balance.get_mult("free_actions")):
+        # Тренировки — ВСЕГДА строго по кулдауну (180 сек). Раньше сюда
+        # тоже попадали «бесплатные попытки», и силу/ловкость/интеллект
+        # можно было качать без перерыва (абьюз XP и характеристик).
+        if strict:
+            return False, int(seconds - elapsed)
+        # «Бесплатные действия» НЕ должны превращаться в бесконечный спам.
+        # Раньше лимит проверялся как uses <= free_actions и никогда не
+        # расходовался: действие можно было спамить каждые несколько
+        # секунд, игнорируя ожидание. Теперь за время одного окна
+        # кулдауна выдаётся фиксированное число бесплатных попыток
+        # (balance.free_actions); счётчик {action}_uses хранит их остаток
+        # и пополняется только когда cooldown полностью истёк.
+        if int(extra.get(uses_key, 0)) < int(balance.get_mult("free_actions")):
+            if consume:
+                pet.settings_extra = {**extra,
+                                      uses_key: int(extra.get(uses_key, 0)) + 1}
             return True, 0
         return False, int(seconds - elapsed)
+
+    def cooldown_left(self, pet: Pet, action: str, seconds: int,
+                      now: datetime | None = None) -> int:
+        """Сколько секунд осталось до конца окна кулдауна (0 — можно).
+
+        Только чтение состояния: ничего не списывает и не сбрасывает.
+        Нужен экранам (например, тренировкам), чтобы показать честный
+        таймер перерыва, не расходуя «бесплатные попытки»."""
+        extra = pet.settings_extra or {}
+        key = f"{action}_at"
+        if not extra.get(key):
+            return 0
+        now = now or local_now()
+        try:
+            elapsed = (now - _aware(datetime.fromisoformat(extra[key]))).total_seconds()
+        except (TypeError, ValueError):
+            return 0
+        return max(0, int(seconds - elapsed))
+
+    # Показатель считается «полным», если до 100% осталось не больше этого
+    # значения. Strict `>= 100.0` нельзя использовать как анти-абьюз-порог:
+    # apply_decay() вызывается ПЕРЕД проверкой и снимает доли процента за
+    # истекшее время (на тестовом питомце с last_update «сейчас» это
+    # 99.99), поэтому спам-кликер проходил проверку и получал XP за тапы,
+    # которые ничего не лечат — еда упирается в потолок clamp().
+    FULL_STAT_EPS = 1.0
+
+    @classmethod
+    def _is_full(cls, pet: Pet, stat: str) -> bool:
+        """Показатель практически на 100% — действие по нему бессмысленно."""
+        return float(getattr(pet, stat, 0) or 0) >= 100.0 - cls.FULL_STAT_EPS
 
     @staticmethod
     def _free_use_left(pet: Pet, action: str) -> bool:
@@ -665,6 +712,21 @@ class TamagotchiService:
         deny = self.state_deny(pet, "feed", now)
         if deny:
             return _out(deny, False)
+        # Анти-абьюз XP: кормление из кнопки «🍎 Покормить» (effect только
+        # на сытость) при полной сытости бессмысленно — еда упирается в
+        # потолок clamp(), а XP начислялся бы за каждый тап. Порог «почти
+        # полный» (FULL_STAT_EPS): apply_decay() перед этим чеком снимает
+        # доли процента за истекшее время, и строгое `>=100` пропускало
+        # спам-кликер, который тапал быстрее, чем убывал стат.
+        # Предметы с ДРУГИМИ эффектами (рыбка даёт +сила, морковка +гигиена)
+        # всё ещё проходят: их ценность не только в сытости.
+        other_gain = any(k != "hunger" and hasattr(pet, k)
+                         and isinstance(getattr(pet, k), (int, float))
+                         and float(v) > 0
+                         for k, v in (effect or {}).items())
+        if self._is_full(pet, "hunger") and not other_gain:
+            return _out("🍎 Сытость уже на 100% — питомец сыт по горло! "
+                        "XP капает только за реальную помощь.", False)
         ok, wait = self._check_cooldown(pet, "feed", COOLDOWN_FEED_SEC, now)
         if not ok:
             return _out(t("pet.cooldown_feed", sec=wait), False)
@@ -716,6 +778,10 @@ class TamagotchiService:
             return _out(deny, False)
         if pet.energy < PLAY_ENERGY_MIN:
             return _out(t("pet.too_tired_play"), False)
+        # Анти-абьюз XP: счастье на 100% — играть бессмысленно.
+        if self._is_full(pet, "happiness"):
+            return _out("😊 Счастье уже на 100% — питомец и так на седьмом "
+                        "небе! XP капает только за реальную помощь.", False)
         ok, wait = self._check_cooldown(pet, "game", COOLDOWN_PLAY_SEC, now)
         if not ok:
             return _out(f"⏳ Питомец запыхался! Подожди {wait} сек.", False)
@@ -811,6 +877,10 @@ class TamagotchiService:
         deny = self.state_deny(pet, "wash", now)
         if deny:
             return _out(deny, False)
+        # Анти-абьюз XP: гигиена на 100% — мыть бессмысленно.
+        if self._is_full(pet, "hygiene"):
+            return _out("🫧 Гигиена уже на 100% — питомец чист до блеска! "
+                        "XP капает только за реальную помощь.", False)
         ok, wait = self._check_cooldown(pet, "wash", COOLDOWN_WASH_SEC, now)
         if not ok:
             return _out(f"⏳ Мыться можно раз в {COOLDOWN_WASH_SEC // 60} минут "
@@ -883,7 +953,8 @@ class TamagotchiService:
             return _out("❓ Неизвестная тренировка.", False)
         if pet.energy < TRAIN_ENERGY_MIN:
             return _out("😩 Мало энергии для тренировки.", False)
-        ok, wait = self._check_cooldown(pet, "train", COOLDOWN_TRAIN_SEC, now)
+        ok, wait = self._check_cooldown(pet, "train", COOLDOWN_TRAIN_SEC, now,
+                                        strict=True)
         if not ok:
             return _out(f"⏳ Перерыв между тренировками: {wait} сек.", False)
         self._set_cooldown(pet, "train", now)
@@ -1459,6 +1530,124 @@ class TamagotchiService:
                 title += " 🔗"
             titles.append(title)
         return titles
+
+    def status_text(self, pet: Pet) -> str:
+        """Подробная карточка «📋 Статус» для экрана питомца.
+
+        Шарики-сборка (в отличие от render() — без погоды/погоды и логирования):
+        · шапка: стадия, вид, окрас, возраст, поколенция;
+        · уровень и опыт до следующего;
+        · показатели с полосками и подписями что делать если < 20%;
+        · боевые характеристики 💪🏃🧠;
+        · снаряжение по слотам (⚔️ Оружие: Клинок ветерана +6 💪);
+        · суммарные бонусы экипировки, активные комплекты и баффы.
+        """
+        from app.utils.formatting import stat_bar as _bar
+        sp = _species(pet)
+        mood = compute_mood(pet)
+        color_key, worn = self.customization(pet)
+        color_title = ""
+        if color_key:
+            color_title = f" · {self.PET_COLORS[color_key]['title']}"
+        stage_icon = {
+            PetStage.egg: "🥚", PetStage.baby: "🐣", PetStage.teen: "🐱",
+            PetStage.adult: "😼", PetStage.legendary: "🐲",
+        }[pet.stage]
+        born = _aware(pet.born_at) if pet.born_at else None
+        age_days = max(0, (local_now() - born).days) if born else None
+
+        lines = [
+            f"{stage_icon} <b>{esc(pet.name)}</b> · {sp['emoji']} {sp['title']}{color_title}",
+            f"Возраст: {'—' if age_days is None else f'{age_days} дн.'}"
+            f" · поколение #{pet.generation or 1}",
+            "",
+            f"🎖 Уровень {pet.level} · опыт {int(pet.xp or 0)}/{pet_xp_needed(pet.level)} "
+            f"[{_bar(pet.xp or 0, 6)}]",
+            f"{render_mood_line(pet, mood)}",
+            "",
+            "<b>📊 Показатели</b>",
+            f"🍎 Сытость   {_bar(pet.hunger)} {int(pet.hunger)}%",
+            f"😊 Счастье   {_bar(pet.happiness)} {int(pet.happiness)}%",
+            f"⚡ Энергия   {_bar(pet.energy)} {int(pet.energy)}%",
+            f"🫧 Гигиена  {_bar(pet.hygiene)} {int(pet.hygiene)}%",
+            f"❤️ Здоровье {_bar(pet.health)} {int(pet.health)}%",
+            "",
+            "<b>⚔️ Характеристики</b>",
+            f"💪 Сила {pet.strength} · 🏃 Ловкость {pet.agility} · "
+            f"🧠 Интеллект {pet.intellect}",
+            "",
+        ]
+
+        # --- Снаряжение по слотам -------------------------------------
+        gear_map = self.gear_map(pet)
+        lines.append("<b>🎽 Снаряжение</b>")
+        any_gear = False
+        for slot_code, slot_label in self.GEAR_SLOTS.items():
+            emoji = gear_map.get(slot_code)
+            if emoji:
+                info = self.PET_ACCESSORIES.get(emoji, {})
+                desc = info.get("desc") or "—"
+                lines.append(f"• {slot_label}: {emoji} {info.get('title', emoji)} ({esc(desc)})")
+                any_gear = True
+            else:
+                lines.append(f"• {slot_label}: — пусто")
+        if not any_gear:
+            lines.append("")
+            lines.append("Пусто — загляни в 🛒 Магазин («🐾 Питомец» → «🎒 Вещи»).")
+
+        # --- Суммарные бонусы ------------------------------------------
+        g = self.gear_bonuses(pet)
+        bonus_lines = []
+        if g.get("duel_power"):
+            bonus_lines.append(f"⚔️ Боевая мощь +{int(g['duel_power'])}")
+        if g.get("flat_train"):
+            bonus_lines.append(f"🏋️ +{int(g['flat_train'])} к каждой тренировке")
+        if g.get("train_yield_pct", 0) > 0:
+            bonus_lines.append(f"🏋️ Прирост тренировок +{int(g['train_yield_pct'] * 100)}%")
+        if g.get("xp_pct", 0) > 0:
+            bonus_lines.append(f"✨ Опыт +{int(g['xp_pct'] * 100)}%")
+        coin_pct = g.get("coin_mult", 0.0) + g.get("walk_coin_pct", 0.0)
+        if coin_pct > 0:
+            bonus_lines.append(f"🪙 Монеты с прогулок +{round(coin_pct * 100)}%")
+        if g.get("walk_xp_pct", 0) > 0:
+            bonus_lines.append(f"🚶 XP с прогулок +{int(g['walk_xp_pct'] * 100)}%")
+        if g.get("feed_bonus_pct", 0) > 0:
+            bonus_lines.append(f"🍎 Еда усваивается +{int(g['feed_bonus_pct'] * 100)}%")
+        for key, label in (("hunger_decay_pct", "🍎 голод"),
+                           ("happy_decay_pct", "😊 счастье"),
+                           ("energy_decay_pct", "⚡ энергия"),
+                           ("hygiene_decay_pct", "🫧 гигиена"),
+                           ("health_decay_pct", "❤️ здоровье")):
+            v = g.get(key, 0.0)
+            if v:
+                pct = int(abs(v) * 100)
+                bonus_lines.append(f"{label} {'медленнее' if v < 0 else 'быстрее'} на {pct}%/ч")
+        if g.get("sick_chance_pct", 0) < 0:
+            bonus_lines.append(f"🤢 Риск болезней −{int(abs(g['sick_chance_pct']) * 100)}%")
+        sleep_regen = g.get("sleep_regen_pct", 0.0)
+        if sleep_regen > 0:
+            bonus_lines.append(f"💤 Сон восстанавливает +{int(sleep_regen * 100)}% ⚡")
+
+        lines.append("")
+        lines.append("<b>🧲 Бонусы снаряжения</b>")
+        lines.extend(bonus_lines or ["Нет активных бонусов — экипируйся!"])
+
+        sets = self.active_sets(pet)
+        if sets:
+            lines.append("")
+            lines.append("<b>🀄 Комплекты</b>: " + ", ".join(sets))
+
+        buffs = self.active_buffs(pet)
+        if buffs:
+            labels = {"food_feast": "🍎 сытость быстрее", "xp_pct": "✨ опыт",
+                      "coin_pct": "🪙 монеты", "happy_pct": "😊 счастье",
+                      "energy_regen_pct": "💤 восстановление",
+                      "train_pct": "🏋️ тренировки", "no_decay": "⚡ без потерь"}
+            parts = [f"{labels.get(k, k)} +{int(v * 100)}%" for k, v in buffs.items()]
+            lines.append("")
+            lines.append("<b>⏳ Временные баффы</b>: " + ", ".join(parts))
+
+        return "\n".join(lines)
 
     async def buy_color(self, session: AsyncSession, pet: Pet,
                         user: User, key: str) -> str:
