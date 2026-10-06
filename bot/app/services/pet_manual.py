@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import html as _html
+import re
 
 from app.services import balance
 from app.services.pet_data import SPECIES_DATA, SPECIES_START_PRICE
@@ -109,6 +110,30 @@ def _fmt(v: float) -> str:
     return s or "0"
 
 
+def _num(v: float) -> str:
+    """Число для текста в HTML-сообщениях.
+
+    Дробные форматируются через _fmt (десятичный разделитель — точка),
+    целые выводятся как есть. Нужен вместо прямого f-строчного вывода
+    float: при локализации/случайной запятой текст вида «4,0 … (<20),
+    иначе» ронял парсер HTML у Telegram («Unsupported start tag "20),"»),
+    и карточки котёнка/щенка не открывались вовсе.
+    """
+    if v == int(v):
+        return str(int(v))
+    return _fmt(v)
+
+
+def sanitize_html(text: str) -> str:
+    """Гарант целостности HTML перед отправкой в Telegram.
+
+    Любой одиночный «<», который Telegram принял бы за начало тега
+    (например «здоровью (<20), иначе»), экранируется. Легальные теги
+    (буква или «/» сразу после «<») остаются нетронутыми.
+    """
+    return re.sub(r"<(?![a-zA-Z/])", "&lt;", text)
+
+
 def _pref_line(delta: int) -> str:
     if delta >= 4:
         word = "обожает"
@@ -138,17 +163,17 @@ def stats_guide_text() -> str:
                     "Все они постепенно падают — задача владельца не дать "
                     "им опуститься ниже критических порогов.", ""]
 
-    L.append(f"<b>🍎 Сытость</b> — падает ~{_fmt(d['hunger_decay'])}/час.")
+    L.append(f"<b>🍎 Сытость</b> — падает ~{_num(d['hunger_decay'])}/час.")
     L.append(f"  Поднимают: кормёжка из магазина ({COOLDOWN_FEED_SEC} с между приёмами).")
     L.append("  Вкусная еда (🍰 тортик, 🍩 пончик) даёт бонус к счастью;")
     L.append(f"  ниже {HUNGER_GRUEL_THRESHOLD} питомец объявляет голод, "
              f"ниже {LOW_STAT_SICK_RISK} начинает болеть ❤️.")
     L.append(f"  Тренировка тратит −{TRAIN_COST_HUNGER} 🍎.")
     L.append("")
-    L.append(f"<b>😊 Счастье</b> — самое «медленное»: ~{_fmt(d['happy_decay'])}/час,")
+    L.append(f"<b>😊 Счастье</b> — самое «медленное»: ~{_num(d['happy_decay'])}/час,")
     L.append("  но его сильнее всего меняют вид, сезон и погода.")
     L.append("  Поднимают: 🎾 игры (победа ≈ +"
-             + _fmt(d["play_win"]) + " × множитель вида), прогулки (+"
+             + _num(d["play_win"]) + " × множитель вида), прогулки (+"
              + str(w_lo) + "…" + str(w_hi) + " за")
     L.append("  события), вкусная еда, друзья (+" + str(FRIEND_MAKE_HAPPY)
              + " за знакомство),")
@@ -159,15 +184,15 @@ def stats_guide_text() -> str:
     wash_haters = [sp["emoji"] for sp in SPECIES_DATA.values()
                    if sp["prefers"].get("wash", 0) <= -2]
     L.append("  водобоязненных (" + "/".join(wash_haters) + "), дождь, скука (−"
-             + _fmt(d["boredom_penalty"]) + " через")
-    L.append(f"  {_fmt(d['boredom_hours'])} ч без заботы).")
+             + _num(d["boredom_penalty"]) + " через")
+    L.append(f"  {_num(d['boredom_hours'])} ч без заботы).")
     L.append("  ⚠️ Играйте даже когда «проигрываете» — за поражение тоже")
-    L.append(f"  начисляется +{_fmt(d['play_lose'])} 😊.")
+    L.append(f"  начисляется +{_num(d['play_lose'])} 😊.")
     L.append("")
-    L.append(f"<b>⚡ Энергия</b> — падает ~{_fmt(d['energy_decay'])}/час днём.")
+    L.append(f"<b>⚡ Энергия</b> — падает ~{_num(d['energy_decay'])}/час днём.")
     L.append("  Восстанавливает только сон (~"
-             + _fmt(d["sleep_regen"]) + "/час; виды с бонусом сна — "
-             + ", ".join(f"{sp['emoji']} +{_fmt(sp['bonus']['sleep_bonus'])} ⚡/ч"
+             + _num(d["sleep_regen"]) + "/час; виды с бонусом сна — "
+             + ", ".join(f"{sp['emoji']} +{_num(sp['bonus']['sleep_bonus'])} ⚡/ч"
                          for sp in SPECIES_DATA.values()
                          if sp["bonus"]["sleep_bonus"] > 0) + ").")
     L.append(f"  Ниже {PLAY_ENERGY_MIN} — игры недоступны, "
@@ -175,7 +200,7 @@ def stats_guide_text() -> str:
     L.append(f"  Тратят: игра −{PLAY_COST_ENERGY} ⚡, тренировка "
              f"−{TRAIN_COST_ENERGY} ⚡.")
     L.append("")
-    L.append(f"<b>🫧 Гигиена</b> — падает ~{_fmt(d['hygiene_decay'])}/час.")
+    L.append(f"<b>🫧 Гигиена</b> — падает ~{_num(d['hygiene_decay'])}/час.")
     L.append(f"  Поднимает 🫧 мытьё (+{WASH_BASE_HYGIENE}, раз в "
              f"{COOLDOWN_WASH_SEC // 60} минут). Ниже {LOW_STAT_SICK_RISK} — риск болезни.")
     L.append(f"  Тратят: игра −{PLAY_COST_HYGIENE} 🫧, лужа на прогулке "
@@ -187,7 +212,7 @@ def stats_guide_text() -> str:
     L.append("  Пачкается медленнее всех: " + "/".join(dirt_slow)
              + "; быстрее: " + "/".join(dirt_fast) + ".")
     L.append("")
-    L.append(f"<b>❤️ Здоровье</b> — тикает вниз ({_fmt(d['health_decay'])}/час) только")
+    L.append(f"<b>❤️ Здоровье</b> — тикает вниз ({_num(d['health_decay'])}/час) только")
     L.append(f"  когда 🍎 или 🫧 ниже {LOW_STAT_SICK_RISK}. При health &lt; "
              f"{SICK_THRESHOLD} питомец может заболеть 🤒 (не мгновенно —")
     L.append("  с каждым часом растёт шанс), тогда нужна 💊 аптечка.")
@@ -196,10 +221,10 @@ def stats_guide_text() -> str:
     L.append("  не тренируется и не гуляет, пока его не вылечишь.")
     L.append("")
     L.append("🛟 <b>Страховка от забвения:</b> если питомец не получал заботу")
-    L.append(f"  более {_fmt(d['boredom_hours'])} часов — однократный штраф")
-    L.append(f"  −{_fmt(d['boredom_penalty'])} 😊 («скука»). Корми, играй, гуляй —")
+    L.append(f"  более {_num(d['boredom_hours'])} часов — однократный штраф")
+    L.append(f"  −{_num(d['boredom_penalty'])} 😊 («скука»). Корми, играй, гуляй —")
     L.append("  и таймер обнулится.")
-    return "\n".join(L)
+    return sanitize_html("\n".join(L))
 
 
 GAME_TIPS: list[tuple[str, str]] = [
@@ -217,8 +242,8 @@ def games_guide_text() -> str:
     d = balance.snapshot()
     L: list[str] = ["🎮 <b>Мини-игры</b>", "",
                     "Любая игра вызывает то же действие, что и кнопка «Играть»: ",
-                    "победа → +" + _fmt(d["play_win"]) + " 😊 × множитель вида, "
-                    "поражение → +" + _fmt(d["play_lose"]) + " 😊.",
+                    "победа → +" + _num(d["play_win"]) + " 😊 × множитель вида, "
+                    "поражение → +" + _num(d["play_lose"]) + " 😊.",
                     "Проигрывать НЕ страшно — счастье растёт в любом исходе,",
                     "плюс XP питомцу.", "",
                     f"⏱ Кулдаун {COOLDOWN_PLAY_SEC} секунд — дальше по кнопочке",
@@ -230,7 +255,7 @@ def games_guide_text() -> str:
     for _code, sp in SPECIES_DATA.items():
         m = sp["bonus"]["play_happy"]
         note = " 🐱 любимец игр" if m > 1.15 else (" ⚠️ не любит игры" if m < 1 else "")
-        L.append(f"  {sp['emoji']} {sp['title']}: ×{_fmt(m)}{note}")
+        L.append(f"  {sp['emoji']} {sp['title']}: ×{_num(m)}{note}")
     L += ["", "<b>Ассортимент:</b>"]
     for name, tip in GAME_TIPS:
         L.append(f"  {name} — {tip}")
@@ -241,8 +266,8 @@ def games_guide_text() -> str:
     valentine = HOLIDAY_EFFECTS.get((2, 14), {})
     hol_mult = valentine.get("play_happy")
     if hol_mult and hol_mult != 1.0:
-        L += ["", f"💘 14 февраля все игры дают счастье ×{_fmt(hol_mult)}."]
-    return "\n".join(L)
+        L += ["", f"💘 14 февраля все игры дают счастье ×{_num(hol_mult)}."]
+    return sanitize_html("\n".join(L))
 
 
 # ── Карточка вида ──────────────────────────────────────────────────────────
@@ -260,17 +285,17 @@ def species_season_notes(code: str) -> list[str]:
                                    stat_key)
             verdict = "быстрее" if mult > 1 else "медленнее"
             notes.append(f"{SEASON_RU[season]}: {label} падает {verdict} "
-                         f"(×{_fmt(mult)}, у всех)")
+                         f"(×{_num(mult)}, у всех)")
     _sp_m = SPRING_ALL_HAPPY_MULT
     notes.append(f"🌸 весну: 😊 грустнеет {'быстрее' if _sp_m > 1 else 'медленнее'} "
-                 f"(×{_fmt(_sp_m)}, у всех)")
+                 f"(×{_num(_sp_m)}, у всех)")
     for season, mods in sorted(SPECIES_SEASON_DECAY_MULT.get(code, {}).items()):
         for stat_key, mult in sorted(mods.items()):
             label = STAT_EMOJI.get({"happy": "happiness"}.get(stat_key, stat_key),
                                    stat_key)
             verdict = f"{label} тратится быстрее" if mult > 1 \
                 else f"{label} бережётся"
-            notes.append(f"{SEASON_RU[season]} (этот вид): ×{_fmt(mult)} — {verdict}")
+            notes.append(f"{SEASON_RU[season]} (этот вид): ×{_num(mult)} — {verdict}")
     return notes
 
 
@@ -302,8 +327,10 @@ def tactics_for(code: str, sp: dict) -> list[str]:
         t.append("   всё равно падает медленно, держи её высокой ради здоровья.")
     if prefers.get("wash", 0) <= -2:
         t.append("⛲ Воды не любит: после мытья −" + str(-prefers["wash"]) + " 😊.")
+        # Скобки вокруг числа обязательны: «(<20), иначе» Telegram-парсер
+        # HTML принимает за открывающий тег («Unsupported start tag "20),"»).
         t.append(f"   Мой только когда 🫧 угрожает здоровью "
-                 f"(<{LOW_STAT_SICK_RISK}), иначе терпи.")
+                 f"(ниже ({_num(LOW_STAT_SICK_RISK)})) — иначе терпи.")
     if prefers.get("train", 0) >= 4:
         # Динамический список профилистов: берём из ЗЕРКАЛА train()
         # (_profile_stat_for), поэтому текст не может разойтись с кодом.
@@ -325,7 +352,7 @@ def tactics_for(code: str, sp: dict) -> list[str]:
         t.append(f"   Профилисты по всем тренировкам: {who}.")
         t.append(f"   Формула прироста: {train_gain_formula_text()}.")
     if bonus["sleep_bonus"] > 0:
-        t.append(f"😴 Сон — его топливо (+{_fmt(bonus['sleep_bonus'])} ⚡/ч сверх нормы):")
+        t.append(f"😴 Сон — его топливо (+{_num(bonus['sleep_bonus'])} ⚡/ч сверх нормы):")
         t.append("   спи чаще, энергии хватает на больше активностей в день.")
     if decay.get("energy", 1.0) >= 1.2:
         t.append(f"⚡ Быстро устаёт — следи за энергией, не давай ей упасть "
@@ -336,10 +363,10 @@ def tactics_for(code: str, sp: dict) -> list[str]:
         t.append("😊 Грустит быстрее обычного — заходи хотя бы раз в несколько часов,")
         t.append(f"   иначе поймаешь штраф за скуку (−{int(balance.get_mult('boredom_penalty'))}).")
     if bonus["coin_mult"] > 1.0:
-        t.append(f"🪙 Добытчик: монеты с прогулок ×{_fmt(bonus['coin_mult'])} —")
+        t.append(f"🪙 Добытчик: монеты с прогулок ×{_num(bonus['coin_mult'])} —")
         t.append("   зарабатывай на экипировку именно им.")
     if bonus["xp_mult"] > 1.0:
-        t.append(f"✨ Учётся быстро: XP ×{_fmt(bonus['xp_mult'])} — расти выше других.")
+        t.append(f"✨ Учётся быстро: XP ×{_num(bonus['xp_mult'])} — расти выше других.")
     rarest_price = max(SPECIES_START_PRICE.values())
     is_rarest = SPECIES_START_PRICE.get(code) == rarest_price and rarest_price > 0
     if is_rarest:
@@ -413,8 +440,8 @@ def species_text(code: str) -> str | None:
     st = sp["start"]
     L.append(f"📈 Стартовые статы: 💪 {st['strength']} · 🦋 {st['agility']} · 🧠 {st['intellect']}")
     b = sp["bonus"]
-    L.append(f"🎾 Игры: ×{_fmt(b['play_happy'])} 😊 · ✨ XP: ×{_fmt(b['xp_mult'])}"
-             f" · 🪙 Монеты: ×{_fmt(b['coin_mult'])} · 😴 Сон: +{_fmt(b['sleep_bonus'])} ⚡/ч")
+    L.append(f"🎾 Игры: ×{_num(b['play_happy'])} 😊 · ✨ XP: ×{_num(b['xp_mult'])}"
+             f" · 🪙 Монеты: ×{_num(b['coin_mult'])} · 😴 Сон: +{_num(b['sleep_bonus'])} ⚡/ч")
     L.append("")
 
     L.append("<b>Что любит и не любит</b>")
@@ -436,7 +463,7 @@ def species_text(code: str) -> str | None:
                               "energy": "energy_decay", "hygiene": "hygiene_decay"}[k])
         eff = v * m
         mark = "" if abs(m - 1.0) < 0.01 else (" ⬆" if m > 1 else " ⬇")
-        bits.append(f"{lbl} {_fmt(eff)}/ч{mark}")
+        bits.append(f"{lbl} {_num(eff)}/ч{mark}")
     L.append("  " + " · ".join(bits))
     L.append("")
 
@@ -460,11 +487,11 @@ def species_text(code: str) -> str | None:
         L.append("<b>Полезная экипировка</b>")
         for g in gt:
             L.append(f"  • {g}")
-    return "\n".join(L)
+    return sanitize_html("\n".join(L))
 
 
 def home_text() -> str:
     L = ["📖 <b>Гид по уходу за питомцем</b>", "",
          "Здесь живая справка — она всегда показывает актуальные цифры из",
          "настроек баланса, а не застывший текст. Выбери тему:", ""]
-    return "\n".join(L)
+    return sanitize_html("\n".join(L))
