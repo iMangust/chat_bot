@@ -83,6 +83,11 @@ COOLDOWN_FEED_SEC = 60      # перерыв между кормлениями
 COOLDOWN_WASH_SEC = 300     # мыться можно раз в 5 минут
 COOLDOWN_PLAY_SEC = 120     # «питомец запыхался» между играми
 COOLDOWN_TRAIN_SEC = 180    # перерыв между тренировками
+# 😴 Минимальный перерыв МЕЖДУ отбоями (не считая самого сна): без него
+# эксплойт «короткие сны» ломал баланс ухода — прерванный сон мгновенно
+# открывал новое окно сна, и цикл «заснул↔разбудил» приносил чистую
+# прибыль ⚡ (реген во сне 8–12/ч против декея бодрствования 1.2/ч).
+SLEEP_MIN_GAP_SEC = 30 * 60
 # Цены действий в статах. Тексты (pet_manual, HELP_TEXT, экраны handlers)
 # обязаны печатать эти значения, а не литералы — иначе справка расходится
 # с механикой (исторический баг: в экране тренировок было «15 энергии»,
@@ -146,10 +151,17 @@ def sleep_regen_per_hour(sp: dict | None = None) -> float:
     Единая точка правды: используется и в apply_decay (тик во время сна),
     и в wake() (итог «сколько энергии набрал») — раньше они расходились,
     и текст пробуждения обещал меньше, чем реально начислялось.
+
+    Скорость регена сознательно НИЖЕ, чем дневной декей энергии ×5
+    (8…12 ⚡/ч против 1.2 ⚡/ч): иначе цикл «заснул на минуту → разбудил»
+    приносил бы чистую прибыль ⚡ быстрее реального времени и превращал
+    сон в эксплойт вместо уходовой механики.
     """
     bonus = float((sp or {}).get("bonus", {}).get("sleep_bonus", 0.0))
     from app.services import balance
     return (DECAY_PER_HOUR["energy_sleep"] + bonus) * balance.get_mult("sleep_regen")
+
+
 PET_XP_BASE = 30.0
 
 STAGE_BY_LEVEL = [
@@ -329,6 +341,13 @@ class TamagotchiService:
         sleep_regen = sleep_regen_per_hour(sp) * self.action_modifier(pet, "sleep_regen")
 
         was_sleeping = pet.is_sleeping
+        # Баланс: пока питомец гуляет, сон не засчитывается (см. sleep():
+        # будильник сдвигается за конец прогулки). Защита от цикла
+        # «прогулка → короткий сон с полным регеном ⚡ → досрочный возврат».
+        walking_now = bool(getattr(pet, "walk_until", None)) and \
+            _aware(pet.walk_until) > now
+        if was_sleeping and walking_now:
+            was_sleeping = False
         woke_up = False
         sleep_from = _aware(pet.sleep_started_at) if was_sleeping and pet.sleep_started_at else None
         # Момент срабатывания будильника (для фазового расчёта сна и «скуки»)
@@ -350,28 +369,29 @@ class TamagotchiService:
             # интервал (часы/сутки) целиком начислялся как сон либо energy
             # ставилась в 100 разом — оба варианта ломали баланс и
             # маскировали «скуку».
-            # Граница «сна» = максимум из будильника и конца планового сна
-            # (sleep_started_at + planned_h), но не позже now. Так честный
-            # недосып (разбудили раньше будильника) не превращается в
-            # мгновенные 100⚡. Но если питомец реально ПРОСПАЛ будильник
-            # (текущий тик догоняет опоздание больше суток назад), хвост
-            # после сигнала тоже засчитывается сном: иначе забытый на сутки
-            # питомец терял бы счастье/гигиену за всё время «проспанного»
-            # отсутствия, хотя физически лежал и спал. Просрочка ограничена
-            # сверху 24 ч (за дальний горизонт отвечает штраф «скуки»).
-            sleep_end = alarm
-            if sleep_from is not None:
-                sleep_end = max(sleep_end or datetime.min.replace(tzinfo=sleep_from.tzinfo),
-                                sleep_from + timedelta(hours=planned_h))
-            if sleep_end is not None and alarm is not None and now >= alarm:
-                sleep_end = max(sleep_end, min(now, alarm + timedelta(hours=24)))
-            if sleep_end is not None:
-                sleep_end = min(sleep_end, now)
+            # Граница «сна» — единая формула _sleep_boundary (её же
+            # использует wake() для итоговых цифр): максимум из будильника
+            # и конца планового сна (sleep_started_at + planned_h), но не
+            # позже now. Так честный недосып (разбудили раньше будильника)
+            # не превращается в мгновенные 100⚡. Но если питомец реально
+            # ПРОСПАЛ будильник (текущий тик догоняет опоздание больше
+            # суток назад), хвост после сигнала тоже засчитывается сном:
+            # иначе забытый на сутки питомец терял бы счастье/гигиену за
+            # всё время «проспанного» отсутствия, хотя физически лежал и
+            # спал. Просрочка ограничена сверху 24 ч (за дальний горизонт
+            # отвечает штраф «скуки»). Для legacy-питомцев без
+            # sleep_started_at граница ведётся СТРОГО по будильнику —
+            # иначе весь интервал до now засчитывался сном: декей
+            # счастья/гигиены замораживался, а ⚡ получала лишние часы
+            # регена даже после пробуждения.
+            sleep_end = self._sleep_boundary(sleep_from, alarm, planned_h,
+                                             last, now)
             if sleep_end is not None:
                 asleep_hours = max(0.0, min((sleep_end - last).total_seconds() / 3600.0, hours))
             else:
                 asleep_hours = hours
             awake_hours = max(0.0, hours - asleep_hours)
+            energy_before_tick = float(pet.energy or 0)
             pet.energy = clamp(pet.energy + sleep_regen * asleep_hours)
             pet.hunger = clamp(pet.hunger - decay_hunger * 0.5 * asleep_hours)
             if awake_hours > 0:
@@ -387,6 +407,16 @@ class TamagotchiService:
                 pet.sleep_started_at = None
                 pet.happiness = clamp(pet.happiness + species_pref_delta(pet, "sleep"))
                 woke_up = True
+                # Итог сна кладём в «почтовый ящик»: планировщик разбудил
+                # питомца сам, и без этой метки игрок терял информацию
+                # (кнопка «Разбудить» позже возвращала «Он и не спит»).
+                # Цифры — фактические: дельта ⚡ этого тика (реген сна
+                # минус декей бодрствования), а не теоретическое
+                # «slept_h × regen», которое завышало итог при недосыпе.
+                gained_e = max(0, round(float(pet.energy or 0) - energy_before_tick))
+                pet.settings_extra = {**(pet.settings_extra or {}),
+                                      "wake_report": {"hours": round(asleep_hours, 1),
+                                                      "energy": gained_e}}
         else:
             pet.energy = clamp(pet.energy - decay_energy_day * hours)
             pet.hunger = clamp(pet.hunger - decay_hunger * hours)
@@ -396,7 +426,7 @@ class TamagotchiService:
         # Гигиена во сне тоже не пачкается. При пробуждении по будильнику
         # время ПОСЛЕ сигнала будильника питомец фактически бодрствует —
         # декеи счастья/гигиены идут только на эту «проспанную» часть.
-        sleeping_now = pet.is_sleeping
+        sleeping_now = pet.is_sleeping and not walking_now
         if sleeping_now:
             # Всё ещё спит (будильник не сработал): счастье и гигиена
             # заморожены полностью.
@@ -504,9 +534,14 @@ class TamagotchiService:
         if elapsed >= seconds:
             self._reset_uses(pet, action)
             return True, 0
-        # Тренировки — ВСЕГДА строго по кулдауну (180 сек). Раньше сюда
+        # Тренировки и сон — ВСЕГДА строго по кулдауну. Раньше сюда
         # тоже попадали «бесплатные попытки», и силу/ловкость/интеллект
         # можно было качать без перерыва (абьюз XP и характеристик).
+        # Для сна (strict=True) это критично вдвойне: «бесплатные
+        # действия» переписывают <action>_at на каждом тапе (_set_cooldown),
+        # и без strict цикл из free_actions коротких снов перезапускал бы
+        # окно SLEEP_MIN_GAP_SEC мгновенно — эксплойт «короткие сны»
+        # возвращался бы в обход анти-абьюз порога.
         if strict:
             return False, int(seconds - elapsed)
         # «Бесплатные действия» НЕ должны превращаться в бесконечный спам.
@@ -557,8 +592,13 @@ class TamagotchiService:
     @staticmethod
     def _free_use_left(pet: Pet, action: str) -> bool:
         from app.services import balance
+        # Строго «меньше»: счётчик uses хранит ЧИСЛО ИСПОЛЬЗОВАННЫХ
+        # бесплатных попыток за текущее окно кулдауна. При `<=` лимит
+        # превышался на единицу и окно перезапускалось после каждого
+        # действия — байпас превращал лимит в ускоритель (например,
+        # 80 кормлений/час вместо разрешённых 60).
         return int((pet.settings_extra or {}).get(f"{action}_uses", 0)) \
-            <= int(balance.get_mult("free_actions"))
+            < int(balance.get_mult("free_actions"))
 
     @staticmethod
     def _reset_uses(pet: Pet, action: str) -> None:
@@ -816,13 +856,30 @@ class TamagotchiService:
         """
         return {"rock": "paper", "paper": "scissors", "scissors": "rock"}[hand]
 
-    def guess_range(self, pet: Pet) -> tuple[int, int]:
-        half = max(3, 10 - pet.intellect // 2)
+    def guess_range(self, pet: Pet) -> tuple[int, tuple[int, int]]:
+        """Пара (секрет, коридор подсказки [lo, hi]).
+
+        Аннотация была неверна (обещала только коридор) — вызывающий код
+        в handlers/games.py распаковывает ДВА элемента; теперь сигнатура
+        соответствует факту.
+        """
+        half = max(3, 10 - (pet.intellect or 0) // 2)
         # Секрет игры не должен предсказываться из состояния PRNG процесса —
         # берём энтропию из OS (secrets), а не random.
         secret = secrets.randbelow(GUESS_RANGE_MAX) + 1
         lo, hi = max(1, secret - half), min(GUESS_RANGE_MAX, secret + half)
         return secret, (lo, hi)
+
+    # Минимальная длительность «полноценного» сна (часы). Кумулятивный
+    # баланс делает короткий сон невыгодным САМ по себе: реген ⚡ во сне
+    # (8–12/ч) ниже, чем декей бодрствования ×5 (6/ч), поэтому цикл
+    # «заснул↔разбудил» уже не приносит чистой прибыли энергии — см.
+    # SLEEP_MIN_GAP_SEC и sleep_regen_per_hour(). Порог нужен для ЧЕСТИ
+    # текста: при недосыпе wake() честно сообщает фактическую дельту ⚡
+    # (она может быть отрицательной → показываем 0) и добавляет пометку
+    # «питомец не выспался». Раньше здесь же начислялся ВТОРОЙ слой
+    # регена поверх apply_decay — двойное начисление ⚡.
+    MIN_SLEEP_HOURS = 0.5
 
     async def sleep(self, pet: Pet, hours: int = SLEEP_DEFAULT_HOURS) -> str:
         now = local_now()
@@ -835,33 +892,144 @@ class TamagotchiService:
             return deny
         if pet.is_sleeping:
             return t("pet.already_sleeping")
+        # Анти-эксплойт «коротких снов»: между отбоями обязателен перерыв
+        # (см. SLEEP_MIN_GAP_SEC). Кулдаун НЕ замораживается во сне — ровно
+        # как и кулдауны остальных действий (единое правило баланса):
+        # окно отсчитывается от ЗАСЫПАНИЯ, поэтому сразу после пробуждения
+        # тапать «заснул↔разбудил» по кругу нельзя, сколько бы часов ни
+        # длился предыдущий сон.
+        ok, wait = self._check_cooldown(pet, "sleep", SLEEP_MIN_GAP_SEC, now,
+                                        strict=True)
+        if not ok:
+            m = max(1, round(wait / 60))
+            return (f"😴 {pet.name} совсем недавно спал — следующий сон "
+                    f"примерно через {m} мин.")
         pet.is_sleeping = True
         pet.sleep_started_at = now
-        pet.sleep_until = now + timedelta(hours=hours)
+        # Баланс (закрыт эксплойт «усни на прогулке»): если питомец уже гуляет,
+        # будильник ставится за конец прогулки — иначе цикл
+        # «прогулка → короткий сон с полным регеном ⚡ → досрочный возврат»
+        # превращал бы прогулку в бесплатную подзарядку энергии. Пока идёт
+        # прогулка, apply_decay не засчитывает сон (см. was_sleeping/walking_now).
+        walk_guard = None
+        if getattr(pet, "walk_until", None) and self.on_walk(pet, now):
+            walk_guard = _aware(pet.walk_until)
+        sleep_start = walk_guard if walk_guard and walk_guard > now else now
+        pet.sleep_until = sleep_start + timedelta(hours=hours)
         # Длительность планового сна — в settings_extra: apply_decay по ней
         # отличает настоящий сон от «проспанного» хвоста после будильника,
         # даже если sleep_started_at затёрт.
-        pet.settings_extra = {**(pet.settings_extra or {}), "sleep_hours": hours}
+        extra = {**(pet.settings_extra or {}), "sleep_hours": hours}
+        if sleep_start != now:
+            extra["sleep_starts_after_walk"] = sleep_start.isoformat()
+        else:
+            extra.pop("sleep_starts_after_walk", None)
+        pet.settings_extra = extra
         self._set_cooldown(pet, "sleep", now)
+        if sleep_start != now:
+            return (t("pet.fell_asleep", time=f"{pet.sleep_until:%H:%M}")
+                    + f"\n🚶 Заснёт сразу, как вернётся с прогулки"
+                      f" (~{f'{_aware(pet.walk_until):%H:%M}'}).")
         return t("pet.fell_asleep", time=f"{pet.sleep_until:%H:%M}")
 
     async def wake(self, pet: Pet) -> str:
         now = local_now()
+        # Снимка «до тика»: energy ДО apply_decay — честная база для итога.
+        energy_before = float(pet.energy or 0)
         await self.apply_decay(pet, now)
         if not pet.is_sleeping:
+            # Планировщик уже разбудил питомца по будильнику? Тогда вместо
+            # бесполезного «Он и не спит» показываем сохранённый итог сна —
+            # игрок не теряет информацию о том, сколько ⚡ накопилось.
+            report = (pet.settings_extra or {}).get("wake_report")
+            if report:
+                pet.settings_extra = {k: v for k, v in (pet.settings_extra or {}).items()
+                                      if k != "wake_report"}
+                return t("pet.woken", hours=self._fmt_hours(report.get("hours", 0)),
+                         energy=int(report.get("energy", 0))) + \
+                    "\n⏰ Он проснулся сам по будильнику."
             return t("pet.not_sleeping")
-        slept_h = 0.0
-        if pet.sleep_started_at:
-            slept_h = max(0.0, (now - _aware(pet.sleep_started_at)).total_seconds() / 3600.0)
-        elif pet.sleep_until:
-            planned = SLEEP_DEFAULT_HOURS
-            left = max(0.0, (_aware(pet.sleep_until) - now).total_seconds() / 3600.0)
-            slept_h = max(0.0, planned - left)
+        # Единый источник правды: длительность сна = сколько ЭТОГО ТИКА
+        # apply_decay засчитал сном (фазовый расчёт в ветке was_sleeping),
+        # а не «now − время засыпания». Раньше wake() считал весь интервал
+        # от sleep_started_at: текст пробуждения завышал итог (при
+        # недосыпе часть интервала — бодрствование, где ⚡ убывает) либо
+        # занижал его (если тик догонял опоздание и часть «после
+        # будильника» тоже была засчитана сном). Теперь цифры сообщения
+        # всегда совпадают с реальной дельтой карточки.
+        slept_h = self._asleep_hours_for_tick(pet, now)
+        woke_by_alarm = bool(pet.sleep_until and now >= _aware(pet.sleep_until))
         pet.is_sleeping = False
         pet.sleep_until = None
         pet.sleep_started_at = None
-        gained = round(slept_h * sleep_regen_per_hour(sp=_species(pet)))
-        return t("pet.woken", hours=f"{slept_h:.1f}".rstrip("0").rstrip("."), energy=gained)
+        # Честный итог: фактическая дельта ⚡ за тик — ровно то, что
+        # начислил apply_decay (фазовый реген сна минус декей
+        # бодрствования). Раньше сюда прибавлялся ВТОРОЙ слой регена
+        # поверх уже применённого — двойное начисление ⚡; при полном
+        # сне оно удваивало прибыль, при недосыпе расходилось с
+        # карточкой. Эксплойт «короткие сны» закрыт кумулятивно: реген
+        # во сне (8–12/ч) ниже декея бодрствования ×5 (6/ч), плюс между
+        # отбоями обязателен перерыв SLEEP_MIN_GAP_SEC.
+        gained = max(0, round(float(pet.energy or 0) - energy_before))
+        note = ""
+        if slept_h < self.MIN_SLEEP_HOURS:
+            note = ("\n😪 Сон слишком короткий — питомец не выспался, "
+                    "энергия почти не восстановилась.")
+        elif woke_by_alarm:
+            # Пробуждение «в срок» (будильник): видовой бонус 😊 из
+            # apply_decay уже применён — не плодим двойные начисления.
+            note = "\n😊 Выспался в срок — настроение подросло."
+        return (t("pet.woken", hours=self._fmt_hours(slept_h), energy=gained)
+                + note)
+
+    @staticmethod
+    def _fmt_hours(v) -> str:
+        try:
+            s = f"{float(v):.1f}"
+        except (TypeError, ValueError):
+            s = "0"
+        return s.rstrip("0").rstrip(".") or "0"
+
+    @staticmethod
+    def _sleep_boundary(started_dt: datetime | None, alarm_dt: datetime | None,
+                        planned_h: float, last: datetime, now: datetime):
+        """Граница «сна» внутри тика [last, now] — ЕДИНАЯ формула для
+        apply_decay и wake(). Возвращает None, если сон не ограничен
+        (тогда весь тик считается сном)."""
+        sleep_end = alarm_dt
+        if started_dt is not None:
+            sleep_end = max(sleep_end or datetime.min.replace(tzinfo=started_dt.tzinfo),
+                            started_dt + timedelta(hours=planned_h))
+        if sleep_end is not None and alarm_dt is not None and now >= alarm_dt:
+            # Проспанный будильник: хвост после сигнала тоже засчитываем
+            # сном, но не дальше 24 ч (за дальний горизонт отвечает штраф
+            # «скуки»).
+            sleep_end = max(sleep_end, min(now, alarm_dt + timedelta(hours=24)))
+        if sleep_end is not None:
+            sleep_end = min(sleep_end, now)
+        return sleep_end
+
+    def _asleep_hours_for_tick(self, pet: Pet, now: datetime) -> float:
+        """Часы сна внутри последнего тика [last_update, now] — ровно та
+        фаза, которую начислил apply_decay (общая граница сна)."""
+        started = getattr(pet, "sleep_started_at", None)
+        until = getattr(pet, "sleep_until", None)
+        last = _aware(pet.last_update)
+        hours = max(0.0, (now - last).total_seconds() / 3600.0)
+        if started is None and until is None:
+            return hours
+        planned_h = 8.0
+        try:
+            planned_h = float((pet.settings_extra or {}).get("sleep_hours", 8) or 8)
+        except (TypeError, ValueError):
+            pass
+        sleep_end = self._sleep_boundary(
+            _aware(started) if started is not None else None,
+            _aware(until) if until is not None else None,
+            planned_h, last, now)
+        if sleep_end is None:
+            return hours
+        return max(0.0, min((sleep_end - last).total_seconds() / 3600.0, hours))
 
     async def wash(self, pet: Pet, *, with_result: bool = False):
         now = local_now()
@@ -899,6 +1067,16 @@ class TamagotchiService:
                       happy=("+" if mood >= 0 else "") + str(mood)), True)
 
     async def heal(self, pet: Pet, *, with_result: bool = False):
+        """💊 Лечение из аптечки.
+
+        Контракт вызова: handlers/shop.py СПИСОЧНЫМ ИДЁТ предмет 💊 из
+        инвентаря (delete-then-heal в одной транзакции БД). Сервис
+        намеренно не принимает никаких «предпросмотрных» флагов: раньше
+        существовал параметр consumed=False, через который прямой вызов
+        сервиса мог начислить ❤️ и XP без списания предмета — лечебница
+        обходилась кодом, минуя экономику аптечки. Эффект (❤️ +XP) теперь
+        применить нельзя, не заплатив 💊.
+        """
         now = local_now()
         await self.apply_decay(pet, now)
 
@@ -1027,6 +1205,32 @@ class TamagotchiService:
             total = (back - started).total_seconds()
             frac = max(0.0, min(1.0, elapsed / total))
         hours = round(frac * planned_h, 1)
+        # Баланс: награды начисляются за ФАКТИЧЕСКИ гуляное время.
+        # Раньше случайные события прогулки (рост 💪/🏃, простуда, бафы
+        # от погоды) срабатывали на полную силу даже при нулевой
+        # длительности — «тапнул старт и тут же вернул» давал бесплатный
+        # ролл лута без затрат времени. Монеты/XP уже масштабировались
+        # через frac; теперь то же правило применяем к событиям: если
+        # питомец не прошёл и минуты — событийный слой НЕ крутим, но
+        # базовая награда остаётся: сам факт выпуска на улицу стоит
+        # монет и опыта (исторический контракт finish_walk_event).
+        if hours < 0.02:
+            text, coins, xp = self.finish_walk_event(pet)
+            pet.walk_until = None
+            pet.walk_start_at = None
+            extra = (pet.settings_extra or {})
+            if "walk_hours" in extra:
+                pet.settings_extra = {k: v for k, v in extra.items()
+                                      if k != "walk_hours"}
+            reward_bits = []
+            if coins:
+                reward_bits.append(f"🪙 +{coins} монет")
+            if xp:
+                reward_bits.append(f"✨ +{xp} XP")
+            reward = ", ".join(reward_bits) if reward_bits else "накоплено ничего 🤷"
+            return t("pet.walk_returned_early", hours="0",
+                     reward=f"{reward} (гулял совсем недолго)") \
+                + ("\n" + text if text else "")
         text, coins, xp = self.finish_walk_event(pet)
         if coins and frac < 1.0:
             new_c = int(coins * frac)

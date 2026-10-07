@@ -86,7 +86,14 @@ async def decay_all_pets(bot: Bot) -> None:
                     today = local_now().date().isoformat()
                     extra = pet.settings_extra or {}
                     if extra.get(day_key) != today:
-                        pet.happiness = min(100.0, pet.happiness + len(friends))
+                        # Клампинг: бонус друзей за день не должен превышать
+                        # максимум дружеских связей (MAX_FRIENDS). Раньше сюда
+                        # попадало сырое len(friends); если бы лимит друзей
+                        # когда-нибудь подняли выше 5, бафф мог перевешивать
+                        # суточный декей счастья целиком.
+                        from app.services.pet_social import MAX_FRIENDS
+                        bonus = min(len(friends), MAX_FRIENDS)
+                        pet.happiness = min(100.0, pet.happiness + bonus)
                         pet.settings_extra = {**extra, day_key: today}
                 mood = compute_mood(pet)
                 if mood in ("sad", "sick", "hungry") and changed:

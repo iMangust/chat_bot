@@ -78,14 +78,35 @@ async def get_or_create_row(session: AsyncSession, pet_id: int, wk: str) -> PetD
     return row
 
 async def pick_opponent(session: AsyncSession, pet: Pet) -> Pet | None:
+    """Подбор соперника с честными фильтрами арены.
+
+    Раньше в пул попадали: больные (sick_since), гуляющие (walk_until ещё
+    не истёк) и питомцы того же владельца. Это ломало мета-игру:
+    • «фарм слабых» — больного соперника можно было избивать заведомо;
+    • бой с гуляющим — состояние «на прогулке» блокирует действия у
+      владельца, но у оппонента оно раньше не проверялось;
+    • дуэли между своими питомцами одного аккаунта — накрутка побед и
+      очков в таблице без реального соперника.
+    """
+    from app.services.tamagotchi import TamagotchiService
+    now = local_now()
     lo, hi = max(1, pet.level - 3), pet.level + 3
     rows = list((await session.execute(
         select(Pet).where(Pet.level >= lo, Pet.level <= hi,
                           Pet.id != pet.id, Pet.is_sleeping.is_(False),
+                          # тот же владелец — не соперник (анти-накрутка)
+                          Pet.user_id != pet.user_id,
+                          # больной питомец на арену не выходит
+                          Pet.sick_since.is_(None),
                           Pet.is_archived.is_(False))
-        .limit(10)
+        .limit(40)
     )).scalars())
-    return random.choice(rows) if rows else None
+    # «На прогулке» — колонка walk_until остаётся заполненной до итога
+    # end_walk/тика, поэтому фильтруем по времени, а не по NULL.
+    healthy_rows = [p for p in rows
+                    if not TamagotchiService.on_walk(p, now)
+                    and (p.health or 0) >= 50]
+    return random.choice(healthy_rows) if healthy_rows else None
 
 def duel_cooldown_left(pet: Pet, now=None) -> int:
     from app.utils.local_time import from_iso
