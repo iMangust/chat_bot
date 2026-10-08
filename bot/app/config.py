@@ -212,7 +212,7 @@ class Settings(BaseSettings):
     coins_per_message_cap: int = 1
     # Баланс: жёсткий дневной потолок монет за активность в чатах.
     # Без него 🪙 можно бесконечно фармить сообщениями (auto-post/флуд).
-    coins_daily_cap: int = 25
+    coins_daily_cap: int = 250
 
     log_level: str = "INFO"
     is_dev: bool = True
